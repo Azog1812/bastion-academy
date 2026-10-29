@@ -81,13 +81,17 @@ jobs:
         run: docker logs bastion 2>&1 | tail -n 50 || true
 
       # ---------- vulnerability scanning ----------
-      - name: Trivy (report all, SARIF)
+      # Alerts only for CVEs that have a fix: an unpatched base-image CVE (e.g. in
+      # glibc) can't be acted on and would bury the actionable ones. The full
+      # inventory, unfixed CVEs included, stays queryable from the signed SBOM.
+      - name: Trivy (fixable CVEs, all severities, SARIF)
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: ${{ env.LOCAL_IMAGE }}
           format: sarif
           output: trivy.sarif
           scanners: vuln,secret,misconfig
+          ignore-unfixed: true
           exit-code: "0"
 
       - uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1

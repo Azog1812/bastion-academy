@@ -7,6 +7,15 @@ updates:
     # releases (account takeovers, typosquats) are detected and yanked within days.
     cooldown: { default-days: 7 }
     open-pull-requests-limit: 10
+    ignore:
+      # Types must match the oldest supported runtime (engines: node >= 22);
+      # newer majors would type-check APIs that crash on Node 22.
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
+      # typescript-eslint supports TypeScript < 6.1 only; lift this when it
+      # supports 7.x (npm ci fails on the peer-dependency conflict).
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
     groups:
       dev-tooling:
         dependency-type: development

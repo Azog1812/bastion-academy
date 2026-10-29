@@ -141,7 +141,10 @@ Validate workflows locally with `actionlint` before pushing.
 
 ## Known limits / accepted risks (see docs/threat-model.md §5)
 
-- Base images referenced by tag, not digest (digests weren't resolvable from the authoring env).
+- Base images pinned by digest (tag kept alongside for readability and Dependabot).
+- Trivy SARIF uses `ignore-unfixed`: unpatched base-image CVEs are an accepted risk (threat model §5).
+- Dependabot ignores semver-major for `@types/node` (must match engines: Node 22) and
+  `typescript` (typescript-eslint supports < 6.1 only).
 - SQLite → single replica; in-memory rate limiting; HS256 (single issuer/verifier).
 - Registration reveals whether an e-mail exists (409); lockout can be abused for targeted DoS.
 - `node:sqlite` is flagged experimental by Node (warning silenced with `--disable-warning`).
@@ -164,7 +167,7 @@ If a CI job is renamed, update the ruleset's required checks in the same change 
 
 ## Roadmap (suggested order, highest interview value first)
 
-1. **Base images pinned by digest** (`docker buildx imagetools inspect`), keep Dependabot.
+1. ~~Base images pinned by digest~~ (done 29 Oct 2026).
 2. **MFA**: TOTP (RFC 6238) with encrypted secrets + recovery codes, then WebAuthn/passkeys.
    Requires threat-model + ASVS (V2.7/V2.8) updates and tests (replay of a TOTP code, brute force).
 3. **External KMS for KEKs** (Vault Transit or a cloud KMS): only `wrapDek`/`unwrapDek` change;
