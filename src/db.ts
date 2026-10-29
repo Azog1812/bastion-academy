@@ -13,6 +13,8 @@ import { DatabaseSync } from 'node:sqlite';
  */
 
 const MIGRATIONS: readonly string[] = [
+  // Plain SQL, no interpolation (the `{` false positive comes from the DDL text).
+  // nosemgrep
   /* v1 — initial schema */ `
   CREATE TABLE users (
     id             TEXT PRIMARY KEY,

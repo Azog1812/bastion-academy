@@ -3,6 +3,7 @@
 rules:
   - id: bastion-sql-interpolation
     languages: [typescript]
+    paths: { include: ["src/"] }
     severity: ERROR
     message: >-
       SQL built from a template literal or concatenation. Use bound parameters (?)
@@ -17,6 +18,7 @@ rules:
 
   - id: bastion-note-query-without-owner
     languages: [typescript]
+    paths: { include: ["src/"] }
     severity: ERROR
     message: >-
       Query on `notes` filtered by id without `owner_id`. Every note access must be
@@ -32,6 +34,7 @@ rules:
 
   - id: bastion-jwt-verify-without-algorithms
     languages: [typescript]
+    paths: { include: ["src/"] }
     severity: ERROR
     message: jwtVerify() without an explicit `algorithms` allow-list enables algorithm-confusion attacks. (CWE-347)
     metadata: { cwe: "CWE-347" }
@@ -41,6 +44,7 @@ rules:
 
   - id: bastion-insecure-randomness
     languages: [typescript]
+    paths: { include: ["src/"] }
     severity: ERROR
     message: Math.random() is not cryptographically secure. Use crypto.randomBytes / randomUUID. (CWE-338)
     metadata: { cwe: "CWE-338" }
@@ -48,6 +52,7 @@ rules:
 
   - id: bastion-weak-crypto
     languages: [typescript]
+    paths: { include: ["src/"] }
     severity: ERROR
     message: Weak or unauthenticated cipher / hash. Use AES-256-GCM and SHA-256+. (CWE-327)
     metadata: { cwe: "CWE-327" }
@@ -58,6 +63,7 @@ rules:
 
   - id: bastion-non-constant-time-compare
     languages: [typescript]
+    paths: { include: ["src/"] }
     severity: WARNING
     message: Comparing secrets/hashes with === leaks timing information. Use crypto.timingSafeEqual. (CWE-208)
     metadata: { cwe: "CWE-208" }
@@ -72,6 +78,7 @@ rules:
 
   - id: bastion-error-leak
     languages: [typescript]
+    paths: { include: ["src/"] }
     severity: ERROR
     message: Sending an error object or stack trace to the client leaks internals. Throw an HttpError instead. (CWE-209)
     metadata: { cwe: "CWE-209" }

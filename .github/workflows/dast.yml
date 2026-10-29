@@ -46,7 +46,8 @@ jobs:
             -d '{"email":"zap@scanner.test","password":"dast scanner passphrase 2026"}' > /dev/null
           token=$(curl -fsS -X POST http://localhost:3000/v1/auth/login -H 'content-type: application/json' \
             -d '{"email":"zap@scanner.test","password":"dast scanner passphrase 2026"}' | jq -r .accessToken)
-          echo "::add-mask::$token"
+          # The token comes from our own throwaway container (JWT charset only), not user input.
+          echo "::add-mask::$token" # nosemgrep
           {
             echo "ZAP_AUTH_HEADER=Authorization"
             echo "ZAP_AUTH_HEADER_VALUE=Bearer $token"

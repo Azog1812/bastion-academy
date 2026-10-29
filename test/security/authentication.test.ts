@@ -18,7 +18,8 @@ describe('authentication', () => {
 
   it('rejects weak and breached passwords at registration', async () => {
     const t = setup();
-    const res = await t.http.post('/v1/auth/register').send({ email: 'a@example.test', password: '1qaz2wsx3edc' }).expect(400);
+    // Known-breached password under test, not a credential.
+    const res = await t.http.post('/v1/auth/register').send({ email: 'a@example.test', password: '1qaz2wsx3edc' }).expect(400); // nosemgrep
     expect(res.body.message).toMatch(/too common/);
   });
 

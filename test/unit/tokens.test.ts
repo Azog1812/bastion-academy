@@ -20,7 +20,7 @@ describe('JWT access tokens', () => {
 
   it('rejects "alg: none" (unsigned token attack)', async () => {
     const claims = { sub: 'u1', role: 'admin', tv: 0, iss: 'bastion', aud: 'bastion-api', iat: now(), exp: now() + 600, jti: 'x' };
-    await expectInvalid(`${b64url({ alg: 'none', typ: 'at+jwt' })}.${b64url(claims)}.`);
+    await expectInvalid(`${b64url({ alg: 'none', typ: 'at+jwt' })}.${b64url(claims)}.`); // nosemgrep
   });
 
   it('rejects a payload modified after signing (privilege escalation attempt)', async () => {

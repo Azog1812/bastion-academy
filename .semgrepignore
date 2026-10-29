@@ -1,0 +1,7 @@
+# Semgrep rule definitions are YAML data, not code to analyse.
+.semgrep/
+# Generated data (public password blocklist) and build output.
+src/security/common-passwords.ts
+dist/
+coverage/
+node_modules/
