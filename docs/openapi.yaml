@@ -180,6 +180,68 @@ paths:
         "204": { description: Deleted }
         "404": { $ref: "#/components/responses/Error" }
 
+  /v1/curriculum:
+    get:
+      tags: [learning]
+      summary: Learning catalogue with my progress
+      description: Levels, paths, modules and lessons, with per-module lock state computed server-side. Quiz answers are never included.
+      responses:
+        "200": { description: Catalogue, content: { application/json: { schema: { $ref: "#/components/schemas/Curriculum" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /v1/lessons/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { $ref: "#/components/schemas/Slug" } }
+    get:
+      tags: [learning]
+      summary: Read a lesson (Markdown) and its quiz questions
+      responses:
+        "200": { description: Lesson, content: { application/json: { schema: { $ref: "#/components/schemas/Lesson" } } } }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { description: Prerequisite modules not completed, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "404": { $ref: "#/components/responses/Error" }
+  /v1/lessons/{id}/complete:
+    parameters:
+      - { name: id, in: path, required: true, schema: { $ref: "#/components/schemas/Slug" } }
+    post:
+      tags: [learning]
+      summary: Mark a lesson as completed, grading its quiz server-side
+      description: Idempotent. Every quiz question must be answered exactly once. Rate-limited per account.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                answers:
+                  type: array
+                  maxItems: 20
+                  items:
+                    type: object
+                    additionalProperties: false
+                    required: [question, choices]
+                    properties:
+                      question: { $ref: "#/components/schemas/Slug" }
+                      choices: { type: array, maxItems: 6, items: { type: integer, minimum: 0, maximum: 5 } }
+      responses:
+        "200":
+          description: Graded
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - type: object
+                    properties: { passed: { const: true }, completedAt: { type: string, format: date-time }, alreadyCompleted: { type: boolean } }
+                  - type: object
+                    properties: { passed: { const: false }, incorrect: { type: array, items: { type: string } } }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { description: Prerequisite modules not completed, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "404": { $ref: "#/components/responses/Error" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
   /v1/admin/audit:
     get:
       tags: [admin]
@@ -256,6 +318,63 @@ components:
         - $ref: "#/components/schemas/NoteSummary"
         - type: object
           properties: { body: { type: string } }
+    Slug: { type: string, pattern: "^[a-z0-9][a-z0-9-]*$", maxLength: 64 }
+    Curriculum:
+      type: object
+      properties:
+        levels: { type: array, items: { type: object, properties: { level: { type: integer }, title: { type: string }, goal: { type: string } } } }
+        progress: { type: object, properties: { completed: { type: integer }, total: { type: integer } } }
+        paths:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: string }
+              title: { type: string }
+              summary: { type: string }
+              level: { type: integer }
+              modules:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id: { type: string }
+                    title: { type: string }
+                    summary: { type: string }
+                    prerequisites: { type: array, items: { type: string } }
+                    unlocked: { type: boolean }
+                    completed: { type: boolean }
+                    lessons:
+                      type: array
+                      items:
+                        type: object
+                        properties:
+                          id: { type: string }
+                          title: { type: string }
+                          minutes: { type: integer }
+                          hasQuiz: { type: boolean }
+                          completed: { type: boolean }
+    Lesson:
+      type: object
+      properties:
+        id: { type: string }
+        pathId: { type: string }
+        moduleId: { type: string }
+        title: { type: string }
+        minutes: { type: integer }
+        body: { type: string, description: Markdown. Clients must render it without trusting it as HTML. }
+        references: { type: array, items: { type: object, properties: { label: { type: string }, url: { type: string, format: uri } } } }
+        quiz:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: string }
+              prompt: { type: string }
+              choices: { type: array, items: { type: string } }
+              multiple: { type: boolean }
+        completed: { type: boolean }
+        completedAt: { type: [string, "null"], format: date-time }
     Error:
       type: object
       required: [error, message, requestId]

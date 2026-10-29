@@ -72,6 +72,14 @@ const MIGRATIONS: readonly string[] = [
   CREATE TRIGGER audit_no_delete BEFORE DELETE ON audit_log
     BEGIN SELECT RAISE(ABORT, 'audit_log is append-only'); END;
   `,
+  /* v2 — learning progress. Content itself lives in content/ (ADR 0006), only progress is stored. */ `
+  CREATE TABLE lesson_progress (
+    user_id       TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    lesson_id     TEXT NOT NULL,
+    completed_at  INTEGER NOT NULL,
+    PRIMARY KEY (user_id, lesson_id)
+  ) STRICT, WITHOUT ROWID;
+  `,
 ];
 
 export type Database = DatabaseSync;

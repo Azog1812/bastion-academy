@@ -9,24 +9,32 @@ import { createTokenSigner } from './crypto/tokens.js';
 import type { Database } from './db.js';
 import { errorHandler, noStore, notFoundHandler, requestId, requireJson } from './http/middleware.js';
 import { buildRouter } from './http/routes.js';
+import type { Curriculum } from './curriculum/catalog.js';
 import { AuthService } from './services/auth-service.js';
+import { LearningService } from './services/learning-service.js';
 import { NoteService } from './services/note-service.js';
 
 export interface AppOptions {
   config: Config;
   db: Database;
   logger: Logger;
+  curriculum: Curriculum;
   /** Overridable so tests can exercise the limiter without waiting 15 minutes. */
-  rateLimits?: { global: number; auth: number; refresh: number };
+  rateLimits?: { global: number; auth: number; refresh: number; quiz: number };
 }
 
 export interface App {
   app: Express;
-  services: { auth: AuthService; notes: NoteService; audit: AuditLog };
+  services: { auth: AuthService; notes: NoteService; learning: LearningService; audit: AuditLog };
 }
 
-export function createApp({ config, db, logger, rateLimits }: AppOptions): App {
-  const limits = rateLimits ?? { global: config.RATE_LIMIT_GLOBAL, auth: config.RATE_LIMIT_AUTH, refresh: config.RATE_LIMIT_REFRESH };
+export function createApp({ config, db, logger, curriculum, rateLimits }: AppOptions): App {
+  const limits = rateLimits ?? {
+    global: config.RATE_LIMIT_GLOBAL,
+    auth: config.RATE_LIMIT_AUTH,
+    refresh: config.RATE_LIMIT_REFRESH,
+    quiz: config.RATE_LIMIT_QUIZ,
+  };
 
   const audit = new AuditLog(db, config.AUDIT_HMAC_KEY);
   const signer = createTokenSigner({
@@ -37,6 +45,7 @@ export function createApp({ config, db, logger, rateLimits }: AppOptions): App {
   });
   const auth = new AuthService(db, config, signer, audit);
   const notes = new NoteService(db, { keys: config.ENCRYPTION_KEYS, activeKeyId: config.ACTIVE_KEY_ID }, audit);
+  const learning = new LearningService(db, curriculum, audit);
 
   const app = express();
 
@@ -96,10 +105,10 @@ export function createApp({ config, db, logger, rateLimits }: AppOptions): App {
   );
   app.use(requireJson);
   app.use(express.json({ limit: '100kb', strict: true }));
-  app.use('/v1', noStore, buildRouter({ auth, notes, audit, signer, rateLimits: { auth: limits.auth, refresh: limits.refresh } }));
+  app.use('/v1', noStore, buildRouter({ auth, notes, learning, audit, signer, rateLimits: { auth: limits.auth, refresh: limits.refresh, quiz: limits.quiz } }));
 
   app.use(notFoundHandler);
   app.use(errorHandler(logger));
 
-  return { app, services: { auth, notes, audit } };
+  return { app, services: { auth, notes, learning, audit } };
 }
