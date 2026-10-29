@@ -1,0 +1,271 @@
+openapi: 3.1.0
+info:
+  title: Bastion API
+  version: 2.0.0
+  summary: Hardened, envelope-encrypted notes API.
+  description: |
+    Every note is encrypted at rest with its own AES-256-GCM data key, wrapped by a
+    rotating key-encryption key. Access tokens are short-lived JWTs; refresh tokens
+    are opaque, single-use and rotated with reuse detection.
+
+    All error responses share one shape: `{ error, message, requestId }`.
+  license:
+    name: MIT
+    identifier: MIT
+servers:
+  - url: http://localhost:3000
+security:
+  - bearer: []
+
+tags:
+  - name: auth
+  - name: me
+  - name: notes
+  - name: admin
+  - name: probes
+
+paths:
+  /healthz:
+    get:
+      tags: [probes]
+      summary: Liveness probe
+      security: []
+      responses:
+        "200": { description: Alive, content: { application/json: { schema: { type: object, properties: { status: { const: ok } } } } } }
+  /readyz:
+    get:
+      tags: [probes]
+      summary: Readiness probe (database reachable)
+      security: []
+      responses:
+        "200": { description: Ready }
+        "503": { description: Not ready }
+
+  /v1/auth/register:
+    post:
+      tags: [auth]
+      summary: Create an account
+      security: []
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/Credentials" } } } }
+      responses:
+        "201": { description: Created, content: { application/json: { schema: { $ref: "#/components/schemas/User" } } } }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "409": { $ref: "#/components/responses/Error" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+  /v1/auth/login:
+    post:
+      tags: [auth]
+      summary: Exchange credentials for a token pair
+      description: Unknown e-mail, wrong password and locked account all return the same 401.
+      security: []
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/Credentials" } } } }
+      responses:
+        "200": { description: Authenticated, content: { application/json: { schema: { $ref: "#/components/schemas/TokenPair" } } } }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+  /v1/auth/refresh:
+    post:
+      tags: [auth]
+      summary: Rotate a refresh token
+      description: Single use. Replaying a used token revokes the whole session family.
+      security: []
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/RefreshRequest" } } } }
+      responses:
+        "200": { description: New token pair, content: { application/json: { schema: { $ref: "#/components/schemas/TokenPair" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /v1/auth/logout:
+    post:
+      tags: [auth]
+      summary: Revoke a refresh token family (idempotent)
+      security: []
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/RefreshRequest" } } } }
+      responses:
+        "204": { description: Logged out }
+
+  /v1/me:
+    get:
+      tags: [me]
+      summary: Current principal
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { type: object, properties: { id: { type: string, format: uuid }, role: { enum: [user, admin] } } } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /v1/me/password:
+    post:
+      tags: [me]
+      summary: Change password (revokes every session)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [currentPassword, newPassword]
+              properties:
+                currentPassword: { type: string }
+                newPassword: { type: string, minLength: 12, maxLength: 128 }
+      responses:
+        "204": { description: Changed }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /v1/me/logout-all:
+    post:
+      tags: [me]
+      summary: Revoke every session, including live access tokens
+      responses:
+        "204": { description: Done }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /v1/notes:
+    get:
+      tags: [notes]
+      summary: List my notes (titles only)
+      parameters:
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
+        - { name: offset, in: query, schema: { type: integer, minimum: 0, default: 0 } }
+      responses:
+        "200":
+          description: Page of notes
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: { type: array, items: { $ref: "#/components/schemas/NoteSummary" } }
+                  total: { type: integer }
+                  limit: { type: integer }
+                  offset: { type: integer }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      tags: [notes]
+      summary: Create a note
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/NoteInput" } } } }
+      responses:
+        "201": { description: Created, content: { application/json: { schema: { $ref: "#/components/schemas/Note" } } } }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /v1/notes/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      tags: [notes]
+      summary: Read one of my notes
+      description: A note owned by someone else returns the same 404 as a missing one.
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Note" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/Error" }
+    put:
+      tags: [notes]
+      summary: Replace a note (optimistic concurrency)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "#/components/schemas/NoteInput"
+                - type: object
+                  required: [version]
+                  properties: { version: { type: integer, minimum: 1 } }
+      responses:
+        "200": { description: Updated, content: { application/json: { schema: { $ref: "#/components/schemas/Note" } } } }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+    delete:
+      tags: [notes]
+      summary: Delete a note
+      responses:
+        "204": { description: Deleted }
+        "404": { $ref: "#/components/responses/Error" }
+
+  /v1/admin/audit:
+    get:
+      tags: [admin]
+      summary: Read the audit trail (admin)
+      parameters:
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 500, default: 100 } }
+        - { name: before, in: query, schema: { type: integer, minimum: 1 } }
+      responses:
+        "200": { description: Audit entries, newest first }
+        "403": { $ref: "#/components/responses/Error" }
+  /v1/admin/audit/verify:
+    get:
+      tags: [admin]
+      summary: Verify the HMAC chain of the audit trail (admin)
+      responses:
+        "200":
+          description: Verification result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  valid: { type: boolean }
+                  checked: { type: integer }
+                  firstInvalidSeq: { type: [integer, "null"] }
+        "403": { $ref: "#/components/responses/Error" }
+
+components:
+  securitySchemes:
+    bearer: { type: http, scheme: bearer, bearerFormat: JWT }
+  schemas:
+    Credentials:
+      type: object
+      additionalProperties: false
+      required: [email, password]
+      properties:
+        email: { type: string, format: email, maxLength: 254 }
+        password: { type: string, minLength: 12, maxLength: 128 }
+    User:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        email: { type: string, format: email }
+    TokenPair:
+      type: object
+      properties:
+        accessToken: { type: string }
+        refreshToken: { type: string }
+        tokenType: { const: Bearer }
+        expiresIn: { type: integer, description: Seconds }
+    RefreshRequest:
+      type: object
+      additionalProperties: false
+      required: [refreshToken]
+      properties:
+        refreshToken: { type: string }
+    NoteInput:
+      type: object
+      additionalProperties: false
+      required: [title, body]
+      properties:
+        title: { type: string, minLength: 1, maxLength: 200 }
+        body: { type: string, maxLength: 65536 }
+    NoteSummary:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        title: { type: string }
+        version: { type: integer }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    Note:
+      allOf:
+        - $ref: "#/components/schemas/NoteSummary"
+        - type: object
+          properties: { body: { type: string } }
+    Error:
+      type: object
+      required: [error, message, requestId]
+      properties:
+        error: { type: string }
+        message: { type: string }
+        requestId: { type: string, format: uuid }
+        issues: { type: array, items: { type: object, properties: { path: { type: string }, message: { type: string } } } }
+  responses:
+    Error: { description: Error, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+    ValidationError: { description: Invalid request, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+    Unauthorized: { description: Missing, invalid, expired or revoked credentials, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+    RateLimited: { description: Too many requests (see RateLimit headers), content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
