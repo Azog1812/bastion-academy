@@ -4,7 +4,7 @@ import security from 'eslint-plugin-security';
 import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
-  { ignores: ['dist/', 'coverage/', 'node_modules/', 'src/security/common-passwords.ts'] },
+  { ignores: ['dist/', 'coverage/', 'node_modules/', 'src/security/common-passwords.ts', 'web/public/'] },
   js.configs.recommended,
   ...tseslint.configs.strictTypeChecked,
   security.configs.recommended,
@@ -35,6 +35,25 @@ export default tseslint.config(
       '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
       // Map lookups and bounded indexes are flagged as false positives by this rule.
       'security/detect-object-injection': 'off',
+    },
+  },
+  {
+    // Front-end: UI is built with createElement/textContent only (web/src/dom.ts).
+    // Every HTML-from-string sink is banned here, and blocked again at runtime by
+    // the Trusted Types CSP, so an XSS needs two independent failures.
+    files: ['web/src/**/*.ts'],
+    rules: {
+      'no-restricted-properties': [
+        'error',
+        ...['innerHTML', 'outerHTML', 'insertAdjacentHTML', 'srcdoc', 'createContextualFragment', 'parseFromString'].map((property) => ({
+          property,
+          message: 'Builds HTML from a string (XSS sink). Use h() from dom.ts.',
+        })),
+        { object: 'document', property: 'write', message: 'XSS sink. Use h() from dom.ts.' },
+        { object: 'document', property: 'writeln', message: 'XSS sink. Use h() from dom.ts.' },
+        { object: 'localStorage', message: 'Never persist tokens or user data in web storage (ADR 0007).' },
+        { object: 'sessionStorage', message: 'Never persist tokens or user data in web storage (ADR 0007).' },
+      ],
     },
   },
   {

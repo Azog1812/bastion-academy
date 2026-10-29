@@ -21,6 +21,10 @@ tags:
   - name: auth
   - name: me
   - name: notes
+  - name: learning
+    description: Curriculum and progress (Bastion Academy)
+  - name: session
+    description: Browser sessions, refresh token in an HttpOnly cookie (ADR 0007)
   - name: admin
   - name: probes
 
@@ -83,6 +87,38 @@ paths:
       responses:
         "204": { description: Logged out }
 
+  /v1/session/login:
+    post:
+      tags: [session]
+      summary: Browser login
+      description: Same checks as /v1/auth/login. The refresh token is set in an HttpOnly, Secure, SameSite=Strict `__Host-` cookie and never returned in the body. Foreign Origin headers are refused.
+      security: []
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/Credentials" } } } }
+      responses:
+        "200": { description: Logged in, content: { application/json: { schema: { $ref: "#/components/schemas/AccessToken" } } } }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { description: Cross-origin request refused, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "429": { $ref: "#/components/responses/RateLimited" }
+  /v1/session/refresh:
+    post:
+      tags: [session]
+      summary: Rotate the refresh cookie and get a new access token
+      description: Single-use rotation with reuse detection. A failed refresh clears the cookie.
+      security: []
+      responses:
+        "200": { description: Rotated, content: { application/json: { schema: { $ref: "#/components/schemas/AccessToken" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { description: Cross-origin request refused, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "429": { $ref: "#/components/responses/RateLimited" }
+  /v1/session/logout:
+    post:
+      tags: [session]
+      summary: Revoke the browser session and clear the cookie (idempotent)
+      security: []
+      responses:
+        "204": { description: Logged out }
+        "403": { description: Cross-origin request refused, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
   /v1/me:
     get:
       tags: [me]
@@ -290,6 +326,12 @@ components:
       properties:
         accessToken: { type: string }
         refreshToken: { type: string }
+        tokenType: { const: Bearer }
+        expiresIn: { type: integer, description: Seconds }
+    AccessToken:
+      type: object
+      properties:
+        accessToken: { type: string }
         tokenType: { const: Bearer }
         expiresIn: { type: integer, description: Seconds }
     RefreshRequest:

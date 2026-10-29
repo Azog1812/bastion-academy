@@ -33,7 +33,7 @@ from first principles up to the level expected by major industry certifications.
 
 | Milestone | Scope | Status |
 |---|---|---|
-| **v3: foundations** | Learning paths → modules → lessons, progress tracking, web front-end, built on Bastion's auth core | 🚧 API and first path done; front-end next |
+| **v3: foundations** | Learning paths → modules → lessons, progress tracking, web front-end, built on Bastion's auth core | ✅ API, web UI and first path shipped; more paths to come |
 | **v4: challenges** | Per-user HMAC flags (unshareable), scoreboard, anti-cheat, TOTP MFA | Planned |
 | **v5: isolated labs** | One vulnerable container per learner: no egress, TTL, sandboxed runtime, quotas | Planned |
 | **v6: advanced** | Blue-team labs (log analysis, detection), AI tutor, observability | Planned |
@@ -47,13 +47,26 @@ The curriculum spans six levels, from **Fundamentals** to **Expert**. The first 
 (level 1, in French) covers security basics, HTTP, sessions and JWT. It ends with a
 *break it, then fix it* IDOR module built on Bastion's own code and tests.
 
+**Start learning** (Node ≥ 22.13):
+
+```bash
+git clone https://github.com/Azog1812/bastion-academy && cd bastion-academy
+npm ci --ignore-scripts && npm run build
+node dist/cli.js gen-secrets > .env
+set -a && . ./.env && set +a && NODE_ENV=development npm start
+```
+
+Then open **http://localhost:3000**, create an account and follow the path. With Docker, generate
+`.env` as above, then run `docker compose up --build`.
+
 | Endpoint | Purpose |
 |---|---|
 | `GET /v1/curriculum` | Levels, paths, modules and lessons, with your progress and which modules are unlocked |
 | `GET /v1/lessons/{id}` | A lesson (Markdown) and its quiz questions, never their answers |
 | `POST /v1/lessons/{id}/complete` | Submit your quiz answers; graded on the server |
+| `POST /v1/session/{login,refresh,logout}` | Browser sessions: refresh token in an HttpOnly cookie |
 
-How it is secured ([ADR 0006](docs/adr/0006-curriculum-as-code.md)):
+How it is secured ([ADR 0006](docs/adr/0006-curriculum-as-code.md), [ADR 0007](docs/adr/0007-web-front-end.md)):
 
 - **Curriculum as code.** Lessons live in [`content/`](content/) and change only
   through reviewed pull requests. They are validated at boot, and the server refuses
@@ -62,6 +75,14 @@ How it is secured ([ADR 0006](docs/adr/0006-curriculum-as-code.md)):
   the front-end unlocks nothing. Quiz answers never leave the server.
 - **Isolated progress.** Every query is scoped to the authenticated learner. A Semgrep
   rule blocks any regression.
+- **A web UI with zero new dependencies.** Plain TypeScript compiled by `tsc`, served
+  from the same origin (no CORS). The access token stays in memory; the refresh token
+  lives in an `HttpOnly; Secure; SameSite=Strict` `__Host-` cookie that no script can
+  read.
+- **XSS needs two independent failures.** The UI never builds HTML from strings
+  (ESLint bans every HTML sink, Markdown is rendered node by node), and the page CSP
+  enforces **Trusted Types** with no policy allowed, so any such sink throws in the
+  browser.
 
 Quick tour, once the API runs (see [Try to break it](#try-to-break-it) to start it
 and get a token):
@@ -80,8 +101,9 @@ curl -s $B/v1/lessons/cia-et-risque -H "authorization: Bearer $ALICE" | jq -r .b
 > cyber à installer chez soi, fondée sur le principe « casse-le, puis répare-le » :
 > on exploite une faille réelle dans un lab, puis on étudie le code et le test qui la
 > neutralisent. Progression des bases jusqu'au niveau des grandes certifications.
-> Déjà disponible : l'API d'apprentissage (cursus, progression, quiz corrigés côté
-> serveur) et un premier parcours « Fondamentaux » en français.
+> Déjà disponible : une interface web (http://localhost:3000 après installation),
+> l'API d'apprentissage (cursus, progression, quiz corrigés côté serveur) et un
+> premier parcours « Fondamentaux » en français.
 > Les labs seront volontairement vulnérables : à lancer uniquement en local.
 
 ---
@@ -141,7 +163,7 @@ generic errors with correlation ids · secret redaction in logs · secrets read 
 files rather than env vars · socket timeouts · privileged operations only via an
 operator CLI, never over HTTP.
 
-**134 tests, ~98 % line coverage** — most of them are *abuse cases*, not happy paths.
+**149 tests, ~98 % line coverage** — most of them are *abuse cases*, not happy paths.
 
 ### Supply chain & infrastructure
 
@@ -149,7 +171,7 @@ operator CLI, never over HTTP.
 |---|---|
 | Code | ESLint (`strictTypeChecked` + security plugin + custom SQL rules), `tsc --strict` |
 | Secrets | gitleaks over the **entire git history** |
-| SAST | Semgrep (OWASP Top 10, Node, TS, JWT) + [7 project-specific rules](.semgrep/bastion.yml), CodeQL `security-extended` |
+| SAST | Semgrep (OWASP Top 10, Node, TS, JWT) + [8 project-specific rules](.semgrep/bastion.yml), CodeQL `security-extended` |
 | SCA | `npm audit`, **`npm audit signatures`**, OSV-Scanner, Dependency Review on PRs, Dependabot with a 7-day cooldown |
 | IaC | hadolint, Checkov (0 unreviewed findings; risk acceptances documented inline) |
 | Container | Distroless, UID 65532, no shell (asserted in CI), smoke-tested with `--read-only --cap-drop ALL`, Trivy gate |
@@ -211,6 +233,7 @@ test/
   unit/                crypto, tokens, config, audit chain
   security/            authentication, authorization/IDOR, injection & transport, learning
 content/               curriculum as code: levels, paths, quizzes (JSON), lessons (Markdown)
+web/                   front-end: plain TypeScript, no dependency, Markdown → DOM, Trusted Types
 deploy/k8s/            hardened manifests (PSS restricted, NetworkPolicy, secrets as files)
 deploy/policies/       Kyverno: only signed images may run
 .github/workflows/     CI · Security · CodeQL · Container (sign/SBOM/SLSA) · DAST · Scorecard

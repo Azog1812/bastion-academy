@@ -7,6 +7,7 @@ import type { LearningService } from '../services/learning-service.js';
 import type { NoteService } from '../services/note-service.js';
 import { unauthorized } from '../errors.js';
 import { authenticate, handler, parse, requireRole } from './middleware.js';
+import { browserView, clearRefreshCookie, refreshTokenFrom, sameOriginOnly, setRefreshCookie } from './session.js';
 import {
   auditQuerySchema,
   changePasswordSchema,
@@ -27,6 +28,7 @@ export interface RouteDeps {
   audit: AuditLog;
   signer: TokenSigner;
   rateLimits: { auth: number; refresh: number; quiz: number };
+  refreshTtlSeconds: number;
 }
 
 const ctx = (req: Request): RequestContext => ({ ip: req.ip ?? null });
@@ -89,6 +91,52 @@ export function buildRouter(d: RouteDeps): Router {
     handler((req, res) => {
       const { refreshToken } = parse(refreshSchema, req.body);
       d.auth.logout(refreshToken, ctx(req));
+      res.status(204).end();
+    }),
+  );
+
+  /* ---------- browser sessions (refresh token in an HttpOnly cookie, ADR 0007) ---------- */
+
+  r.post(
+    '/session/login',
+    sameOriginOnly,
+    authLimiter,
+    handler(async (req, res) => {
+      const { email, password } = parse(credentialsSchema, req.body);
+      const pair = await d.auth.login(email, password, ctx(req));
+      setRefreshCookie(res, pair.refreshToken, d.refreshTtlSeconds);
+      res.json(browserView(pair));
+    }),
+  );
+
+  r.post(
+    '/session/refresh',
+    sameOriginOnly,
+    refreshLimiter,
+    handler(async (req, res) => {
+      try {
+        const pair = await d.auth.refresh(refreshTokenFrom(req), ctx(req));
+        setRefreshCookie(res, pair.refreshToken, d.refreshTtlSeconds);
+        res.json(browserView(pair));
+      } catch (err) {
+        // A dead session must not leave a cookie the browser keeps replaying.
+        clearRefreshCookie(res);
+        throw err;
+      }
+    }),
+  );
+
+  r.post(
+    '/session/logout',
+    sameOriginOnly,
+    refreshLimiter,
+    handler((req, res) => {
+      try {
+        d.auth.logout(refreshTokenFrom(req), ctx(req));
+      } catch {
+        // No cookie: already logged out. Logout stays idempotent.
+      }
+      clearRefreshCookie(res);
       res.status(204).end();
     }),
   );
