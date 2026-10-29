@@ -88,7 +88,7 @@ operator CLI, never over HTTP.
 | Code | ESLint (`strictTypeChecked` + security plugin + custom SQL rules), `tsc --strict` |
 | Secrets | gitleaks over the **entire git history** |
 | SAST | Semgrep (OWASP Top 10, Node, TS, JWT) + [7 project-specific rules](.semgrep/bastion.yml), CodeQL `security-extended` |
-| SCA | `npm audit`, **`npm audit signatures`**, OSV-Scanner, Dependency Review on PRs, Dependabot |
+| SCA | `npm audit`, **`npm audit signatures`**, OSV-Scanner, Dependency Review on PRs, Dependabot with a 7-day cooldown |
 | IaC | hadolint, Checkov (0 unreviewed findings; risk acceptances documented inline) |
 | Container | Distroless, UID 65532, no shell (asserted in CI), smoke-tested with `--read-only --cap-drop ALL`, Trivy gate |
 | DAST | OWASP ZAP API scan **authenticated with a real token**, driven by the OpenAPI spec |

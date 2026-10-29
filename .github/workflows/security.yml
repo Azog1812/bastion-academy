@@ -61,6 +61,8 @@ jobs:
           if os.path.exists("semgrep.sarif"):
               for run in json.load(open("semgrep.sarif"))["runs"]:
                   for r in run.get("results", []):
+                      if r.get("suppressions"):  # reviewed `nosemgrep` exceptions
+                          continue
                       loc = r["locations"][0]["physicalLocation"]
                       msg = r["message"]["text"].replace("\n", " ")[:300]
                       print(f"::error file={loc['artifactLocation']['uri']},line={loc['region']['startLine']}::[{r['ruleId']}] {msg}")

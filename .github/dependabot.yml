@@ -3,6 +3,9 @@ updates:
   - package-ecosystem: npm
     directory: /
     schedule: { interval: weekly, day: monday }
+    # Wait 7 days before proposing a freshly published version: most malicious
+    # releases (account takeovers, typosquats) are detected and yanked within days.
+    cooldown: { default-days: 7 }
     open-pull-requests-limit: 10
     groups:
       dev-tooling:
@@ -13,6 +16,7 @@ updates:
   - package-ecosystem: docker
     directory: /
     schedule: { interval: weekly }
+    cooldown: { default-days: 7 }
     labels: [dependencies, docker]
 
   # Keeps every SHA-pinned action current (pinning by SHA without updates
@@ -20,6 +24,7 @@ updates:
   - package-ecosystem: github-actions
     directory: /
     schedule: { interval: weekly }
+    cooldown: { default-days: 7 }
     groups:
       actions:
         patterns: ["*"]
