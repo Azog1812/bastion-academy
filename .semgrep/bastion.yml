@@ -1,0 +1,81 @@
+# Project-specific SAST rules. They encode this codebase's security invariants,
+# so a future change that breaks one fails CI with an explanation.
+rules:
+  - id: bastion-sql-interpolation
+    languages: [typescript]
+    severity: ERROR
+    message: >-
+      SQL built from a template literal or concatenation. Use bound parameters (?)
+      with prepare(). (CWE-89)
+    metadata: { cwe: "CWE-89", owasp: "A03:2021 - Injection" }
+    patterns:
+      - pattern-either:
+          - pattern: $DB.prepare(`...${$X}...`)
+          - pattern: $DB.exec(`...${$X}...`)
+          - pattern: $DB.prepare($A + $B)
+          - pattern: $DB.exec($A + $B)
+
+  - id: bastion-note-query-without-owner
+    languages: [typescript]
+    severity: ERROR
+    message: >-
+      Query on `notes` filtered by id without `owner_id`. Every note access must be
+      scoped to its owner inside the SQL itself (IDOR / OWASP API1:2023).
+    metadata: { cwe: "CWE-639", owasp: "API1:2023 - Broken Object Level Authorization" }
+    patterns:
+      - pattern: $DB.prepare("$SQL")
+      - metavariable-regex:
+          metavariable: $SQL
+          regex: (?i)^(select|update|delete)\b.*\bnotes\b.*\bwhere\s+id\s*=\s*\?(?!.*owner_id)
+      - pattern-not-inside: |
+          const exists = ...;
+
+  - id: bastion-jwt-verify-without-algorithms
+    languages: [typescript]
+    severity: ERROR
+    message: jwtVerify() without an explicit `algorithms` allow-list enables algorithm-confusion attacks. (CWE-347)
+    metadata: { cwe: "CWE-347" }
+    patterns:
+      - pattern: jwtVerify($TOKEN, $KEY, $OPTS)
+      - pattern-not: "jwtVerify($TOKEN, $KEY, {..., algorithms: $ALGS, ...})"
+
+  - id: bastion-insecure-randomness
+    languages: [typescript]
+    severity: ERROR
+    message: Math.random() is not cryptographically secure. Use crypto.randomBytes / randomUUID. (CWE-338)
+    metadata: { cwe: "CWE-338" }
+    pattern: Math.random()
+
+  - id: bastion-weak-crypto
+    languages: [typescript]
+    severity: ERROR
+    message: Weak or unauthenticated cipher / hash. Use AES-256-GCM and SHA-256+. (CWE-327)
+    metadata: { cwe: "CWE-327" }
+    pattern-either:
+      - pattern: createHash("md5")
+      - pattern: createHash("sha1")
+      - pattern-regex: createCipheriv\(\s*['"]aes-\d+-(ecb|cbc|ctr)['"]
+
+  - id: bastion-non-constant-time-compare
+    languages: [typescript]
+    severity: WARNING
+    message: Comparing secrets/hashes with === leaks timing information. Use crypto.timingSafeEqual. (CWE-208)
+    metadata: { cwe: "CWE-208" }
+    patterns:
+      - pattern-either:
+          - pattern: $A.hash === $B
+          - pattern: $A === $B.hash
+          - pattern: $TOKEN === $EXPECTED_TOKEN
+      - metavariable-regex:
+          metavariable: $TOKEN
+          regex: (?i).*(secret|token|signature|hmac).*
+
+  - id: bastion-error-leak
+    languages: [typescript]
+    severity: ERROR
+    message: Sending an error object or stack trace to the client leaks internals. Throw an HttpError instead. (CWE-209)
+    metadata: { cwe: "CWE-209" }
+    pattern-either:
+      - pattern: $RES.json($ERR.stack)
+      - pattern: $RES.send($ERR.stack)
+      - pattern: "$RES.json({..., stack: $S, ...})"

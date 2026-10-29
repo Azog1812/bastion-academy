@@ -1,0 +1,6 @@
+# Security-sensitive paths require review by the code owner.
+*                       @Azog1812
+/src/crypto/            @Azog1812
+/src/services/auth-*    @Azog1812
+/.github/workflows/     @Azog1812
+/deploy/                @Azog1812

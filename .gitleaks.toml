@@ -1,0 +1,23 @@
+# Default gitleaks rules + a narrow, reviewed allowlist. Each entry is a known
+# false positive; nothing here hides a real credential.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Reviewed false positives"
+paths = [
+  # Public breached-password list used to REJECT weak passwords.
+  '''src/security/common-passwords\.ts''',
+  # Documented placeholders.
+  '''deploy/k8s/secret\.example\.yaml''',
+  '''\.env\.example''',
+]
+regexTarget = "line"
+regexes = [
+  # Shell variable expansion, not a literal token.
+  '''Bearer \$[A-Z_]+''',
+  # Known-breached password used to test that it is rejected.
+  '''1qaz2wsx3edc''',
+  # Placeholder used to test that placeholders are rejected.
+  '''change-me-change-me''',
+]

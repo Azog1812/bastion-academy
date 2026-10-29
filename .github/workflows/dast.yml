@@ -1,0 +1,79 @@
+name: DAST
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "5 2 * * 0"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  zap:
+    name: OWASP ZAP API scan (authenticated)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build and start the API
+        run: |
+          docker build -t bastion:dast .
+          docker run --rm bastion:dast dist/cli.js gen-secrets > .env.dast
+          # Rate limits are raised for the scanner only, or ZAP would just see 429s.
+          printf 'RATE_LIMIT_GLOBAL=100000\nRATE_LIMIT_AUTH=100000\nRATE_LIMIT_REFRESH=100000\n' >> .env.dast
+          docker run -d --name bastion --env-file .env.dast --read-only --tmpfs /tmp \
+            --cap-drop ALL -v bastion-data:/data -p 3000:3000 bastion:dast
+          for _ in $(seq 1 30); do curl -fsS http://localhost:3000/readyz && break; sleep 1; done
+
+      - name: Authenticate the scanner
+        run: |
+          curl -fsS -X POST http://localhost:3000/v1/auth/register -H 'content-type: application/json' \
+            -d '{"email":"zap@scanner.test","password":"dast scanner passphrase 2026"}' > /dev/null
+          token=$(curl -fsS -X POST http://localhost:3000/v1/auth/login -H 'content-type: application/json' \
+            -d '{"email":"zap@scanner.test","password":"dast scanner passphrase 2026"}' | jq -r .accessToken)
+          echo "::add-mask::$token"
+          {
+            echo "ZAP_AUTH_HEADER=Authorization"
+            echo "ZAP_AUTH_HEADER_VALUE=Bearer $token"
+            echo "ZAP_AUTH_HEADER_SITE=localhost"
+          } >> "$GITHUB_ENV"
+          # Session-destroying endpoints are excluded so the scan keeps its token.
+          python3 - <<'PY'
+          import yaml
+          spec = yaml.safe_load(open("docs/openapi.yaml"))
+          for p in ("/v1/me/logout-all", "/v1/me/password"):
+              spec["paths"].pop(p, None)
+          yaml.safe_dump(spec, open("openapi.dast.yaml", "w"), sort_keys=False)
+          PY
+
+      - name: ZAP API scan
+        uses: zaproxy/action-api-scan@5158fe4d9d8fcc75ea204db81317cce7f9e5453d # v0.10.0
+        with:
+          target: openapi.dast.yaml
+          format: openapi
+          rules_file_name: .zap/rules.tsv
+          # -I: warnings are reported, not fatal; rules marked FAIL in rules.tsv
+          # (injection, traversal, RCE…) break the build.
+          cmd_options: "-O http://localhost:3000 -I"
+          fail_action: true
+          allow_issue_writing: false
+          artifact_name: zap-report
+
+      - name: Container logs
+        if: always()
+        run: docker logs bastion 2>&1 | tail -n 100 || true
