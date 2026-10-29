@@ -7,14 +7,14 @@
 #    work with (no `sh`, no `curl`, no `apt`).
 #  - runs as UID 65532 (nonroot), designed for a read-only root filesystem.
 #
-# Base images are referenced by tag; Dependabot keeps them current and CI
-# (Trivy) fails the build on any fixable HIGH/CRITICAL CVE. For a production
-# fork, pin them by digest: `docker buildx imagetools inspect <image>`.
-
-ARG NODE_MAJOR=24
+# Base images are pinned by digest: a tag can be re-pointed (registry compromise,
+# upstream mistake) and the build would silently change. The tag stays next to
+# the digest so humans can read it and Dependabot can propose tag+digest bumps;
+# the Trivy gate fails the build on any fixable HIGH/CRITICAL CVE.
+# Resolve a digest with: docker buildx imagetools inspect <image:tag>
 
 ############################ build ############################
-FROM node:${NODE_MAJOR}-trixie-slim AS build
+FROM node:24-trixie-slim@sha256:54f84b4cf8432b21aaffd5d3ce8d41e12cea0d10d33c09d2f3c9879d49d6b446 AS build
 WORKDIR /src
 ENV NODE_ENV=development \
     npm_config_fund=false \
@@ -35,7 +35,7 @@ RUN npm run build \
  && cp -r dist node_modules package.json /out/
 
 ########################### runtime ###########################
-FROM gcr.io/distroless/nodejs${NODE_MAJOR}-debian13:nonroot AS runtime
+FROM gcr.io/distroless/nodejs24-debian13:nonroot@sha256:a6c34457f6da4295807e051411c7783739c65b997a324fed14e4fa292615ae91 AS runtime
 
 LABEL org.opencontainers.image.title="bastion" \
       org.opencontainers.image.description="Hardened encrypted-notes API with a full DevSecOps supply chain" \
