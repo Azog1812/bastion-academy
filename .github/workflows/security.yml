@@ -49,10 +49,24 @@ jobs:
           persist-credentials: false
       - name: semgrep
         run: |
+          set +e
           semgrep scan \
             --config p/owasp-top-ten --config p/nodejs --config p/typescript --config p/jwt --config p/secrets \
             --config .semgrep/ \
             --metrics=off --error --sarif --output semgrep.sarif
+          code=$?
+          # Surface each finding as an inline annotation on the PR / commit.
+          python3 - <<'PY' || true
+          import json, os
+          if os.path.exists("semgrep.sarif"):
+              for run in json.load(open("semgrep.sarif"))["runs"]:
+                  for r in run.get("results", []):
+                      loc = r["locations"][0]["physicalLocation"]
+                      msg = r["message"]["text"].replace("\n", " ")[:300]
+                      print(f"::error file={loc['artifactLocation']['uri']},line={loc['region']['startLine']}::[{r['ruleId']}] {msg}")
+          PY
+          echo "::notice::semgrep exit code $code"
+          exit $code
       - uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
         if: always()
         with:
