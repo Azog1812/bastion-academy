@@ -39,7 +39,7 @@ FROM gcr.io/distroless/nodejs24-debian13:nonroot@sha256:a6c34457f6da4295807e0514
 
 LABEL org.opencontainers.image.title="bastion" \
       org.opencontainers.image.description="Hardened encrypted-notes API with a full DevSecOps supply chain" \
-      org.opencontainers.image.source="https://github.com/Azog1812/web-app" \
+      org.opencontainers.image.source="https://github.com/Azog1812/bastion-academy" \
       org.opencontainers.image.licenses="MIT" \
       org.opencontainers.image.authors="Florent Roch"
 

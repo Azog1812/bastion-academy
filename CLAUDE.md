@@ -1,4 +1,4 @@
-# CLAUDE.md — Bastion (Azog1812/web-app)
+# CLAUDE.md — Bastion Academy (Azog1812/bastion-academy)
 
 Context file for Claude Code. Read it fully before changing anything.
 
@@ -13,6 +13,16 @@ Never add a feature without its abuse-case tests and doc update.
 History: v1 (June 2026) was an Express hello-world with a broken Jenkins pipeline. v2
 (29 Oct 2026) is a full rewrite — commits `478cdb7` → `7520070`. The v1 history is kept
 on purpose (the README tells the "before/after" story).
+
+Direction (decided 29 Oct 2026): Bastion becomes the core of **Bastion Academy**, a
+cybersecurity learning platform. Pedagogy is "break it, then fix it": exploit a real
+vulnerability in a lab, capture a flag, then study the Bastion code and test that defeat
+it. Curriculum goes crescendo from basics to major-certification level. Milestones:
+v3 foundations (paths/modules/lessons, progress, web front-end) → v4 challenges (per-user
+HMAC flags, scoreboard, TOTP MFA) → v5 isolated per-learner lab containers → v6 blue-team
+labs, AI tutor, observability. Distribution is **local only** for now (clone + Docker);
+hosting comes later. Lab apps are intentionally vulnerable: they must bind to 127.0.0.1,
+stay out of `src/`, and never weaken the platform's own invariants below.
 
 Florent must be able to **defend every decision in an interview**. When working with him,
 explain the *why* (threat, standard, trade-off), not only the *what*.
@@ -144,11 +154,16 @@ Validate workflows locally with `actionlint` before pushing.
 
 ## Pending manual actions (Florent, in the GitHub UI)
 
-1. Make the GHCR package public (needed for the `cosign verify` instructions in README/SECURITY.md).
-2. Branch protection on `main` with the 6 workflows as required checks (README claims gates block merges).
-3. Consider renaming the repo `web-app` → `bastion` (then update URLs in README, SECURITY.md,
-   package.json, Dockerfile labels, Kyverno subject, k8s image, CODEOWNERS, workflows' identity).
-4. Pin the repo on the GitHub profile.
+1. Make the GHCR package `bastion-academy` public once the first image is pushed under the new
+   name (needed for the `cosign verify` instructions in README/SECURITY.md).
+2. Pin the repo on the GitHub profile.
+
+Done on 29 Oct 2026: repo renamed `web-app` → `bastion-academy`; ruleset `protect-main` (PR
+required with 0 approvals, the 11 CI jobs required and up to date, linear history,
+no force-push/deletion, no bypass); Dependabot alerts + security updates + malware alerts;
+private vulnerability reporting; push protection; Actions must be SHA-pinned; fork PR
+workflows need approval for all external contributors. **Every change goes through a PR.**
+If a CI job is renamed, update the ruleset's required checks in the same change or merges block.
 
 ## Roadmap (suggested order, highest interview value first)
 
