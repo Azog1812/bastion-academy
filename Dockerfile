@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1
+# syntax=docker/dockerfile:1@sha256:4edf897a3ffa55b89f906fc8cc78afdb3f1834cc9c7083565e611a8a7d5fe99e
 #
 # Hardened multi-stage build.
 #  - build stage: full toolchain, compiles TypeScript, then prunes dev dependencies;
@@ -7,8 +7,9 @@
 #    work with (no `sh`, no `curl`, no `apt`).
 #  - runs as UID 65532 (nonroot), designed for a read-only root filesystem.
 #
-# Base images are pinned by digest: a tag can be re-pointed (registry compromise,
-# upstream mistake) and the build would silently change. The tag stays next to
+# Base images, and the Dockerfile frontend on line 1, are pinned by digest: a
+# tag can be re-pointed (registry compromise, upstream mistake) and the build
+# would silently change. The tag stays next to
 # the digest so humans can read it and Dependabot can propose tag+digest bumps;
 # the Trivy gate fails the build on any fixable HIGH/CRITICAL CVE.
 # Resolve a digest with: docker buildx imagetools inspect <image:tag>

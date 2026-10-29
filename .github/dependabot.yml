@@ -26,6 +26,12 @@ updates:
     directory: /
     schedule: { interval: weekly }
     cooldown: { default-days: 7 }
+    ignore:
+      # The build stage (node) and the runtime stage (distroless/nodejs24) must
+      # share one Node major, and only even (LTS) majors are used. A major move
+      # is one deliberate change to both FROM lines, not an automated bump.
+      - dependency-name: "node"
+        update-types: ["version-update:semver-major"]
     labels: [dependencies, docker]
 
   # Keeps every SHA-pinned action current (pinning by SHA without updates
