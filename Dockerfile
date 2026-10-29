@@ -29,6 +29,8 @@ RUN --mount=type=cache,target=/root/.npm npm ci --ignore-scripts
 
 COPY tsconfig.json tsconfig.build.json ./
 COPY src ./src
+COPY web/tsconfig.json ./web/tsconfig.json
+COPY web/src ./web/src
 RUN npm run build \
  && npm prune --omit=dev --ignore-scripts \
  && mkdir -p /out/data \
@@ -56,6 +58,7 @@ COPY --from=build --chown=0:0 /out/node_modules ./node_modules
 COPY --from=build --chown=0:0 /out/package.json ./package.json
 # Learning content is data, not code: owned by root, read-only for the app user.
 COPY --chown=0:0 --chmod=0555 content ./content
+COPY --chown=0:0 --chmod=0555 web/public ./web/public
 
 USER 65532:65532
 EXPOSE 3000

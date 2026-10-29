@@ -9,6 +9,7 @@ import { createTokenSigner } from './crypto/tokens.js';
 import type { Database } from './db.js';
 import { errorHandler, noStore, notFoundHandler, requestId, requireJson } from './http/middleware.js';
 import { buildRouter } from './http/routes.js';
+import { webRouter } from './http/web.js';
 import type { Curriculum } from './curriculum/catalog.js';
 import { AuthService } from './services/auth-service.js';
 import { LearningService } from './services/learning-service.js';
@@ -19,6 +20,8 @@ export interface AppOptions {
   db: Database;
   logger: Logger;
   curriculum: Curriculum;
+  /** Overridable so tests can serve a fixture front-end. */
+  web?: { publicDir?: string; jsDir?: string };
   /** Overridable so tests can exercise the limiter without waiting 15 minutes. */
   rateLimits?: { global: number; auth: number; refresh: number; quiz: number };
 }
@@ -28,7 +31,7 @@ export interface App {
   services: { auth: AuthService; notes: NoteService; learning: LearningService; audit: AuditLog };
 }
 
-export function createApp({ config, db, logger, curriculum, rateLimits }: AppOptions): App {
+export function createApp({ config, db, logger, curriculum, rateLimits, web }: AppOptions): App {
   const limits = rateLimits ?? {
     global: config.RATE_LIMIT_GLOBAL,
     auth: config.RATE_LIMIT_AUTH,
@@ -94,6 +97,9 @@ export function createApp({ config, db, logger, curriculum, rateLimits }: AppOpt
     }
   });
 
+  /* Web front-end: static, same origin, its own CSP. Before the limiter so loading the UI never throttles the API. */
+  app.use(webRouter(web));
+
   app.use(
     rateLimit({
       windowMs: 15 * 60 * 1000,
@@ -105,7 +111,15 @@ export function createApp({ config, db, logger, curriculum, rateLimits }: AppOpt
   );
   app.use(requireJson);
   app.use(express.json({ limit: '100kb', strict: true }));
-  app.use('/v1', noStore, buildRouter({ auth, notes, learning, audit, signer, rateLimits: { auth: limits.auth, refresh: limits.refresh, quiz: limits.quiz } }));
+  app.use('/v1', noStore, buildRouter({
+      auth,
+      notes,
+      learning,
+      audit,
+      signer,
+      rateLimits: { auth: limits.auth, refresh: limits.refresh, quiz: limits.quiz },
+      refreshTtlSeconds: config.REFRESH_TOKEN_TTL_SECONDS,
+    }));
 
   app.use(notFoundHandler);
   app.use(errorHandler(logger));

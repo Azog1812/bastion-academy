@@ -14,7 +14,7 @@ Standards: **OWASP API Security Top 10 (2023)** and **OWASP ASVS 4.0.3** (Level 
 | API5 Broken Function Level Authorization | ✅ | `requireRole('admin')` with role fetched from DB per request; no HTTP route grants privileges | [`middleware.ts`](../src/http/middleware.ts) |
 | API6 Unrestricted Access to Sensitive Business Flows | ✅ | Registration and login rate-limited per IP; quiz submissions rate-limited per account; lesson completion gated by server-side prerequisites | [`routes.ts`](../src/http/routes.ts) |
 | API7 Server Side Request Forgery | ✅ n/a | The API makes no outbound request; NetworkPolicy denies all egress | [`networkpolicy.yaml`](../deploy/k8s/networkpolicy.yaml) |
-| API8 Security Misconfiguration | ✅ | Fail-closed config, strict headers, no `x-powered-by`, generic errors, hardened container and pod | [`config.ts`](../src/config.ts), [`deployment.yaml`](../deploy/k8s/deployment.yaml) |
+| API8 Security Misconfiguration | ✅ | Fail-closed config, strict headers, no `x-powered-by`, generic errors, hardened container and pod. Web pages: CSP without inline code plus Trusted Types, no CORS at all ([`web.ts`](../src/http/web.ts)) | [`config.ts`](../src/config.ts), [`deployment.yaml`](../deploy/k8s/deployment.yaml) |
 | API9 Improper Inventory Management | ✅ | Versioned API (`/v1`), OpenAPI spec kept in repo and exercised by DAST | [`openapi.yaml`](openapi.yaml) |
 | API10 Unsafe Consumption of APIs | ✅ n/a | No third-party API consumed | — |
 
@@ -37,7 +37,11 @@ Standards: **OWASP API Security Top 10 (2023)** and **OWASP ASVS 4.0.3** (Level 
 | ID | Requirement (summary) | How |
 |---|---|---|
 | 3.2.2 | Session tokens ≥ 64 bits of entropy | Refresh: 256 bits; JWT `jti`: UUIDv4 |
-| 3.3.1 | Logout invalidates the session | Refresh family revoked |
+| 3.3.1 | Logout invalidates the session | Refresh family revoked; browser cookie cleared |
+| 3.4.1 | Cookie-based tokens have the Secure attribute | `__Host-bastion_rt; Secure` |
+| 3.4.2 | Cookie-based tokens have the HttpOnly attribute | `HttpOnly` |
+| 3.4.3 | Cookie-based tokens use SameSite | `SameSite=Strict` |
+| 3.4.4 | Cookie-based tokens use the `__Host-` prefix | `__Host-bastion_rt` |
 | 3.3.3 | Option to terminate all sessions after password change | Automatic on password change + `/me/logout-all` |
 | 3.5.2 | Stateless tokens signed and verified | HS256, algorithm allow-list |
 | 3.5.3 | Protection against token tampering / `none` algorithm | Tested explicitly |
@@ -57,6 +61,7 @@ Standards: **OWASP API Security Top 10 (2023)** and **OWASP ASVS 4.0.3** (Level 
 | 5.1.3 | Positive (allow-list) input validation | zod schemas everywhere |
 | 5.3.4 | Parameterised queries | `prepare()` with `?`; ESLint + Semgrep rules |
 | 5.5.2 | No unsafe deserialisation / prototype pollution | Strict schemas reject `__proto__` |
+| 5.3.3 | Context-aware output escaping against XSS | The UI never builds HTML from strings: DOM nodes and text only (ESLint ban on HTML sinks), Markdown parsed to a tree, Trusted Types enforced by CSP |
 
 ### V6 Cryptography
 | ID | Requirement (summary) | How |
@@ -86,12 +91,12 @@ Standards: **OWASP API Security Top 10 (2023)** and **OWASP ASVS 4.0.3** (Level 
 | 14.2.1 | Components up to date, no known vulnerabilities | Dependabot, npm audit, OSV-Scanner, Trivy |
 | 14.2.4 | Third-party components from trusted sources, verified | `npm audit signatures`, lockfile integrity, SHA-pinned actions |
 | 14.3.2 | Debug modes disabled in production | `NODE_ENV=production`, no stack traces |
-| 14.4.3 | Content-Security-Policy | `default-src 'none'; frame-ancestors 'none'` |
+| 14.4.3 | Content-Security-Policy | API: `default-src 'none'; frame-ancestors 'none'`. Pages: `script-src 'self'` (no inline, no eval) + `require-trusted-types-for 'script'` with no allowed policy |
 | 14.4.4 | `X-Content-Type-Options: nosniff` | helmet |
 | 14.4.5 | HSTS | 2 years, includeSubDomains, preload |
 | 14.4.6 | Referrer-Policy | `no-referrer` |
 | 14.4.7 | Anti-framing | CSP `frame-ancestors` + `X-Frame-Options: DENY` |
-| 14.5.2 | Origin header not used for access control | Bearer tokens only, no cookies → no CSRF surface |
+| 14.5.2 | Origin header not used for access control | Access control relies on bearer tokens. Only the three browser-session routes read a cookie; there the `Origin` check is an extra CSRF barrier on top of `SameSite=Strict` and JSON-only bodies, never the sole control |
 
 ## CIS / NSA Kubernetes hardening highlights
 

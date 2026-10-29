@@ -33,7 +33,7 @@ explain the *why* (threat, standard, trade-off), not only the *what*.
 npm ci --ignore-scripts      # never run install scripts
 npm run lint                 # ESLint strictTypeChecked + security plugin + custom SQL rules
 npm run typecheck            # tsc strict, noUncheckedIndexedAccess, exactOptionalPropertyTypes
-npm test                     # vitest (134 tests)
+npm test                     # vitest (149 tests)
 npm run test:coverage        # thresholds: lines/statements/functions 90 %, branches 80 %
 npm run check                # lint + typecheck + coverage
 npm run build && node dist/cli.js gen-secrets > .env   # local secrets (gitignored)
@@ -66,17 +66,21 @@ src/
                          fail closed (ADR 0006)
   http/middleware.ts     requestId, noStore, requireJson, authenticate, requireRole, errorHandler
   http/schemas.ts        all zod schemas are .strict() (mass-assignment protection)
-  http/routes.ts         /v1/auth/*, /v1/me*, /v1/notes*, /v1/curriculum, /v1/lessons/:id[/complete],
-                         /v1/admin/audit*
+  http/routes.ts         /v1/auth/*, /v1/session/*, /v1/me*, /v1/notes*, /v1/curriculum,
+                         /v1/lessons/:id[/complete], /v1/admin/audit*
+  http/session.ts        browser sessions: __Host- HttpOnly refresh cookie, Origin check (ADR 0007)
+  http/web.ts            serves web/public + dist/web, page CSP with Trusted Types
   app.ts                 createApp(): helmet (CSP default-src 'none', HSTS, frameguard DENY),
                          rate limits, body limit 100 kB, trust proxy from config
   server.ts / cli.ts     entry point (timeouts, graceful shutdown) / operator CLI
+web/                     front-end, zero deps: src/{main,api,dom,markdown}.ts (tsc → dist/web),
+                         public/{index.html,style.css}. Hash routes, French UI.
 content/                 curriculum as code: index.json (levels, path order), <path>/path.json
                          (modules, lessons, quizzes), <path>/<lesson>.md (French lesson bodies)
 test/unit, test/security, test/helpers.ts (setup(), newUser(), auditActions())
 deploy/k8s (kustomize), deploy/policies (Kyverno signed-image policy)
 docs/  threat-model · security-controls (OWASP API Top 10 + ASVS 4.0.3) · security-pipeline ·
-       adr/0001-0006 · runbook · openapi.yaml (used by DAST)
+       adr/0001-0007 · runbook · openapi.yaml (used by DAST)
 ```
 
 ## Security invariants — never break these
@@ -105,6 +109,10 @@ docs/  threat-model · security-controls (OWASP API Top 10 + ASVS 4.0.3) · secu
     are projected field by field); prerequisites are checked on read *and* on completion;
     progress queries include `user_id` (Semgrep `bastion-progress-query-without-user`).
     Content is never written over HTTP and never read from disk per request.
+13. **Front-end never builds HTML from strings** (`h()`/textContent only; ESLint bans HTML
+    sinks and web storage in `web/`), the page CSP keeps Trusted Types with no policy, and
+    tokens never touch web storage. Only `/v1/session/*` reads a cookie; keep it that way
+    (any new cookie route needs SameSite + JSON-only + `sameOriginOnly`).
 
 ## Conventions
 
