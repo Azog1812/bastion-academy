@@ -1,0 +1,101 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bastion
+  namespace: bastion
+  annotations:
+    # Documented, reviewed risk acceptances (surfaced by Checkov in CI):
+    checkov.io/skip1: CKV_K8S_11=No CPU limit on purpose — CFS throttling hurts latency; CPU requests are set and memory is limited.
+    checkov.io/skip2: CKV_K8S_43=The CD pipeline deploys by immutable digest and Kyverno rewrites tags to verified digests at admission.
+spec:
+  # SQLite = single writer. Scaling out means moving to PostgreSQL first
+  # (see docs/adr/0002-sqlite-single-replica.md).
+  replicas: 1
+  strategy:
+    type: Recreate
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: bastion
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: bastion
+    spec:
+      serviceAccountName: bastion
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: bastion
+          # Replaced by the CD pipeline with an immutable, signed digest:
+          # ghcr.io/azog1812/web-app@sha256:<digest>
+          image: ghcr.io/azog1812/web-app:main
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 3000
+          env:
+            # Secrets are mounted as files, not exposed as environment variables.
+            - name: JWT_SECRET_FILE
+              value: /run/secrets/bastion/JWT_SECRET
+            - name: AUDIT_HMAC_KEY_FILE
+              value: /run/secrets/bastion/AUDIT_HMAC_KEY
+            - name: ENCRYPTION_KEYS_FILE
+              value: /run/secrets/bastion/ENCRYPTION_KEYS
+            - name: ACTIVE_KEY_ID
+              valueFrom:
+                configMapKeyRef: { name: bastion-config, key: ACTIVE_KEY_ID }
+            - name: NODE_ENV
+              value: production
+            - name: TRUST_PROXY
+              value: "1" # exactly one hop: the ingress controller
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            privileged: false
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              # scrypt (N=2^17) = 128 MiB per hash × 4 libuv threads + runtime.
+              memory: 768Mi
+          startupProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 2
+            failureThreshold: 15
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 20
+          readinessProbe:
+            httpGet: { path: /readyz, port: http }
+            periodSeconds: 10
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: tmp
+              mountPath: /tmp
+            - name: secrets
+              mountPath: /run/secrets/bastion
+              readOnly: true
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: bastion-data
+        - name: secrets
+          secret:
+            secretName: bastion-secrets
+            defaultMode: 0400
+        - name: tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 16Mi

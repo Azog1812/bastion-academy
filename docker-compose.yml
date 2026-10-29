@@ -1,0 +1,29 @@
+# Local run with the same hardening as production:
+#   npm ci && npm run build && node dist/cli.js gen-secrets > .env
+#   docker compose up --build
+services:
+  bastion:
+    build: .
+    image: bastion:local
+    env_file: .env
+    environment:
+      NODE_ENV: production
+    ports:
+      - "127.0.0.1:3000:3000" # loopback only: not exposed to the LAN
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    volumes:
+      - bastion-data:/data
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    # scrypt N=2^17 uses 128 MiB per hash; libuv runs at most UV_THREADPOOL_SIZE (4)
+    # hashes at once, so ~512 MiB peak for hashing + the app itself.
+    mem_limit: 768m
+    cpus: 1.0
+    restart: unless-stopped
+
+volumes:
+  bastion-data:

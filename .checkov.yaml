@@ -1,0 +1,9 @@
+# Checkov configuration. Risk acceptances live next to the resource they apply
+# to (checkov.io/skip annotations), so they are reviewed with the code.
+compact: true
+quiet: true
+framework:
+  - kubernetes
+  - dockerfile
+skip-path:
+  - deploy/k8s/secret.example.yaml

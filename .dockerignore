@@ -1,0 +1,8 @@
+# Default-deny: only what the build needs enters the build context.
+# Keeps secrets (.env, keys), VCS metadata and local data out of image layers.
+*
+!package.json
+!package-lock.json
+!tsconfig.json
+!tsconfig.build.json
+!src/**

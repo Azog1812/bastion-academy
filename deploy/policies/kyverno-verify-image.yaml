@@ -1,0 +1,37 @@
+# Admission control: the cluster refuses to run any bastion image that was not
+# signed by this repository's GitHub Actions release workflow (Sigstore keyless).
+# A tampered image, or one pushed by hand with stolen registry credentials,
+# simply never starts.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: bastion-verify-signature
+spec:
+  validationFailureAction: Enforce
+  webhookTimeoutSeconds: 30
+  rules:
+    - name: require-signed-image-and-sbom
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+              namespaces: [bastion]
+      verifyImages:
+        - imageReferences:
+            - "ghcr.io/azog1812/web-app*"
+          mutateDigest: true # rewrite tags to immutable digests
+          verifyDigest: true
+          attestors:
+            - entries:
+                - keyless:
+                    issuer: https://token.actions.githubusercontent.com
+                    subject: "https://github.com/Azog1812/web-app/.github/workflows/container.yml@refs/heads/main"
+                    rekor:
+                      url: https://rekor.sigstore.dev
+          attestations:
+            - type: https://cyclonedx.org/bom
+              attestors:
+                - entries:
+                    - keyless:
+                        issuer: https://token.actions.githubusercontent.com
+                        subject: "https://github.com/Azog1812/web-app/.github/workflows/container.yml@refs/heads/main"
