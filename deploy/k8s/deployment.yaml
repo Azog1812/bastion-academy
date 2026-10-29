@@ -35,8 +35,8 @@ spec:
       containers:
         - name: bastion
           # Replaced by the CD pipeline with an immutable, signed digest:
-          # ghcr.io/azog1812/web-app@sha256:<digest>
-          image: ghcr.io/azog1812/web-app:main
+          # ghcr.io/azog1812/bastion-academy@sha256:<digest>
+          image: ghcr.io/azog1812/bastion-academy:main
           imagePullPolicy: Always
           ports:
             - name: http

@@ -18,14 +18,14 @@ spec:
               namespaces: [bastion]
       verifyImages:
         - imageReferences:
-            - "ghcr.io/azog1812/web-app*"
+            - "ghcr.io/azog1812/bastion-academy*"
           mutateDigest: true # rewrite tags to immutable digests
           verifyDigest: true
           attestors:
             - entries:
                 - keyless:
                     issuer: https://token.actions.githubusercontent.com
-                    subject: "https://github.com/Azog1812/web-app/.github/workflows/container.yml@refs/heads/main"
+                    subject: "https://github.com/Azog1812/bastion-academy/.github/workflows/container.yml@refs/heads/main"
                     rekor:
                       url: https://rekor.sigstore.dev
           attestations:
@@ -34,4 +34,4 @@ spec:
                 - entries:
                     - keyless:
                         issuer: https://token.actions.githubusercontent.com
-                        subject: "https://github.com/Azog1812/web-app/.github/workflows/container.yml@refs/heads/main"
+                        subject: "https://github.com/Azog1812/bastion-academy/.github/workflows/container.yml@refs/heads/main"
