@@ -31,15 +31,45 @@ The learner first exploits it in a lab and captures a flag. Then they study how
 Bastion's own code defeats the attack and run the test that proves it. The path goes
 from first principles up to the level expected by major industry certifications.
 
-| Milestone | Scope |
-|---|---|
-| **v3: foundations** | Learning paths → modules → lessons, progress tracking, web front-end, built on Bastion's auth core |
-| **v4: challenges** | Per-user HMAC flags (unshareable), scoreboard, anti-cheat, TOTP MFA |
-| **v5: isolated labs** | One vulnerable container per learner: no egress, TTL, sandboxed runtime, quotas |
-| **v6: advanced** | Blue-team labs (log analysis, detection), AI tutor, observability |
+| Milestone | Scope | Status |
+|---|---|---|
+| **v3: foundations** | Learning paths → modules → lessons, progress tracking, web front-end, built on Bastion's auth core | 🚧 API and first path done; front-end next |
+| **v4: challenges** | Per-user HMAC flags (unshareable), scoreboard, anti-cheat, TOTP MFA | Planned |
+| **v5: isolated labs** | One vulnerable container per learner: no egress, TTL, sandboxed runtime, quotas | Planned |
+| **v6: advanced** | Blue-team labs (log analysis, detection), AI tutor, observability | Planned |
 
 The platform is designed to **run locally** (`git clone` + Docker). There is no public
 hosted instance yet.
+
+### What's available today
+
+The curriculum spans six levels, from **Fundamentals** to **Expert**. The first path
+(level 1, in French) covers security basics, HTTP, sessions and JWT. It ends with a
+*break it, then fix it* IDOR module built on Bastion's own code and tests.
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /v1/curriculum` | Levels, paths, modules and lessons, with your progress and which modules are unlocked |
+| `GET /v1/lessons/{id}` | A lesson (Markdown) and its quiz questions, never their answers |
+| `POST /v1/lessons/{id}/complete` | Submit your quiz answers; graded on the server |
+
+How it is secured ([ADR 0006](docs/adr/0006-curriculum-as-code.md)):
+
+- **Curriculum as code.** Lessons live in [`content/`](content/) and change only
+  through reviewed pull requests. They are validated at boot, and the server refuses
+  to start on inconsistent content. There is no CMS to compromise.
+- **Server-side gating.** Prerequisites and quizzes are enforced by the API, so editing
+  the front-end unlocks nothing. Quiz answers never leave the server.
+- **Isolated progress.** Every query is scoped to the authenticated learner. A Semgrep
+  rule blocks any regression.
+
+Quick tour, once the API runs (see [Try to break it](#try-to-break-it) to start it
+and get a token):
+
+```bash
+curl -s $B/v1/curriculum -H "authorization: Bearer $ALICE" | jq '.paths[].modules[] | {id, unlocked}'
+curl -s $B/v1/lessons/cia-et-risque -H "authorization: Bearer $ALICE" | jq -r .body
+```
 
 > [!WARNING]
 > Future labs will ship **intentionally vulnerable** applications. Run them only on
@@ -50,6 +80,8 @@ hosted instance yet.
 > cyber à installer chez soi, fondée sur le principe « casse-le, puis répare-le » :
 > on exploite une faille réelle dans un lab, puis on étudie le code et le test qui la
 > neutralisent. Progression des bases jusqu'au niveau des grandes certifications.
+> Déjà disponible : l'API d'apprentissage (cursus, progression, quiz corrigés côté
+> serveur) et un premier parcours « Fondamentaux » en français.
 > Les labs seront volontairement vulnérables : à lancer uniquement en local.
 
 ---
@@ -109,7 +141,7 @@ generic errors with correlation ids · secret redaction in logs · secrets read 
 files rather than env vars · socket timeouts · privileged operations only via an
 operator CLI, never over HTTP.
 
-**112 tests, ~98 % line coverage** — most of them are *abuse cases*, not happy paths.
+**134 tests, ~98 % line coverage** — most of them are *abuse cases*, not happy paths.
 
 ### Supply chain & infrastructure
 
@@ -169,13 +201,16 @@ Or run the whole battery: `npm test`. With Docker: `docker compose up --build`
 src/
   config.ts            fail-closed configuration (zod), secrets from files
   crypto/              envelope encryption · scrypt · JWT + refresh tokens
-  services/            auth (lockout, rotation, revocation) · notes (owner-scoped)
+  services/            auth (lockout, rotation, revocation) · notes (owner-scoped) ·
+                       learning (progress, server-side gating)
+  curriculum/          loads and validates content/ at boot (fail closed)
   http/                middleware (authn, RBAC, errors) · strict schemas · routes
   audit.ts             HMAC-chained, append-only audit trail
   cli.ts               operator-only actions: promote, rotate-keys, verify-audit
 test/
   unit/                crypto, tokens, config, audit chain
-  security/            authentication, authorization/IDOR, injection & transport
+  security/            authentication, authorization/IDOR, injection & transport, learning
+content/               curriculum as code: levels, paths, quizzes (JSON), lessons (Markdown)
 deploy/k8s/            hardened manifests (PSS restricted, NetworkPolicy, secrets as files)
 deploy/policies/       Kyverno: only signed images may run
 .github/workflows/     CI · Security · CodeQL · Container (sign/SBOM/SLSA) · DAST · Scorecard
@@ -192,7 +227,7 @@ dependencies, single replica) and how to move to PostgreSQL. Known, accepted ris
 [threat model](docs/threat-model.md#5-accepted-risks) rather than hidden.
 
 **Roadmap:** WebAuthn / TOTP MFA · external KMS (Vault Transit) for KEKs · PostgreSQL +
-Redis for horizontal scaling · base images pinned by digest · signed commits.
+Redis for horizontal scaling · signed commits.
 
 ## Security
 
