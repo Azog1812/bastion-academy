@@ -39,7 +39,7 @@ FROM gcr.io/distroless/nodejs${NODE_MAJOR}-debian13:nonroot AS runtime
 
 LABEL org.opencontainers.image.title="bastion" \
       org.opencontainers.image.description="Hardened encrypted-notes API with a full DevSecOps supply chain" \
-      org.opencontainers.image.source="https://github.com/Azog1812/web-app" \
+      org.opencontainers.image.source="https://github.com/Azog1812/bastion-academy" \
       org.opencontainers.image.licenses="MIT" \
       org.opencontainers.image.authors="Florent Roch"
 

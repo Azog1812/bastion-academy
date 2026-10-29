@@ -23,7 +23,7 @@ pipeline {
   }
 
   environment {
-    IMAGE    = 'ghcr.io/azog1812/web-app'
+    IMAGE    = 'ghcr.io/azog1812/bastion-academy'
     TAG      = "${env.GIT_COMMIT?.take(12) ?: 'dev'}"
     NODE_IMG = 'node:24-trixie-slim'
   }

@@ -4,12 +4,12 @@
 
 **A deliberately hardened, envelope-encrypted notes API — and the DevSecOps supply chain that ships it.**
 
-[![CI](https://github.com/Azog1812/web-app/actions/workflows/ci.yml/badge.svg)](https://github.com/Azog1812/web-app/actions/workflows/ci.yml)
-[![Security](https://github.com/Azog1812/web-app/actions/workflows/security.yml/badge.svg)](https://github.com/Azog1812/web-app/actions/workflows/security.yml)
-[![CodeQL](https://github.com/Azog1812/web-app/actions/workflows/codeql.yml/badge.svg)](https://github.com/Azog1812/web-app/actions/workflows/codeql.yml)
-[![Container](https://github.com/Azog1812/web-app/actions/workflows/container.yml/badge.svg)](https://github.com/Azog1812/web-app/actions/workflows/container.yml)
-[![DAST](https://github.com/Azog1812/web-app/actions/workflows/dast.yml/badge.svg)](https://github.com/Azog1812/web-app/actions/workflows/dast.yml)
-[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/Azog1812/web-app/badge)](https://scorecard.dev/viewer/?uri=github.com/Azog1812/web-app)
+[![CI](https://github.com/Azog1812/bastion-academy/actions/workflows/ci.yml/badge.svg)](https://github.com/Azog1812/bastion-academy/actions/workflows/ci.yml)
+[![Security](https://github.com/Azog1812/bastion-academy/actions/workflows/security.yml/badge.svg)](https://github.com/Azog1812/bastion-academy/actions/workflows/security.yml)
+[![CodeQL](https://github.com/Azog1812/bastion-academy/actions/workflows/codeql.yml/badge.svg)](https://github.com/Azog1812/bastion-academy/actions/workflows/codeql.yml)
+[![Container](https://github.com/Azog1812/bastion-academy/actions/workflows/container.yml/badge.svg)](https://github.com/Azog1812/bastion-academy/actions/workflows/container.yml)
+[![DAST](https://github.com/Azog1812/bastion-academy/actions/workflows/dast.yml/badge.svg)](https://github.com/Azog1812/bastion-academy/actions/workflows/dast.yml)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/Azog1812/bastion-academy/badge)](https://scorecard.dev/viewer/?uri=github.com/Azog1812/bastion-academy)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 [Threat model](docs/threat-model.md) · [Controls ↔ OWASP mapping](docs/security-controls.md) · [Security pipeline](docs/security-pipeline.md) · [ADRs](docs/adr/) · [Runbook](docs/runbook.md) · [API spec](docs/openapi.yaml)
@@ -21,6 +21,36 @@
 > anti-IDOR, journal d'audit infalsifiable, conteneur distroless non-root, et une chaîne
 > CI/CD DevSecOps complète (SAST, SCA, secrets, IaC, DAST, SBOM, signature Sigstore,
 > provenance SLSA). Chaque contrôle est relié à une menace et prouvé par un test.
+
+## Where this is going: Bastion Academy
+
+Bastion is becoming the core of **Bastion Academy**, a self-hosted cybersecurity
+learning platform. Its pedagogy is *break it, then fix it*: each module starts from a
+real vulnerability (IDOR, JWT forgery, brute force, SQL injection, token replay…).
+The learner first exploits it in a lab and captures a flag. Then they study how
+Bastion's own code defeats the attack and run the test that proves it. The path goes
+from first principles up to the level expected by major industry certifications.
+
+| Milestone | Scope |
+|---|---|
+| **v3: foundations** | Learning paths → modules → lessons, progress tracking, web front-end, built on Bastion's auth core |
+| **v4: challenges** | Per-user HMAC flags (unshareable), scoreboard, anti-cheat, TOTP MFA |
+| **v5: isolated labs** | One vulnerable container per learner: no egress, TTL, sandboxed runtime, quotas |
+| **v6: advanced** | Blue-team labs (log analysis, detection), AI tutor, observability |
+
+The platform is designed to **run locally** (`git clone` + Docker). There is no public
+hosted instance yet.
+
+> [!WARNING]
+> Future labs will ship **intentionally vulnerable** applications. Run them only on
+> your own machine, bound to `127.0.0.1`, and **never expose them to a network you
+> don't control**. Only attack targets you own or are explicitly authorised to test.
+
+> 🇫🇷 **Bastion Academy** — Bastion devient le cœur d'une plateforme d'apprentissage
+> cyber à installer chez soi, fondée sur le principe « casse-le, puis répare-le » :
+> on exploite une faille réelle dans un lab, puis on étudie le code et le test qui la
+> neutralisent. Progression des bases jusqu'au niveau des grandes certifications.
+> Les labs seront volontairement vulnérables : à lancer uniquement en local.
 
 ---
 
@@ -99,7 +129,7 @@ operator CLI, never over HTTP.
 ## Try to break it
 
 ```bash
-git clone https://github.com/Azog1812/web-app && cd web-app
+git clone https://github.com/Azog1812/bastion-academy && cd bastion-academy
 npm ci && npm run build
 node dist/cli.js gen-secrets > .env
 set -a && . ./.env && set +a && NODE_ENV=development npm start
