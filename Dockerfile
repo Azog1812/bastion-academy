@@ -14,7 +14,7 @@
 # Resolve a digest with: docker buildx imagetools inspect <image:tag>
 
 ############################ build ############################
-FROM node:24-trixie-slim@sha256:54f84b4cf8432b21aaffd5d3ce8d41e12cea0d10d33c09d2f3c9879d49d6b446 AS build
+FROM node:25-trixie-slim@sha256:aabbe39553d15ede8a97cc60c9e1a97034ff772afcf696ea42b94e7f5f2ec71b AS build
 WORKDIR /src
 ENV NODE_ENV=development \
     npm_config_fund=false \
