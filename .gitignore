@@ -1,3 +1,19 @@
 node_modules/
+dist/
 coverage/
+data/
+*.db
+*.db-wal
+*.db-shm
+
+# secrets — never committed (gitleaks also enforces this in CI)
 .env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# scan outputs
+*.sarif
+sbom*.json
+zap-report.*
