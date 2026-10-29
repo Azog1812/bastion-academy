@@ -111,7 +111,8 @@ describe('authentication', () => {
     // Same database, stronger configuration.
     const { createApp } = await import('../../src/app.js');
     const { createLogger } = await import('../../src/logger.js');
-    const upgraded = createApp({ config: t2.config, db: t.db, logger: createLogger('silent') });
+    const { loadCurriculum } = await import('../../src/curriculum/catalog.js');
+    const upgraded = createApp({ config: t2.config, db: t.db, logger: createLogger('silent'), curriculum: loadCurriculum() });
     const request = (await import('supertest')).default;
     await request(upgraded.app).post('/v1/auth/login').send({ email: 'legacy@example.test', password: STRONG_PASSWORD }).expect(200);
     const row = t.db.prepare('SELECT password_hash FROM users WHERE email = ?').get('legacy@example.test') as { password_hash: string };

@@ -23,7 +23,7 @@ explain the *why* (threat, standard, trade-off), not only the *what*.
 npm ci --ignore-scripts      # never run install scripts
 npm run lint                 # ESLint strictTypeChecked + security plugin + custom SQL rules
 npm run typecheck            # tsc strict, noUncheckedIndexedAccess, exactOptionalPropertyTypes
-npm test                     # vitest (112 tests)
+npm test                     # vitest (134 tests)
 npm run test:coverage        # thresholds: lines/statements/functions 90 %, branches 80 %
 npm run check                # lint + typecheck + coverage
 npm run build && node dist/cli.js gen-secrets > .env   # local secrets (gitignored)
@@ -51,16 +51,22 @@ src/
   security/              NIST 800-63B password policy + SecLists blocklist (generated file)
   services/auth-service  register/login/refresh/logout/logoutEverywhere/changePassword
   services/note-service  owner-scoped CRUD, optimistic concurrency (version), rotateKeys()
+  services/learning-service  progress scoped by user_id, server-side prerequisites + quiz grading
+  curriculum/catalog.ts  loads + validates content/ at boot (slug ids, no cycles, https links),
+                         fail closed (ADR 0006)
   http/middleware.ts     requestId, noStore, requireJson, authenticate, requireRole, errorHandler
   http/schemas.ts        all zod schemas are .strict() (mass-assignment protection)
-  http/routes.ts         /v1/auth/*, /v1/me*, /v1/notes*, /v1/admin/audit*
+  http/routes.ts         /v1/auth/*, /v1/me*, /v1/notes*, /v1/curriculum, /v1/lessons/:id[/complete],
+                         /v1/admin/audit*
   app.ts                 createApp(): helmet (CSP default-src 'none', HSTS, frameguard DENY),
                          rate limits, body limit 100 kB, trust proxy from config
   server.ts / cli.ts     entry point (timeouts, graceful shutdown) / operator CLI
+content/                 curriculum as code: index.json (levels, path order), <path>/path.json
+                         (modules, lessons, quizzes), <path>/<lesson>.md (French lesson bodies)
 test/unit, test/security, test/helpers.ts (setup(), newUser(), auditActions())
 deploy/k8s (kustomize), deploy/policies (Kyverno signed-image policy)
 docs/  threat-model · security-controls (OWASP API Top 10 + ASVS 4.0.3) · security-pipeline ·
-       adr/0001-0005 · runbook · openapi.yaml (used by DAST)
+       adr/0001-0006 · runbook · openapi.yaml (used by DAST)
 ```
 
 ## Security invariants — never break these
@@ -85,6 +91,10 @@ docs/  threat-model · security-controls (OWASP API Top 10 + ASVS 4.0.3) · secu
 10. **Audit every security-relevant event** (`AuditAction` union in `audit.ts`).
 11. **Zero native dependencies / no install scripts.** Think hard before adding any
     dependency (supply-chain surface); prefer `node:` built-ins.
+12. **Learning gating is server-side.** Quiz `answer` fields never leave the server (lessons
+    are projected field by field); prerequisites are checked on read *and* on completion;
+    progress queries include `user_id` (Semgrep `bastion-progress-query-without-user`).
+    Content is never written over HTTP and never read from disk per request.
 
 ## Conventions
 

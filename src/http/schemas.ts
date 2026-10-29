@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { slug } from '../curriculum/catalog.js';
 import { PASSWORD_MAX } from '../security/password-policy.js';
 
 /**
@@ -37,6 +38,17 @@ export const updateNoteSchema = z
   .strict();
 
 export const noteIdSchema = z.object({ id: z.uuid() }).strict();
+
+export const lessonIdSchema = z.object({ id: slug }).strict();
+
+export const completeLessonSchema = z
+  .object({
+    answers: z
+      .array(z.object({ question: slug, choices: z.array(z.number().int().min(0).max(5)).max(6) }).strict())
+      .max(20)
+      .default([]),
+  })
+  .strict();
 
 export const paginationSchema = z
   .object({

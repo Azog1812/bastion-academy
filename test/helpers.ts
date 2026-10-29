@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import request from 'supertest';
 import { createApp, type AppOptions } from '../src/app.js';
 import { loadConfig, type Config } from '../src/config.js';
+import { loadCurriculum, type Curriculum } from '../src/curriculum/catalog.js';
 import { openDatabase, type Database } from '../src/db.js';
 import { createLogger } from '../src/logger.js';
 
@@ -29,14 +30,20 @@ export interface TestContext {
   http: ReturnType<typeof request>;
 }
 
-export function setup(opts: { env?: Record<string, string>; rateLimits?: AppOptions['rateLimits'] } = {}): TestContext {
+/** The real content/ tree: tests also prove the shipped curriculum is valid. */
+const realCurriculum = loadCurriculum();
+
+export function setup(
+  opts: { env?: Record<string, string>; rateLimits?: Partial<NonNullable<AppOptions['rateLimits']>>; curriculum?: Curriculum } = {},
+): TestContext {
   const config = loadConfig(testEnv(opts.env));
   const db = openDatabase(':memory:');
   const { app, services } = createApp({
     config,
     db,
     logger: createLogger('silent'),
-    rateLimits: opts.rateLimits ?? { global: 10_000, auth: 10_000, refresh: 10_000 },
+    curriculum: opts.curriculum ?? realCurriculum,
+    rateLimits: { global: 10_000, auth: 10_000, refresh: 10_000, quiz: 10_000, ...opts.rateLimits },
   });
   return { config, db, app, services, http: request(app) };
 }

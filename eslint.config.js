@@ -52,6 +52,8 @@ export default tseslint.config(
       '@typescript-eslint/no-unsafe-call': 'off',
       'security/detect-non-literal-regexp': 'off',
       'security/detect-child-process': 'off',
+      // Tests build fixture trees in temporary directories.
+      'security/detect-non-literal-fs-filename': 'off',
     },
   },
   { files: ['eslint.config.js'], ...tseslint.configs.disableTypeChecked },
