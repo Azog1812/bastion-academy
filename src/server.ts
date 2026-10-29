@@ -1,15 +1,18 @@
 import { createApp } from './app.js';
 import { loadConfig } from './config.js';
 import { openDatabase } from './db.js';
+import { loadCurriculum } from './curriculum/catalog.js';
 import { createLogger } from './logger.js';
 
 const config = loadConfig();
 const logger = createLogger(config.LOG_LEVEL);
 const db = openDatabase(config.DATABASE_PATH);
-const { app } = createApp({ config, db, logger });
+// Invalid content stops the boot, like invalid config: fail closed.
+const curriculum = loadCurriculum();
+const { app } = createApp({ config, db, logger, curriculum });
 
 const server = app.listen(config.PORT, config.HOST, () => {
-  logger.info({ port: config.PORT, keyId: config.ACTIVE_KEY_ID }, 'bastion listening');
+  logger.info({ port: config.PORT, keyId: config.ACTIVE_KEY_ID, lessons: curriculum.lessons.size }, 'bastion listening');
 });
 
 // Defensive socket timeouts against slow-loris style resource exhaustion.

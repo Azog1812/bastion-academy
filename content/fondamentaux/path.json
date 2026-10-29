@@ -1,0 +1,221 @@
+{
+  "id": "fondamentaux",
+  "title": "Fondamentaux de la sécurité",
+  "summary": "Les notions de base, le fonctionnement du web, puis une première faille réelle : l'exploiter, comprendre pourquoi elle existe et la corriger.",
+  "level": 1,
+  "modules": [
+    {
+      "id": "socle-securite",
+      "title": "Le socle de la sécurité",
+      "summary": "Ce qu'on protège, contre qui, et la différence entre « qui es-tu ? » et « as-tu le droit ? ».",
+      "lessons": [
+        {
+          "id": "cia-et-risque",
+          "title": "Confidentialité, intégrité, disponibilité",
+          "minutes": 15,
+          "references": [
+            { "label": "ANSSI — Guide d'hygiène informatique", "url": "https://cyber.gouv.fr/publications/guide-dhygiene-informatique" }
+          ],
+          "quiz": [
+            {
+              "id": "propriete-rancongiciel",
+              "prompt": "Un rançongiciel chiffre les serveurs d'une entreprise et exige une rançon. Quelle propriété est attaquée en premier ?",
+              "choices": ["La confidentialité", "L'intégrité", "La disponibilité"],
+              "answer": [2]
+            },
+            {
+              "id": "definition-risque",
+              "prompt": "Quelle combinaison décrit le mieux un risque ?",
+              "choices": [
+                "Une vulnérabilité, à elle seule",
+                "Une menace qui exploite une vulnérabilité, avec un impact et une vraisemblance",
+                "Un pare-feu mal configuré"
+              ],
+              "answer": [1]
+            }
+          ]
+        },
+        {
+          "id": "authentification-autorisation",
+          "title": "Authentification et autorisation",
+          "minutes": 15,
+          "references": [
+            { "label": "OWASP — Authorization Cheat Sheet", "url": "https://cheatsheetseries.owasp.org/cheatsheets/Authorization_Cheat_Sheet.html" }
+          ],
+          "quiz": [
+            {
+              "id": "question-autorisation",
+              "prompt": "Quelle question l'autorisation pose-t-elle ?",
+              "choices": ["Qui es-tu ?", "As-tu le droit de faire cette action sur cette ressource ?", "Ton mot de passe est-il assez long ?"],
+              "answer": [1]
+            },
+            {
+              "id": "ou-verifier",
+              "prompt": "Où une vérification d'autorisation doit-elle être faite pour être fiable ?",
+              "choices": ["Dans le navigateur, en masquant les boutons", "Sur le serveur, à chaque requête", "Dans la documentation de l'API"],
+              "answer": [1]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "web-http",
+      "title": "Comment parle le web",
+      "summary": "HTTP, les sessions et les jetons : le terrain de jeu de la majorité des attaques applicatives.",
+      "lessons": [
+        {
+          "id": "http-anatomie",
+          "title": "Anatomie d'une requête HTTP",
+          "minutes": 20,
+          "references": [
+            { "label": "MDN — Aperçu du protocole HTTP", "url": "https://developer.mozilla.org/fr/docs/Web/HTTP/Overview" }
+          ],
+          "quiz": [
+            {
+              "id": "controle-client",
+              "prompt": "Parmi ces éléments d'une requête HTTP, lesquels l'attaquant contrôle-t-il entièrement ?",
+              "choices": ["Le chemin et les paramètres d'URL", "Les en-têtes", "Le corps de la requête", "Aucun : le navigateur les protège"],
+              "answer": [0, 1, 2]
+            },
+            {
+              "id": "code-403",
+              "prompt": "Que signifie le code de statut 403 ?",
+              "choices": ["La ressource n'existe pas", "Tu es identifié, mais tu n'as pas le droit", "Le serveur a planté"],
+              "answer": [1]
+            }
+          ]
+        },
+        {
+          "id": "sessions-et-jetons",
+          "title": "Sessions et jetons d'accès",
+          "minutes": 20,
+          "references": [
+            { "label": "RFC 9700 — OAuth 2.0 Security Best Current Practice", "url": "https://www.rfc-editor.org/rfc/rfc9700" }
+          ],
+          "quiz": [
+            {
+              "id": "jwt-lisible",
+              "prompt": "Le contenu (payload) d'un JWT signé est-il secret ?",
+              "choices": ["Oui, la signature le chiffre", "Non, il est seulement encodé en base64url : n'importe qui peut le lire"],
+              "answer": [1]
+            },
+            {
+              "id": "jwt-revocation",
+              "prompt": "Pourquoi Bastion relit-il le rôle de l'utilisateur en base à chaque requête au lieu de faire confiance au jeton ?",
+              "choices": [
+                "Pour qu'une rétrogradation ou une déconnexion prenne effet immédiatement",
+                "Parce que la signature du jeton n'est pas vérifiée",
+                "Pour économiser de la mémoire"
+              ],
+              "answer": [0]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "idor",
+      "title": "Casse-le, répare-le : l'IDOR",
+      "summary": "La faille n°1 de l'OWASP API Top 10. Tu l'exploites, tu comprends pourquoi elle existe, puis tu étudies comment Bastion la rend impossible.",
+      "prerequisites": ["socle-securite", "web-http"],
+      "lessons": [
+        {
+          "id": "idor-comprendre",
+          "title": "Comprendre l'IDOR",
+          "minutes": 15,
+          "references": [
+            { "label": "OWASP API Security Top 10 — API1:2023 BOLA", "url": "https://owasp.org/API-Security/editions/2023/en/0xa1-broken-object-level-authorization/" }
+          ],
+          "quiz": [
+            {
+              "id": "cause-idor",
+              "prompt": "Quelle est la cause d'une IDOR ?",
+              "choices": [
+                "Des identifiants trop courts",
+                "Le serveur ne vérifie pas que l'objet demandé appartient à l'utilisateur",
+                "L'absence de HTTPS"
+              ],
+              "answer": [1]
+            },
+            {
+              "id": "uuid-suffit",
+              "prompt": "Remplacer les identifiants numériques par des UUID aléatoires corrige-t-il une IDOR ?",
+              "choices": [
+                "Oui, on ne peut plus deviner les identifiants",
+                "Non : ça complique l'attaque, mais un identifiant qui fuite (lien partagé, logs) reste exploitable"
+              ],
+              "answer": [1]
+            }
+          ]
+        },
+        {
+          "id": "idor-exploiter",
+          "title": "Exploiter une IDOR",
+          "minutes": 25,
+          "references": [
+            { "label": "OWASP WSTG — Testing for IDOR", "url": "https://owasp.org/www-project-web-security-testing-guide/latest/4-Web_Application_Security_Testing/05-Authorization_Testing/04-Testing_for_Insecure_Direct_Object_References" }
+          ],
+          "quiz": [
+            {
+              "id": "methode-test",
+              "prompt": "Quelle est la méthode la plus fiable pour tester une IDOR ?",
+              "choices": [
+                "Deux comptes : créer un objet avec le premier, le demander avec le jeton du second",
+                "Lancer un scanner automatique sans compte",
+                "Lire le code JavaScript du site"
+              ],
+              "answer": [0]
+            },
+            {
+              "id": "verbes",
+              "prompt": "Quelles opérations faut-il tester, et pas seulement la lecture ?",
+              "choices": ["La modification (PUT/PATCH)", "La suppression (DELETE)", "La liste des objets", "Aucune autre, la lecture suffit"],
+              "answer": [0, 1, 2]
+            }
+          ]
+        },
+        {
+          "id": "idor-corriger",
+          "title": "Corriger une IDOR, et le prouver",
+          "minutes": 25,
+          "references": [
+            { "label": "OWASP — Insecure Direct Object Reference Prevention Cheat Sheet", "url": "https://cheatsheetseries.owasp.org/cheatsheets/Insecure_Direct_Object_Reference_Prevention_Cheat_Sheet.html" }
+          ],
+          "quiz": [
+            {
+              "id": "correctif-robuste",
+              "prompt": "Quel correctif est le plus robuste ?",
+              "choices": [
+                "Charger l'objet par son id, puis comparer son propriétaire à l'utilisateur",
+                "Mettre le propriétaire directement dans la requête SQL : WHERE id = ? AND owner_id = ?",
+                "Masquer le bouton « voir » dans l'interface"
+              ],
+              "answer": [1]
+            },
+            {
+              "id": "meme-404",
+              "prompt": "Pourquoi Bastion répond-il 404 aussi bien pour une note inexistante que pour la note d'un autre ?",
+              "choices": [
+                "Pour ne pas confirmer à l'attaquant qu'un objet existe",
+                "Parce que 403 n'existe pas en HTTP",
+                "Par simplicité, sans raison de sécurité"
+              ],
+              "answer": [0]
+            },
+            {
+              "id": "regression",
+              "prompt": "Qu'est-ce qui empêche un développeur de réintroduire la faille plus tard dans Bastion ?",
+              "choices": [
+                "Un test qui rejoue l'attaque avec deux comptes",
+                "Une règle Semgrep qui refuse toute requête sur notes sans owner_id",
+                "Rien, il faut faire confiance aux développeurs"
+              ],
+              "answer": [0, 1]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

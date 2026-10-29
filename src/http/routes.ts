@@ -3,14 +3,17 @@ import { rateLimit } from 'express-rate-limit';
 import type { AuditLog } from '../audit.js';
 import type { TokenSigner } from '../crypto/tokens.js';
 import type { AuthService, RequestContext } from '../services/auth-service.js';
+import type { LearningService } from '../services/learning-service.js';
 import type { NoteService } from '../services/note-service.js';
 import { unauthorized } from '../errors.js';
 import { authenticate, handler, parse, requireRole } from './middleware.js';
 import {
   auditQuerySchema,
   changePasswordSchema,
+  completeLessonSchema,
   createNoteSchema,
   credentialsSchema,
+  lessonIdSchema,
   noteIdSchema,
   paginationSchema,
   refreshSchema,
@@ -20,9 +23,10 @@ import {
 export interface RouteDeps {
   auth: AuthService;
   notes: NoteService;
+  learning: LearningService;
   audit: AuditLog;
   signer: TokenSigner;
-  rateLimits: { auth: number; refresh: number };
+  rateLimits: { auth: number; refresh: number; quiz: number };
 }
 
 const ctx = (req: Request): RequestContext => ({ ip: req.ip ?? null });
@@ -165,6 +169,48 @@ export function buildRouter(d: RouteDeps): Router {
       const { id } = parse(noteIdSchema, req.params);
       d.notes.delete(uid(req), id, ctx(req).ip);
       res.status(204).end();
+    }),
+  );
+
+  /* ---------- learning (user-scoped) ---------- */
+
+  // Keyed by user, not IP: guessing quiz answers is a per-account abuse, and
+  // learners behind one NAT (a classroom) must not throttle each other.
+  const quizLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    limit: d.rateLimits.quiz,
+    standardHeaders: 'draft-8',
+    legacyHeaders: false,
+    identifier: 'quiz',
+    keyGenerator: (req) => uid(req),
+    message: { error: 'rate_limited', message: 'Too many attempts, take a break and review the lesson' },
+  });
+
+  r.get(
+    '/curriculum',
+    requireAuth,
+    handler((req, res) => {
+      res.json(d.learning.overview(uid(req)));
+    }),
+  );
+
+  r.get(
+    '/lessons/:id',
+    requireAuth,
+    handler((req, res) => {
+      const { id } = parse(lessonIdSchema, req.params);
+      res.json(d.learning.getLesson(uid(req), id, ctx(req).ip));
+    }),
+  );
+
+  r.post(
+    '/lessons/:id/complete',
+    requireAuth,
+    quizLimiter,
+    handler((req, res) => {
+      const { id } = parse(lessonIdSchema, req.params);
+      const { answers } = parse(completeLessonSchema, req.body ?? {});
+      res.json(d.learning.complete(uid(req), id, answers, ctx(req).ip));
     }),
   );
 
