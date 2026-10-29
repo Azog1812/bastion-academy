@@ -73,6 +73,7 @@ const schema = z
     RATE_LIMIT_GLOBAL: z.coerce.number().int().min(1).default(300),
     RATE_LIMIT_AUTH: z.coerce.number().int().min(1).default(10),
     RATE_LIMIT_REFRESH: z.coerce.number().int().min(1).default(30),
+    RATE_LIMIT_QUIZ: z.coerce.number().int().min(1).default(30),
     MAX_FAILED_LOGINS: z.coerce.number().int().min(3).max(20).default(5),
     LOCKOUT_SECONDS: z.coerce.number().int().min(60).max(86_400).default(900),
   })

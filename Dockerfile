@@ -54,6 +54,8 @@ COPY --from=build --chown=65532:65532 /out/data /data
 COPY --from=build --chown=0:0 --chmod=0555 /out/dist ./dist
 COPY --from=build --chown=0:0 /out/node_modules ./node_modules
 COPY --from=build --chown=0:0 /out/package.json ./package.json
+# Learning content is data, not code: owned by root, read-only for the app user.
+COPY --chown=0:0 --chmod=0555 content ./content
 
 USER 65532:65532
 EXPOSE 3000

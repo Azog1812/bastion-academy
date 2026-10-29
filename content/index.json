@@ -1,0 +1,11 @@
+{
+  "levels": [
+    { "level": 1, "title": "Fondamentaux", "goal": "Comprendre le vocabulaire de la sécurité, le fonctionnement du web et les premières failles applicatives." },
+    { "level": 2, "title": "Sécurité web et API", "goal": "Maîtriser l'OWASP Top 10 et l'OWASP API Top 10 : les exploiter, puis les corriger dans du vrai code." },
+    { "level": 3, "title": "Systèmes et réseaux", "goal": "Linux, Windows, Active Directory, protocoles réseau : savoir comment ils fonctionnent avant de les attaquer." },
+    { "level": 4, "title": "Offensif", "goal": "Méthodologie de test d'intrusion de bout en bout : reconnaissance, exploitation, élévation de privilèges, rapport." },
+    { "level": 5, "title": "Défensif", "goal": "Détection, réponse à incident et forensique : voir l'attaque depuis l'autre côté." },
+    { "level": 6, "title": "Expert", "goal": "Exploitation avancée et préparation au niveau attendu par les grandes certifications du domaine." }
+  ],
+  "paths": ["fondamentaux"]
+}

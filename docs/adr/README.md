@@ -10,3 +10,4 @@ Format: context → decision → consequences.
 | [0003](0003-short-jwt-plus-rotating-refresh.md) | Short-lived JWT + opaque rotating refresh tokens, revocable |
 | [0004](0004-scrypt.md) | scrypt for password hashing |
 | [0005](0005-distroless-signed-images.md) | Distroless runtime, signed images, admission control |
+| [0006](0006-curriculum-as-code.md) | Curriculum as code (validated at boot), progress in the database |
