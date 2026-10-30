@@ -47,6 +47,8 @@ spec:
               value: /run/secrets/bastion/JWT_SECRET
             - name: AUDIT_HMAC_KEY_FILE
               value: /run/secrets/bastion/AUDIT_HMAC_KEY
+            - name: FLAG_HMAC_KEY_FILE
+              value: /run/secrets/bastion/FLAG_HMAC_KEY
             - name: ENCRYPTION_KEYS_FILE
               value: /run/secrets/bastion/ENCRYPTION_KEYS
             - name: ACTIVE_KEY_ID

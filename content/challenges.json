@@ -1,0 +1,36 @@
+{
+  "challenges": [
+    {
+      "id": "encodage-gigogne",
+      "title": "Encodage n'est pas chiffrement",
+      "moduleId": "socle-securite",
+      "points": 50,
+      "kind": "base64-layers",
+      "brief": "Un développeur a « protégé » un secret en l'encodant en **Base64**… plusieurs fois, pour être sûr.\n\nLe Base64 transforme des octets en texte imprimable. Il n'y a **aucune clé** : n'importe qui peut l'inverser. C'est la différence entre *encodage* (un format) et *chiffrement* (un secret).\n\nDécode la donnée ci-dessous jusqu'à retrouver un texte de la forme `BASTION{...}`.\n\n```bash\necho 'la-donnee' | base64 -d\n```\n\nCe flag est **le tien** : il est calculé pour ton compte, celui d'un autre apprenant ne serait pas accepté."
+    },
+    {
+      "id": "xor-maison",
+      "title": "La crypto maison",
+      "moduleId": "socle-securite",
+      "points": 100,
+      "kind": "xor-single-byte",
+      "brief": "Une application chiffre ses secrets avec un **XOR sur un seul octet** : chaque octet du message est combiné avec la même clé, une valeur entre 1 et 255.\n\nDeux faiblesses fatales :\n\n- il n'y a que **255 clés** possibles, on peut toutes les essayer ;\n- tu connais le **début du message** : tous les flags commencent par `BASTION{`. Or `chiffré XOR clair = clé`. C'est une *attaque à clair connu*.\n\nRetrouve la clé à partir du premier octet, puis déchiffre tout le message.\n\n```python\nct = bytes.fromhex('le-chiffre')\nkey = ct[0] ^ ord('B')\nprint(bytes(b ^ key for b in ct).decode())\n```\n\nMorale : on n'invente jamais son propre algorithme. Bastion utilise AES-256-GCM, un standard éprouvé."
+    },
+    {
+      "id": "en-tetes-bavards",
+      "title": "Des en-têtes trop bavards",
+      "moduleId": "web-http",
+      "points": 50,
+      "kind": "http-headers",
+      "brief": "Voici une réponse HTTP brute capturée sur une ancienne API. Le corps ne contient rien d'intéressant… mais les **en-têtes** aussi sont envoyés au client, et ils en disent long.\n\nLis chaque en-tête : lequel n'aurait jamais dû partir en production ? Il contient ton flag.\n\nCe que tu peux aussi remarquer : l'en-tête `Server` annonce un logiciel et sa version, une information précieuse pour un attaquant qui cherche une faille connue. Bastion n'envoie ni `Server` ni `X-Powered-By`."
+    },
+    {
+      "id": "jeton-bavard",
+      "title": "Un jeton qui parle trop",
+      "moduleId": "web-http",
+      "points": 100,
+      "kind": "jwt-claims",
+      "brief": "Une API a glissé une note de débogage dans le **JWT** qu'elle remet à ses utilisateurs, en pensant que le jeton était secret.\n\nUn JWT, c'est trois parties séparées par des points : `en-tête.contenu.signature`. Les deux premières sont du **Base64url**, pas du chiffrement. La signature empêche de *modifier* le contenu, pas de le *lire*.\n\nDécode la partie centrale du jeton et trouve le flag.\n\n```bash\necho 'partie-centrale' | tr '_-' '/+' | base64 -d\n```\n\n(Si `base64` se plaint, ajoute un ou deux `=` à la fin : Base64url supprime le remplissage.)\n\nRègle à retenir : on ne met jamais d'information sensible dans un JWT."
+    }
+  ]
+}

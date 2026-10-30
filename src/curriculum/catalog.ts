@@ -1,7 +1,8 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
+import { CHALLENGE_KINDS } from '../challenges/generators.js';
 
 /**
  * Curriculum as code (ADR 0006).
@@ -74,6 +75,22 @@ const indexSchema = z
   })
   .strict();
 
+const challengeSchema = z
+  .object({
+    id: slug,
+    title: z.string().min(1).max(120),
+    /** Available once this module is unlocked, like its lessons. */
+    moduleId: slug,
+    points: z.number().int().min(10).max(1000),
+    kind: z.enum(CHALLENGE_KINDS),
+    /** Markdown, rendered by the client like a lesson body. */
+    brief: z.string().min(1).max(4000),
+  })
+  .strict();
+
+const challengesSchema = z.object({ challenges: z.array(challengeSchema).max(200) }).strict();
+
+export type Challenge = z.infer<typeof challengeSchema>;
 export type Question = z.infer<typeof questionSchema>;
 export type Level = z.infer<typeof indexSchema>['levels'][number];
 
@@ -98,6 +115,7 @@ export interface Curriculum {
   paths: Path[];
   modules: ReadonlyMap<string, Module>;
   lessons: ReadonlyMap<string, Lesson>;
+  challenges: ReadonlyMap<string, Challenge>;
 }
 
 export class CurriculumError extends Error {
@@ -112,6 +130,8 @@ export interface CurriculumSource {
   index: unknown;
   path: (pathId: string) => unknown;
   body: (pathId: string, lessonId: string) => string;
+  /** content/challenges.json; optional so a curriculum can ship without challenges. */
+  challenges?: unknown;
 }
 
 const MAX_BODY = 100_000;
@@ -164,7 +184,14 @@ export function buildCurriculum(src: CurriculumSource): Curriculum {
   }
   assertAcyclic(modules);
 
-  return { levels: index.levels, paths, modules, lessons };
+  const challenges = new Map<string, Challenge>();
+  for (const c of src.challenges === undefined ? [] : challengesSchema.parse(src.challenges).challenges) {
+    if (challenges.has(c.id)) throw new CurriculumError(`duplicate challenge "${c.id}"`);
+    if (!modules.has(c.moduleId)) throw new CurriculumError(`challenge "${c.id}" uses unknown module "${c.moduleId}"`);
+    challenges.set(c.id, c);
+  }
+
+  return { levels: index.levels, paths, modules, lessons, challenges };
 }
 
 /** A prerequisite cycle would lock its modules forever: reject it at startup. */
@@ -193,5 +220,7 @@ export function loadCurriculum(dir: string = DEFAULT_CONTENT_DIR): Curriculum {
     index: JSON.parse(read('index.json')) as unknown,
     path: (pathId) => JSON.parse(read(pathId, 'path.json')) as unknown,
     body: (pathId, lessonId) => read(pathId, `${lessonId}.md`),
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- fixed file name under a fixed root
+    ...(existsSync(join(dir, 'challenges.json')) ? { challenges: JSON.parse(read('challenges.json')) as unknown } : {}),
   });
 }

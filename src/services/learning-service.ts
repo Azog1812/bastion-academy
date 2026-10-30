@@ -60,6 +60,12 @@ export class LearningService {
     throw forbidden('Complete the prerequisite modules first');
   }
 
+  /** Used by challenges, which open with their module. */
+  isModuleUnlocked(userId: string, moduleId: string): boolean {
+    const mod = this.curriculum.modules.get(moduleId);
+    return mod !== undefined && this.unlocked(mod, this.completed(userId));
+  }
+
   /** The whole catalogue with this user's progress. Quiz answers are never part of it. */
   overview(userId: string) {
     const done = this.completed(userId);

@@ -15,6 +15,7 @@ export function testEnv(overrides: Record<string, string> = {}): NodeJS.ProcessE
     DATABASE_PATH: ':memory:',
     JWT_SECRET: randomBytes(32).toString('base64'),
     AUDIT_HMAC_KEY: randomBytes(32).toString('base64'),
+    FLAG_HMAC_KEY: randomBytes(32).toString('base64'),
     ENCRYPTION_KEYS: `k1:${randomBytes(32).toString('base64')}`,
     ACTIVE_KEY_ID: 'k1',
     SCRYPT_LOG_N: '10', // fast hashing in tests only; production refuses < 17

@@ -58,29 +58,39 @@ src/
   crypto/password.ts     scrypt N=2^17 r=8 p=1, self-describing format, needsRehash, dummy hash
   crypto/tokens.ts       JWT HS256 (typ at+jwt, alg allow-list, iss/aud/exp/jti), opaque refresh
                          tokens stored as SHA-256
+  crypto/totp.ts         RFC 6238 on node:crypto, base32, recovery codes (80 bits, SHA-256)
   security/              NIST 800-63B password policy + SecLists blocklist (generated file)
-  services/auth-service  register/login/refresh/logout/logoutEverywhere/changePassword
+  services/auth-service  register/login (→ tokens or MFA challenge)/completeMfa/refresh/logout/
+                         logoutEverywhere/changePassword/confirmPassword/profile
+  services/mfa-service   TOTP seed sealed under the KEK ring (sealSecret, AAD per user),
+                         last_step compare-and-set (no replay), recovery codes, rotateKeys()
+  services/challenge-service  per-learner flags HMAC(FLAG_HMAC_KEY), artifacts, submit
+                         (shared-flag detection), opt-in scoreboard (ADR 0008)
+  challenges/generators  closed set of artifact kinds (content picks one, never ships code)
   services/note-service  owner-scoped CRUD, optimistic concurrency (version), rotateKeys()
   services/learning-service  progress scoped by user_id, server-side prerequisites + quiz grading
   curriculum/catalog.ts  loads + validates content/ at boot (slug ids, no cycles, https links),
                          fail closed (ADR 0006)
   http/middleware.ts     requestId, noStore, requireJson, authenticate, requireRole, errorHandler
   http/schemas.ts        all zod schemas are .strict() (mass-assignment protection)
-  http/routes.ts         /v1/auth/*, /v1/session/*, /v1/me*, /v1/notes*, /v1/curriculum,
-                         /v1/lessons/:id[/complete], /v1/admin/audit*
+  http/routes.ts         /v1/auth/*, /v1/session/*, /v1/me*, /v1/me/mfa/*, /v1/notes*,
+                         /v1/curriculum, /v1/lessons/:id[/complete], /v1/challenges*,
+                         /v1/scoreboard, /v1/admin/audit*
   http/session.ts        browser sessions: __Host- HttpOnly refresh cookie, Origin check (ADR 0007)
   http/web.ts            serves web/public + dist/web, page CSP with Trusted Types
   app.ts                 createApp(): helmet (CSP default-src 'none', HSTS, frameguard DENY),
                          rate limits, body limit 100 kB, trust proxy from config
   server.ts / cli.ts     entry point (timeouts, graceful shutdown) / operator CLI
-web/                     front-end, zero deps: src/{main,api,dom,markdown}.ts (tsc → dist/web),
+web/                     front-end, zero deps: src/{main,api,ui,dom,markdown,challenges,account}.ts
+                         (tsc → dist/web),
                          public/{index.html,style.css}. Hash routes, French UI.
 content/                 curriculum as code: index.json (levels, path order), <path>/path.json
-                         (modules, lessons, quizzes), <path>/<lesson>.md (French lesson bodies)
+                         (modules, lessons, quizzes), <path>/<lesson>.md (French lesson bodies),
+                         challenges.json (challenge → module, points, kind, brief)
 test/unit, test/security, test/helpers.ts (setup(), newUser(), auditActions())
 deploy/k8s (kustomize), deploy/policies (Kyverno signed-image policy)
 docs/  threat-model · security-controls (OWASP API Top 10 + ASVS 4.0.3) · security-pipeline ·
-       adr/0001-0007 · runbook · openapi.yaml (used by DAST)
+       adr/0001-0008 · runbook · openapi.yaml (used by DAST)
 ```
 
 ## Security invariants — never break these
@@ -113,6 +123,12 @@ docs/  threat-model · security-controls (OWASP API Top 10 + ASVS 4.0.3) · secu
     sinks and web storage in `web/`), the page CSP keeps Trusted Types with no policy, and
     tokens never touch web storage. Only `/v1/session/*` reads a cookie; keep it that way
     (any new cookie route needs SameSite + JSON-only + `sameOriginOnly`).
+14. **Flags and second factors.** Flags are derived (HMAC, `FLAG_HMAC_KEY`), never stored,
+    compared with `timingSafeEqual`; a shared flag answers like a wrong one. TOTP seeds are
+    only stored sealed; a time step is claimed with compare-and-set before a code counts;
+    no token or refresh cookie is issued before the second factor; MFA challenges are
+    single-use with an atomic attempt cap; disabling MFA needs password + code. The
+    scoreboard is the only cross-user read and projects pseudonym + score only.
 
 ## Conventions
 
@@ -176,8 +192,7 @@ If a CI job is renamed, update the ruleset's required checks in the same change 
 ## Roadmap (suggested order, highest interview value first)
 
 1. ~~Base images pinned by digest~~ (done 29 Oct 2026).
-2. **MFA**: TOTP (RFC 6238) with encrypted secrets + recovery codes, then WebAuthn/passkeys.
-   Requires threat-model + ASVS (V2.7/V2.8) updates and tests (replay of a TOTP code, brute force).
+2. ~~**MFA**: TOTP~~ (done in v4, ADR 0008). Next: WebAuthn/passkeys (phishing-resistant).
 3. **External KMS for KEKs** (Vault Transit or a cloud KMS): only `wrapDek`/`unwrapDek` change;
    add a local Vault in docker-compose for demos.
 4. **PostgreSQL + Redis** (rate-limit store, multiple replicas) behind the same service layer;

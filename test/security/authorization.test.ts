@@ -148,6 +148,6 @@ describe('operator CLI', () => {
   it('generates fresh, valid secrets', () => {
     // Run tsx through the current node binary: spawning `npx` directly fails on Windows (npx.cmd).
     const out = execFileSync(process.execPath, ['--import', 'tsx', 'src/cli.ts', 'gen-secrets'], { encoding: 'utf8' });
-    expect(out).toMatch(/^JWT_SECRET=.+\nAUDIT_HMAC_KEY=.+\nENCRYPTION_KEYS=k1:.+\nACTIVE_KEY_ID=k1\n$/);
+    expect(out).toMatch(/^JWT_SECRET=.+\nAUDIT_HMAC_KEY=.+\nFLAG_HMAC_KEY=.+\nENCRYPTION_KEYS=k1:.+\nACTIVE_KEY_ID=k1\n$/);
   });
 });

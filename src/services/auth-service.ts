@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import type { AuditLog } from '../audit.js';
 import type { Config } from '../config.js';
 import { createDummyHash, hashPassword, needsRehash, verifyPassword } from '../crypto/password.js';
@@ -6,6 +6,7 @@ import { generateRefreshToken, hashRefreshToken, type Role, type TokenSigner } f
 import { transaction, type Database } from '../db.js';
 import { badRequest, conflict, unauthorized } from '../errors.js';
 import { passwordProblem } from '../security/password-policy.js';
+import type { MfaService } from './mfa-service.js';
 
 interface UserRow {
   id: string;
@@ -32,12 +33,30 @@ export interface TokenPair {
   expiresIn: number;
 }
 
+/** Password accepted, second factor still required. The token is opaque, single-use and short-lived. */
+export interface MfaChallenge {
+  mfaRequired: true;
+  mfaToken: string;
+  expiresIn: number;
+}
+
+export type LoginResult = TokenPair | MfaChallenge;
+
+export const isMfaChallenge = (r: LoginResult): r is MfaChallenge => 'mfaRequired' in r;
+
 export interface RequestContext {
   ip: string | null;
 }
 
 /** Same message for "unknown e-mail", "wrong password" and "account locked": no account enumeration. */
 const INVALID_CREDENTIALS = 'Invalid e-mail or password';
+const INVALID_MFA = 'Invalid or expired verification code';
+
+const MFA_CHALLENGE_TTL_MS = 5 * 60 * 1000;
+/** Per challenge. With ±1 step, 5 tries give a 1.5e-5 chance of guessing a 6-digit code; then the password is needed again. */
+const MFA_MAX_ATTEMPTS = 5;
+
+const sha256 = (v: string) => createHash('sha256').update(v).digest('hex');
 
 export class AuthService {
   private dummyHash: Promise<string>;
@@ -47,6 +66,7 @@ export class AuthService {
     private readonly cfg: Config,
     private readonly signer: TokenSigner,
     private readonly audit: AuditLog,
+    private readonly mfa: MfaService,
   ) {
     this.dummyHash = createDummyHash(cfg.SCRYPT_LOG_N);
   }
@@ -72,7 +92,7 @@ export class AuthService {
     return { id, email };
   }
 
-  async login(email: string, password: string, ctx: RequestContext): Promise<TokenPair> {
+  async login(email: string, password: string, ctx: RequestContext): Promise<LoginResult> {
     const user = this.db.prepare('SELECT * FROM users WHERE email = ?').get(email) as UserRow | undefined;
 
     // Always pay the scrypt cost, even for unknown users (timing side channel).
@@ -98,19 +118,102 @@ export class AuthService {
       throw unauthorized(INVALID_CREDENTIALS);
     }
 
-    this.db.prepare('UPDATE users SET failed_logins = 0, locked_until = 0 WHERE id = ?').run(user.id);
-
     // Transparent upgrade when the cost factor is raised in configuration.
     if (needsRehash(user.password_hash, this.cfg.SCRYPT_LOG_N)) {
       const upgraded = await hashPassword(password, this.cfg.SCRYPT_LOG_N);
       this.db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(upgraded, user.id);
     }
 
+    if (this.mfa.isEnabled(user.id)) {
+      // The failed-login counter is only reset once the second factor passes:
+      // a stolen password must not buy unlimited code guesses.
+      this.audit.record({ action: 'auth.login', outcome: 'success', actorId: user.id, ip: ctx.ip, details: { mfa: 'pending' } });
+      return this.mfaChallenge(user.id);
+    }
+
+    this.db.prepare('UPDATE users SET failed_logins = 0, locked_until = 0 WHERE id = ?').run(user.id);
     this.audit.record({ action: 'auth.login', outcome: 'success', actorId: user.id, ip: ctx.ip });
     return this.issue(user, randomUUID());
   }
 
-  private registerFailure(user: UserRow, ctx: RequestContext): void {
+  private mfaChallenge(userId: string): MfaChallenge {
+    const token = randomBytes(32).toString('base64url');
+    const now = Date.now();
+    this.db.prepare('DELETE FROM mfa_challenges WHERE expires_at <= ?').run(now);
+    this.db
+      .prepare('INSERT INTO mfa_challenges (token_hash, user_id, expires_at) VALUES (?, ?, ?)')
+      .run(sha256(token), userId, now + MFA_CHALLENGE_TTL_MS);
+    return { mfaRequired: true, mfaToken: token, expiresIn: MFA_CHALLENGE_TTL_MS / 1000 };
+  }
+
+  /** Second login step: a TOTP code or a recovery code against a pending challenge. */
+  async completeMfa(mfaToken: string, code: string, ctx: RequestContext): Promise<TokenPair> {
+    const hash = sha256(mfaToken);
+    // Atomic attempt counter (invariant 5): concurrent guesses cannot exceed the cap.
+    const row = this.db
+      .prepare(
+        `UPDATE mfa_challenges SET attempts = attempts + 1
+         WHERE token_hash = ? AND expires_at > ? AND attempts < ?
+         RETURNING user_id`,
+      )
+      .get(hash, Date.now(), MFA_MAX_ATTEMPTS) as { user_id: string } | undefined;
+    if (!row) {
+      this.db.prepare('DELETE FROM mfa_challenges WHERE token_hash = ?').run(hash);
+      this.audit.record({ action: 'auth.mfa', outcome: 'failure', ip: ctx.ip, details: { reason: 'invalid_challenge' } });
+      throw unauthorized(INVALID_MFA);
+    }
+
+    const user = this.db.prepare('SELECT * FROM users WHERE id = ?').get(row.user_id) as UserRow | undefined;
+    if (!user) throw unauthorized(INVALID_MFA);
+    if (user.locked_until > Date.now()) {
+      this.audit.record({ action: 'auth.mfa', outcome: 'denied', actorId: user.id, ip: ctx.ip, details: { reason: 'locked' } });
+      throw unauthorized(INVALID_MFA);
+    }
+
+    const factor = this.mfa.verify(user.id, code, ctx.ip);
+    if (!factor) {
+      // Wrong codes feed the same progressive lockout as wrong passwords.
+      this.registerFailure(user, ctx, 'auth.mfa');
+      throw unauthorized(INVALID_MFA);
+    }
+
+    // Single use: the challenge is gone whatever happens next.
+    this.db.prepare('DELETE FROM mfa_challenges WHERE token_hash = ?').run(hash);
+    this.db.prepare('UPDATE users SET failed_logins = 0, locked_until = 0 WHERE id = ?').run(user.id);
+    this.audit.record({ action: 'auth.mfa', outcome: 'success', actorId: user.id, ip: ctx.ip, details: { factor } });
+    return this.issue(user, randomUUID());
+  }
+
+  /** Re-authentication before a sensitive change (enabling or disabling MFA). */
+  async confirmPassword(userId: string, password: string, ctx: RequestContext): Promise<{ email: string }> {
+    const user = this.db.prepare('SELECT * FROM users WHERE id = ?').get(userId) as UserRow | undefined;
+    if (!user || !(await verifyPassword(password, user.password_hash))) {
+      this.audit.record({ action: 'auth.reauth', outcome: 'failure', actorId: userId, ip: ctx.ip });
+      throw unauthorized('Current password is incorrect');
+    }
+    return { email: user.email };
+  }
+
+  profile(userId: string): { displayName: string | null; mfaEnabled: boolean } {
+    const row = this.db.prepare('SELECT display_name FROM users WHERE id = ?').get(userId) as
+      | { display_name: string | null }
+      | undefined;
+    return { displayName: row?.display_name ?? null, mfaEnabled: this.mfa.isEnabled(userId) };
+  }
+
+  /** Opt-in scoreboard pseudonym; null takes the user off the scoreboard. */
+  setDisplayName(userId: string, displayName: string | null, ctx: RequestContext): { displayName: string | null } {
+    try {
+      this.db.prepare('UPDATE users SET display_name = ? WHERE id = ?').run(displayName, userId);
+    } catch (err) {
+      if (err instanceof Error && /UNIQUE/.test(err.message)) throw conflict('This display name is already taken');
+      throw err;
+    }
+    this.audit.record({ action: 'profile.update', outcome: 'success', actorId: userId, ip: ctx.ip, details: { public: displayName !== null } });
+    return { displayName };
+  }
+
+  private registerFailure(user: UserRow, ctx: RequestContext, action: 'auth.login' | 'auth.mfa' = 'auth.login'): void {
     // Atomic increment: concurrent wrong guesses cannot under-count (no read-modify-write race).
     const { failed_logins: failures } = this.db
       .prepare('UPDATE users SET failed_logins = failed_logins + 1 WHERE id = ? RETURNING failed_logins')
@@ -123,7 +226,8 @@ export class AuthService {
       this.db.prepare('UPDATE users SET locked_until = ? WHERE id = ?').run(Date.now() + seconds * 1000, user.id);
       this.audit.record({ action: 'auth.lockout', outcome: 'denied', actorId: user.id, ip: ctx.ip, details: { failures, seconds } });
     }
-    this.audit.record({ action: 'auth.login', outcome: 'failure', actorId: user.id, ip: ctx.ip, details: { reason: 'bad_password' } });
+    const reason = action === 'auth.login' ? 'bad_password' : 'bad_code';
+    this.audit.record({ action, outcome: 'failure', actorId: user.id, ip: ctx.ip, details: { reason } });
   }
 
   /**

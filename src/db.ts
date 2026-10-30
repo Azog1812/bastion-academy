@@ -80,6 +80,45 @@ const MIGRATIONS: readonly string[] = [
     PRIMARY KEY (user_id, lesson_id)
   ) STRICT, WITHOUT ROWID;
   `,
+  /* v3 — challenges, scoreboard, TOTP MFA */ `
+  -- Public pseudonym, opt-in: a learner without one never appears on the scoreboard.
+  ALTER TABLE users ADD COLUMN display_name TEXT;
+  CREATE UNIQUE INDEX users_display_name ON users(display_name COLLATE NOCASE) WHERE display_name IS NOT NULL;
+
+  CREATE TABLE challenge_solves (
+    user_id       TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    challenge_id  TEXT NOT NULL,
+    points        INTEGER NOT NULL CHECK (points > 0),
+    solved_at     INTEGER NOT NULL,
+    PRIMARY KEY (user_id, challenge_id)
+  ) STRICT, WITHOUT ROWID;
+  CREATE INDEX challenge_solves_challenge ON challenge_solves(challenge_id);
+
+  -- TOTP seed sealed with AES-256-GCM under the KEK ring; enabled_at is NULL while enrolment is pending.
+  CREATE TABLE user_mfa (
+    user_id     TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    key_id      TEXT NOT NULL,
+    secret      BLOB NOT NULL,
+    enabled_at  INTEGER,
+    last_step   INTEGER NOT NULL DEFAULT 0,
+    created_at  INTEGER NOT NULL
+  ) STRICT;
+
+  CREATE TABLE mfa_recovery_codes (
+    user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    code_hash  TEXT NOT NULL,
+    used_at    INTEGER,
+    PRIMARY KEY (user_id, code_hash)
+  ) STRICT, WITHOUT ROWID;
+
+  -- Second login step: single-use, short-lived, attempt-capped. Only the SHA-256 of the token is stored.
+  CREATE TABLE mfa_challenges (
+    token_hash  TEXT PRIMARY KEY,
+    user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    expires_at  INTEGER NOT NULL,
+    attempts    INTEGER NOT NULL DEFAULT 0
+  ) STRICT, WITHOUT ROWID;
+  `,
 ];
 
 export type Database = DatabaseSync;
