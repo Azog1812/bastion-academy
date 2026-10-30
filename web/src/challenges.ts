@@ -1,4 +1,15 @@
-import { api, ApiError, type Challenge, type ChallengeSummary, type LabInstance, type LabState, type Scoreboard, type Submission } from './api.js';
+import {
+  api,
+  ApiError,
+  type Challenge,
+  type ChallengeSummary,
+  type DetectionInfo,
+  type DetectionResult,
+  type LabInstance,
+  type LabState,
+  type Scoreboard,
+  type Submission,
+} from './api.js';
 import { h, renderBlocks } from './dom.js';
 import { parseMarkdown } from './markdown.js';
 import { alert, errorMessage, onSubmit, show } from './ui.js';
@@ -60,6 +71,49 @@ function labPanel(challengeId: string, lab: LabState): HTMLElement {
   };
   render(lab.instance);
   return box;
+}
+
+/** Blue-team challenges: a rule editor instead of a flag field; the server evaluates the rule (ADR 0010). */
+function detectionForm(challengeId: string, info: DetectionInfo): HTMLElement {
+  const starter =
+    info.unit === 'entity'
+      ? { match: { [info.fields[1] ?? 'ts']: 'à compléter' }, threshold: { groupBy: info.entityField ?? '', min: 10, windowSeconds: 600 } }
+      : { match: [{ [`${info.fields[info.fields.length - 1] ?? 'ts'}|contains`]: ['à compléter'] }] };
+  const rule = h('textarea', { name: 'rule', rows: '12', spellcheck: 'false', autocomplete: 'off', class: 'code' });
+  rule.value = JSON.stringify(starter, null, 2);
+  const status = h('div', { 'aria-live': 'polite' });
+  const form = h(
+    'form',
+    { class: 'card' },
+    h(
+      'p',
+      { class: 'meta' },
+      `Champs disponibles : ${info.fields.join(', ')}. Unité de détection : ${info.unit === 'entity' ? `l'entité « ${info.entityField ?? ''} »` : "l'événement"}.`,
+    ),
+    h('label', {}, 'Ta règle (JSON)', rule),
+    status,
+    h('button', { type: 'submit' }, 'Évaluer ma règle'),
+  );
+  onSubmit(form, status, async () => {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(rule.value);
+    } catch {
+      status.replaceChildren(alert("Ce n'est pas du JSON valide : vérifie les guillemets et les virgules."));
+      return;
+    }
+    const r = await api<DetectionResult>('POST', `/v1/challenges/${encodeURIComponent(challengeId)}/detect`, { rule: parsed });
+    const examples = (label: string, list: string[]) => (list.length ? h('p', { class: 'meta' }, `${label} : ${list.join(', ')}`) : null);
+    const lines = [
+      r.solved
+        ? alert(r.alreadySolved ? 'Règle parfaite, défi déjà résolu.' : `Règle parfaite ! Toutes les attaques, aucune fausse alerte. +${String(r.points)} points.`, 'info')
+        : alert(`Détectées : ${String(r.detected)}/${String(r.total)} · Manquées : ${String(r.missed)} · Fausses alertes : ${String(r.falsePositives)}`),
+      examples('Exemples manqués', r.examples.missed),
+      examples('Exemples de fausses alertes', r.examples.falsePositives),
+    ].filter((n) => n !== null);
+    status.replaceChildren(...lines);
+  });
+  return form;
 }
 
 function challengeCard(c: ChallengeSummary): HTMLElement {
@@ -125,16 +179,16 @@ export async function challengeView(id: string): Promise<void> {
       ...renderBlocks(parseMarkdown(c.brief)),
       ...(c.lab === null
         ? [
-            h('h2', {}, 'Ce que tu as récupéré'),
+            h('h2', {}, c.detection === null ? 'Ce que tu as récupéré' : 'Les journaux à analyser'),
             // Artifact values are attacker-style data: shown as text in <pre>, never interpreted.
             ...Object.entries(c.artifact).flatMap(([name, value]) => [h('h3', {}, name), h('pre', { class: 'artifact' }, value)]),
           ]
         : []),
     ),
     c.lab === null ? null : labPanel(c.id, c.lab),
-    form,
+    c.detection === null ? form : detectionForm(c.id, c.detection),
   );
-  flag.focus();
+  if (c.detection === null) flag.focus();
 }
 
 export async function scoreboardView(): Promise<void> {

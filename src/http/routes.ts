@@ -28,6 +28,7 @@ import {
   reauthSchema,
   refreshSchema,
   submitFlagSchema,
+  detectSchema,
   updateNoteSchema,
 } from './schemas.js';
 
@@ -421,6 +422,28 @@ export function buildRouter(d: RouteDeps): Router {
       const { id } = parse(challengeIdSchema, req.params);
       const { flag } = parse(submitFlagSchema, req.body);
       res.json(d.challenges.submit(uid(req), id, flag, ctx(req).ip));
+    }),
+  );
+
+  // Writing a rule is iterative: a larger budget than flags, still per account.
+  const detectLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    limit: d.rateLimits.quiz * 2,
+    standardHeaders: 'draft-8',
+    legacyHeaders: false,
+    identifier: 'detect',
+    keyGenerator: (req) => uid(req),
+    message: { error: 'rate_limited', message: 'Too many evaluations, take a moment to read the misses and false positives' },
+  });
+
+  r.post(
+    '/challenges/:id/detect',
+    requireAuth,
+    detectLimiter,
+    handler((req, res) => {
+      const { id } = parse(challengeIdSchema, req.params);
+      const { rule } = parse(detectSchema, req.body);
+      res.json(d.challenges.detect(uid(req), id, rule, ctx(req).ip));
     }),
   );
 

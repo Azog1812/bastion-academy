@@ -151,6 +151,38 @@
       "points": 300,
       "lab": "xss-stored",
       "brief": "Démarre ton lab : un **livre d'or**. Chaque nouveau message est relu, quelques secondes plus tard, par un **modérateur**. Ce modérateur est un vrai navigateur (Chromium) qui ouvre la page de modération avec sa session. Son cookie de session est ton flag.\n\n1. Publie un message contenant du HTML, par exemple `<b>bonjour</b>`. Sur la page publique, il s'affiche tel quel, en texte : la page publique **échappe** les caractères spéciaux. Bien.\n2. La page de modération, elle, insère les messages **bruts** dans son HTML. Tout ce que tu écris y sera interprété par le navigateur du modérateur : c'est un **XSS stocké**. Tu ne peux pas voir cette page (403), mais tu peux y déposer du code.\n3. Le cookie du modérateur n'a pas l'attribut `HttpOnly` : un script peut le lire avec `document.cookie`.\n4. **La contrainte du lab** : il n'a aucun accès à Internet, donc ton script ne peut pas envoyer le cookie vers un serveur à toi. Mais il s'exécute *dans* le livre d'or, avec la session du modérateur : il peut **publier un message**. Fais-lui publier son propre cookie, puis relis la page publique.\n\n```html\n<img src=x onerror=\"fetch('/messages', {method: 'POST',\n  headers: {'content-type': 'application/x-www-form-urlencoded'},\n  body: 'auteur=vol&message=' + encodeURIComponent(document.cookie)})\">\n```\n\n(Ici le HTML est produit par le serveur, donc une balise `<script>` marcherait aussi. Les gestionnaires d'événement comme `onerror` ont l'avantage de fonctionner également quand le HTML est inséré après coup par `innerHTML`, où `<script>` est ignoré.)\n\nTrois défenses, et Bastion applique les trois : **échapper** à l'affichage, ou mieux, ne jamais construire de HTML à partir de chaînes (l'interface de Bastion utilise `textContent`, et ESLint interdit `innerHTML`) ; une **CSP** stricte avec Trusted Types, qui fait échouer toute insertion de HTML brut ; et des cookies de session **`HttpOnly`**, illisibles par JavaScript, même en cas de XSS."
+    },
+    {
+      "id": "detecter-injection-sql",
+      "title": "Détection : les injections SQL de la nuit",
+      "moduleId": "detection-ingenierie",
+      "points": 300,
+      "detection": "web-sqli",
+      "brief": "Voici une heure de journaux d'accès d'une boutique en ligne (`events`, un événement JSON par ligne, paramètres déjà décodés dans `query`). Deux attaquants y testent des **injections SQL** : l'un se trahit avec l'agent utilisateur de sqlmap, l'autre se cache derrière un navigateur ordinaire.\n\nParmi les clients légitimes, il y a des pièges : une cliente nommée O'Connor, des recherches qui contiennent « select », « union » ou « or ». Une règle trop simple va les signaler, ou laisser passer l'attaquant discret.\n\nUnité de détection : chaque **événement**. Indice : plusieurs blocs dans `match` (OU), et pense aux modificateurs `contains` et `endswith`.\n\nÉcris ta règle dans l'éditeur ci-dessous (format JSON, voir la leçon « Écrire une règle de détection »), puis évalue-la. Le serveur te dit combien d'attaques elle détecte, combien elle en **manque**, et combien de **fausses alertes** elle lève, avec quelques exemples. Le défi est réussi avec **toutes** les attaques et **zéro** fausse alerte."
+    },
+    {
+      "id": "detecter-pulverisation",
+      "title": "Détection : la pulvérisation de mots de passe",
+      "moduleId": "detection-ingenierie",
+      "points": 300,
+      "detection": "auth-spray",
+      "brief": "Voici une matinée d'événements d'authentification Windows (`4624` succès, `4625` échec) d'un contrôleur de domaine. Quelque part, une ou plusieurs adresses pratiquent la **pulvérisation de mots de passe** : un seul mot de passe, essayé sur de nombreux comptes, une fois chacun.\n\nPièges : un compte de service dont le mot de passe a expiré échoue en boucle ; l'assistance informatique réinitialise des mots de passe ; un serveur de terminaux voit passer beaucoup d'utilisateurs différents.\n\nUnité de détection : l'**adresse source** (`src_ip`). Une règle par événement ne suffira pas : c'est un travail pour `threshold`, et peut-être pour `distinct`.\n\nÉcris ta règle dans l'éditeur ci-dessous (format JSON, voir la leçon « Écrire une règle de détection »), puis évalue-la. Le serveur te dit combien d'attaques elle détecte, combien elle en **manque**, et combien de **fausses alertes** elle lève, avec quelques exemples. Le défi est réussi avec **toutes** les attaques et **zéro** fausse alerte."
+    },
+    {
+      "id": "detecter-lolbins",
+      "title": "Détection : vivre sur le terrain (LOLBins)",
+      "moduleId": "detection-ingenierie",
+      "points": 350,
+      "detection": "process-lolbins",
+      "brief": "Voici une journée de créations de processus sur cinq postes Windows. Un attaquant y utilise les **binaires du système** pour télécharger et exécuter ses outils sans rien installer (*living off the land*, MITRE ATT&CK T1218 et T1105) : PowerShell encodé, `certutil`, `mshta`, `regsvr32`, `rundll32`, `bitsadmin`, et un document Office qui lance un shell.\n\nPiège : ces mêmes binaires servent tous les jours aux administrateurs (`certutil -hashfile`, `rundll32 printui.dll`…), et un agent de supervision lance PowerShell en fenêtre cachée. Alerter sur le nom du binaire noierait le SOC.\n\nUnité de détection : chaque **événement**. Regarde la ligne de commande et le processus parent.\n\nÉcris ta règle dans l'éditeur ci-dessous (format JSON, voir la leçon « Écrire une règle de détection »), puis évalue-la. Le serveur te dit combien d'attaques elle détecte, combien elle en **manque**, et combien de **fausses alertes** elle lève, avec quelques exemples. Le défi est réussi avec **toutes** les attaques et **zéro** fausse alerte."
+    },
+    {
+      "id": "detecter-force-brute-ssh",
+      "title": "Détection : force brute SSH, rapide et lente",
+      "moduleId": "detection-ingenierie",
+      "points": 250,
+      "detection": "ssh-bruteforce",
+      "brief": "Voici une journée de journaux `sshd` d'un serveur exposé à Internet. Des attaquants essaient des mots de passe : certains très vite, et un plus patient, qui espace ses essais pour passer sous les seuils.\n\nPièges : le serveur de rebond se connecte sans cesse (avec succès), la supervision sonde le port sans jamais essayer de mot de passe, et une utilisatrice a oublié son mot de passe et s'y est reprise plusieurs fois.\n\nUnité de détection : l'**adresse source** (`src_ip`). Le choix de la fenêtre et du seuil de `threshold` est toute la difficulté.\n\nÉcris ta règle dans l'éditeur ci-dessous (format JSON, voir la leçon « Écrire une règle de détection »), puis évalue-la. Le serveur te dit combien d'attaques elle détecte, combien elle en **manque**, et combien de **fausses alertes** elle lève, avec quelques exemples. Le défi est réussi avec **toutes** les attaques et **zéro** fausse alerte."
     }
   ]
 }

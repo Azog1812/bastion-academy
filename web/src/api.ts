@@ -10,6 +10,8 @@ export class ApiError extends Error {
     readonly status: number,
     readonly code: string,
     message: string,
+    /** Field-level reasons of a 400 validation error, when the server gives them. */
+    readonly issues: { path: string; message: string }[] = [],
   ) {
     super(message);
     this.name = 'ApiError';
@@ -35,7 +37,12 @@ async function call<T>(method: string, path: string, body?: unknown, auth = true
   const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
   if (!res.ok) {
     const text = (v: unknown, fallback: string) => (typeof v === 'string' ? v : fallback);
-    throw new ApiError(res.status, text(data.error, 'error'), text(data.message, res.statusText));
+    const issues = Array.isArray(data.issues)
+      ? (data.issues as unknown[]).flatMap((i) =>
+          typeof i === 'object' && i !== null ? [{ path: text((i as Record<string, unknown>).path, ''), message: text((i as Record<string, unknown>).message, '') }] : [],
+        )
+      : [];
+    throw new ApiError(res.status, text(data.error, 'error'), text(data.message, res.statusText), issues);
   }
   return data as T;
 }
@@ -169,10 +176,30 @@ export interface LabState {
   instance: LabInstance | null;
 }
 
+export interface DetectionInfo {
+  fields: string[];
+  unit: 'event' | 'entity';
+  entityField: string | null;
+  events: number;
+}
+
+export interface DetectionResult {
+  alerts: number;
+  detected: number;
+  missed: number;
+  falsePositives: number;
+  total: number;
+  examples: { missed: string[]; falsePositives: string[] };
+  solved: boolean;
+  points: number;
+  alreadySolved: boolean;
+}
+
 export interface Challenge extends ChallengeSummary {
   brief: string;
   artifact: Record<string, string>;
   lab: LabState | null;
+  detection: DetectionInfo | null;
 }
 
 export type Submission = { correct: true; points: number; alreadySolved: boolean } | { correct: false };

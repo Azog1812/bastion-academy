@@ -19,8 +19,9 @@ cybersecurity learning platform. Pedagogy is "break it, then fix it": exploit a 
 vulnerability in a lab, capture a flag, then study the Bastion code and test that defeat
 it. Curriculum goes crescendo from basics to major-certification level. Milestones:
 v3 foundations (paths/modules/lessons, progress, web front-end) → v4 challenges (per-user
-HMAC flags, scoreboard, TOTP MFA) → v5 isolated per-learner lab containers (shipped, ADR 0009) → v6 blue-team
-labs, AI tutor, observability. Distribution is **local only** for now (clone + Docker);
+HMAC flags, scoreboard, TOTP MFA) → v5 isolated per-learner lab containers (shipped, ADR 0009)
+→ v6 blue team (detection challenges + level 5 path shipped, ADR 0010; AI tutor and
+observability to come). Distribution is **local only** for now (clone + Docker);
 hosting comes later. Lab apps are intentionally vulnerable: they must bind to 127.0.0.1,
 stay out of `src/`, and never weaken the platform's own invariants below.
 
@@ -33,7 +34,7 @@ explain the *why* (threat, standard, trade-off), not only the *what*.
 npm ci --ignore-scripts      # never run install scripts
 npm run lint                 # ESLint strictTypeChecked + security plugin + custom SQL rules
 npm run typecheck            # tsc strict, noUncheckedIndexedAccess, exactOptionalPropertyTypes
-npm test                     # vitest (244 tests)
+npm test                     # vitest (262 tests)
 npm run test:coverage        # thresholds: lines/statements/functions 90 %, branches 80 %
 npm run check                # lint + typecheck + coverage
 npm run build && node dist/cli.js gen-secrets > .env   # local secrets (gitignored)
@@ -73,6 +74,8 @@ src/
                          (start/stop/reap, re-attach gateway), app.ts (token, strict schema)
   labs/gateway/          reverse proxy l<id>.lab.localhost → bastion-lab-<id>:8080, no secrets
   services/lab-service   per-learner instances (UNIQUE user_id), flag injection, TTL reaper
+  detection/engine.ts    rule language (Sigma subset: match/exclude/threshold, NO regex), score()
+  detection/datasets.ts  labelled per-learner log datasets with traps for naive rules (ADR 0010)
   services/note-service  owner-scoped CRUD, optimistic concurrency (version), rotateKeys()
   services/learning-service  progress scoped by user_id, server-side prerequisites + quiz grading
   curriculum/catalog.ts  loads + validates content/ at boot (slug ids, no cycles, https links),
@@ -98,7 +101,7 @@ content/                 curriculum as code: index.json (levels, path order), <p
 test/unit, test/security, test/helpers.ts (setup(), newUser(), auditActions())
 deploy/k8s (kustomize), deploy/policies (Kyverno signed-image policy)
 docs/  threat-model · security-controls (OWASP API Top 10 + ASVS 4.0.3) · security-pipeline ·
-       adr/0001-0009 · runbook · openapi.yaml (used by DAST)
+       adr/0001-0010 · runbook · openapi.yaml (used by DAST)
 ```
 
 ## Security invariants — never break these
@@ -144,6 +147,10 @@ docs/  threat-model · security-controls (OWASP API Top 10 + ASVS 4.0.3) · secu
     cap_drop ALL, no-new-privileges, resource caps, no published port, own `internal`
     network). The gateway builds its upstream from the instance id, never from the
     request. Vulnerable code lives in `labs/` only, never in `src/`.
+16. **Learner rules stay data** (ADR 0010). Detection rules are evaluated, never executed:
+    no regular expressions (ReDoS), keys validated against the dataset's fields, values
+    read with `Object.hasOwn`, every dimension capped, evaluations rate-limited. Labels
+    (which events are malicious) never leave the server beyond counts and three examples.
 
 ## Conventions
 

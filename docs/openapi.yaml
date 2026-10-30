@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Bastion API
-  version: 5.0.0
+  version: 6.0.0
   summary: Hardened, envelope-encrypted notes API.
   description: |
     Every note is encrypted at rest with its own AES-256-GCM data key, wrapped by a
@@ -444,6 +444,60 @@ paths:
         "400": { $ref: "#/components/responses/ValidationError" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { description: No running lab of mine for this challenge, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+  /v1/challenges/{id}/detect:
+    parameters:
+      - { name: id, in: path, required: true, schema: { $ref: "#/components/schemas/Slug" } }
+    post:
+      tags: [challenges]
+      summary: Evaluate my detection rule (blue-team challenges)
+      description: |
+        Scores a rule against the learner's own labelled dataset (ADR 0010). Solved at 100 % recall
+        and 100 % precision. Rule keys must be dataset fields, optionally with |contains, |startswith,
+        |endswith, |gte or |lte; no regular expressions. Rate-limited per account.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [rule]
+              properties:
+                rule:
+                  type: object
+                  properties:
+                    match: { description: "A block {field|modifier: value | [values]} or a list of blocks (OR)" }
+                    exclude: { description: Same shape as match }
+                    threshold:
+                      type: object
+                      additionalProperties: false
+                      properties:
+                        groupBy: { type: string }
+                        distinct: { type: string }
+                        min: { type: integer, minimum: 2, maximum: 1000 }
+                        windowSeconds: { type: integer, minimum: 1, maximum: 86400 }
+      responses:
+        "200":
+          description: Scored
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  alerts: { type: integer }
+                  detected: { type: integer }
+                  missed: { type: integer }
+                  falsePositives: { type: integer }
+                  total: { type: integer }
+                  examples: { type: object, properties: { missed: { type: array, items: { type: string } }, falsePositives: { type: array, items: { type: string } } } }
+                  solved: { type: boolean }
+                  points: { type: integer }
+                  alreadySolved: { type: boolean }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { description: Module not unlocked yet, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "404": { description: Unknown challenge, or not a detection challenge, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "429": { $ref: "#/components/responses/RateLimited" }
   /v1/scoreboard:
     get:
       tags: [challenges]
@@ -635,6 +689,9 @@ components:
           properties:
             brief: { type: string, description: Markdown }
             artifact: { type: object, additionalProperties: { type: string }, description: Per-learner data hiding the flag. Display as text only. Empty for lab challenges. }
+            detection:
+              description: Present for detection challenges (null otherwise); the dataset is in artifact.events
+              oneOf: [{ type: "null" }, { $ref: "#/components/schemas/DetectionInfo" }]
             lab:
               description: Present for lab challenges (null otherwise)
               oneOf:
@@ -645,6 +702,13 @@ components:
                     enabled: { type: boolean, description: Whether this installation runs labs }
                     ttlSeconds: { type: integer }
                     instance: { oneOf: [{ type: "null" }, { $ref: "#/components/schemas/LabInstance" }] }
+    DetectionInfo:
+      type: object
+      properties:
+        fields: { type: array, items: { type: string } }
+        unit: { enum: [event, entity] }
+        entityField: { type: ["string", "null"] }
+        events: { type: integer }
     LabInstance:
       type: object
       properties:

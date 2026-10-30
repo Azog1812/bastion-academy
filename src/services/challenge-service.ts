@@ -1,6 +1,8 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import type { AuditLog } from '../audit.js';
 import { buildArtifact } from '../challenges/generators.js';
+import { buildDataset, toJsonLines, type DatasetKind } from '../detection/datasets.js';
+import { ruleSchema, score, type Dataset } from '../detection/engine.js';
 import type { Challenge, Curriculum } from '../curriculum/catalog.js';
 import type { Database } from '../db.js';
 import { forbidden, notFound } from '../errors.js';
@@ -94,8 +96,15 @@ export class ChallengeService {
       points: c.points,
       brief: c.brief,
       // A lab challenge has no artifact: the flag lives inside the learner's own running lab.
-      artifact: c.kind === undefined ? {} : buildArtifact(c.kind, this.flagFor(userId, c.id), this.mac('artifact', c.id, userId)),
+      // A detection challenge has no flag at all: the learner's dataset is the artifact, a rule is the answer.
+      artifact:
+        c.kind !== undefined
+          ? buildArtifact(c.kind, this.flagFor(userId, c.id), this.mac('artifact', c.id, userId))
+          : c.detection !== undefined
+            ? { events: toJsonLines(this.dataset(userId, c.id, c.detection)) }
+            : {},
       lab: c.lab ?? null,
+      detection: c.detection === undefined ? null : this.detectionInfo(this.dataset(userId, c.id, c.detection)),
       solved: at !== undefined,
       solvedAt: at === undefined ? null : new Date(at).toISOString(),
     };
@@ -123,6 +132,39 @@ export class ChallengeService {
     }
     // Same answer either way: the submitter learns nothing about other accounts.
     return { correct: false as const };
+  }
+
+  private dataset(userId: string, challengeId: string, kind: DatasetKind): Dataset {
+    return buildDataset(kind, this.mac('dataset', challengeId, userId));
+  }
+
+  private detectionInfo(d: Dataset) {
+    return { fields: d.fields, unit: d.unit, entityField: d.entityField ?? null, events: d.events.length };
+  }
+
+  /**
+   * Blue-team challenges: the learner's rule is evaluated against their own
+   * labelled dataset. Solved when every attack is caught with no false
+   * positive. The rule language is closed and bounded (ADR 0010); unknown
+   * fields or modifiers are a 400 with the reason.
+   */
+  detect(userId: string, challengeId: string, rawRule: unknown, ip: string | null) {
+    const c = this.challenge(challengeId);
+    if (c.detection === undefined) throw notFound('This challenge takes a flag, not a detection rule');
+    this.assertUnlocked(userId, c, ip);
+    const dataset = this.dataset(userId, c.id, c.detection);
+    const result = score(ruleSchema(dataset.fields).parse(rawRule), dataset);
+
+    if (!result.perfect) {
+      this.audit.record({ action: 'challenge.submit', outcome: 'failure', actorId: userId, target: c.id, ip, details: { detected: result.detected, falsePositives: result.falsePositives } });
+      return { ...result, solved: false, points: 0, alreadySolved: false };
+    }
+    const inserted = this.db
+      .prepare('INSERT INTO challenge_solves (user_id, challenge_id, points, solved_at) VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING')
+      .run(userId, c.id, c.points, Date.now());
+    const firstSolve = Number(inserted.changes) === 1;
+    if (firstSolve) this.audit.record({ action: 'challenge.submit', outcome: 'success', actorId: userId, target: c.id, ip, details: { points: c.points } });
+    return { ...result, solved: true, points: c.points, alreadySolved: !firstSolve };
   }
 
   /** Whose flag is this? Only learners who solved the challenge can have leaked it. */
