@@ -27,7 +27,24 @@ export class LabRunner {
     private readonly now: () => number = Date.now,
   ) {}
 
-  async start({ instanceId, lab, flag, ttlSeconds }: StartRequest): Promise<{ expiresAt: number }> {
+  /**
+   * start() and reap() both attach the gateway to lab networks. Interleaved, the
+   * reap could attach it to a network that start() just created; start()'s own
+   * attach then failed ("already exists") and the fresh lab was torn down. They
+   * run one at a time (a single runner process, so an in-process queue suffices).
+   */
+  private queue: Promise<unknown> = Promise.resolve();
+  private exclusive<T>(task: () => Promise<T>): Promise<T> {
+    const run = this.queue.then(task, task);
+    this.queue = run.catch(() => undefined);
+    return run;
+  }
+
+  start(request: StartRequest): Promise<{ expiresAt: number }> {
+    return this.exclusive(() => this.doStart(request));
+  }
+
+  private async doStart({ instanceId, lab, flag, ttlSeconds }: StartRequest): Promise<{ expiresAt: number }> {
     const name = containerName(instanceId);
     const expiresAt = this.now() + ttlSeconds * 1000;
     const net = await this.docker.call('POST', '/networks/create', networkSpec(instanceId, expiresAt));
@@ -65,7 +82,11 @@ export class LabRunner {
    * Also re-attaches the gateway to every live lab network: after a restart of
    * the stack the gateway container is new and would otherwise reach no lab.
    */
-  async reap(): Promise<number> {
+  reap(): Promise<number> {
+    return this.exclusive(() => this.doReap());
+  }
+
+  private async doReap(): Promise<number> {
     const filters = encodeURIComponent(JSON.stringify({ label: [`${LABEL}=1`] }));
     const expired = new Set<string>();
     const live = new Set<string>();

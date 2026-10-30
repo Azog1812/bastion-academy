@@ -132,6 +132,29 @@ describe('lab runner', () => {
     expect(docker.calls).toContain(`POST /networks/bastion-lab-${ID}/connect`);
     expect(docker.calls).not.toContain(`POST /networks/bastion-lab-${expired}/connect`);
   });
+
+  it('a reap during a start does not attach the gateway first and make the start fail', async () => {
+    // A Docker that behaves like the real one: a created network is listed, and a second attach answers 403.
+    const networks = new Set<string>();
+    const attached = new Set<string>();
+    const docker = new FakeDocker((m, p) => {
+      if (m === 'POST' && p === '/networks/create') networks.add(`bastion-lab-${ID}`);
+      if (m === 'GET') return { status: 200, body: p.startsWith('/networks') ? [...networks].map(() => ({ Labels: { 'bastion.lab.instance': ID, 'bastion.lab.expires': '5000' } })) : [] };
+      const net = /^\/networks\/([^/]+)\/connect$/.exec(p)?.[1];
+      if (net) {
+        if (attached.has(net)) return { status: 403, body: { message: 'endpoint with name gw already exists in network' } };
+        attached.add(net);
+      }
+      return ok(m, p);
+    });
+    const runner = new LabRunner(docker, 'gw', logger, undefined, () => 1000);
+    // The periodic reap is already listing networks when the start creates one: it sees it and attaches the gateway.
+    const reap = runner.reap();
+    const start = runner.start({ instanceId: ID, lab: 'sqli-login', flag: FLAG, ttlSeconds: 60 });
+    await expect(start).resolves.toEqual({ expiresAt: 61_000 });
+    await reap;
+    expect(docker.calls).not.toContain(`DELETE /containers/bastion-lab-${ID}?force=true&v=true`);
+  });
 });
 
 describe('lab runner API', () => {
