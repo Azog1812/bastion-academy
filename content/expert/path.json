@@ -1,0 +1,212 @@
+{
+  "id": "expert",
+  "title": "Expert",
+  "summary": "Le dernier palier : des failles que les scanners ne voient pas (conditions de course, désérialisation), les chemins d'attaque avancés d'Active Directory et leur détection, puis la préparation aux grandes certifications pratiques.",
+  "level": 6,
+  "modules": [
+    {
+      "id": "exploitation-web-avancee",
+      "title": "Exploitation web avancée",
+      "summary": "Les failles de logique et de format : le temps qui passe entre deux lignes de code, et les objets qui s'exécutent en se reconstruisant.",
+      "prerequisites": ["exploitation-enchainee"],
+      "lessons": [
+        {
+          "id": "conditions-de-course",
+          "title": "Les conditions de course",
+          "minutes": 25,
+          "references": [
+            { "label": "CWE-362 — Race Condition", "url": "https://cwe.mitre.org/data/definitions/362.html" },
+            { "label": "PortSwigger Research — Smashing the state machine (2023)", "url": "https://portswigger.net/research/smashing-the-state-machine" },
+            { "label": "PortSwigger Web Security Academy — Race conditions", "url": "https://portswigger.net/web-security/race-conditions" }
+          ],
+          "quiz": [
+            {
+              "id": "rc-toctou",
+              "prompt": "Que désigne TOCTOU ?",
+              "choices": ["L'écart entre le moment où une condition est vérifiée et celui où l'on agit en conséquence", "Un protocole de synchronisation entre serveurs", "Un type de jeton à usage unique"],
+              "answer": [0]
+            },
+            {
+              "id": "rc-defense",
+              "prompt": "Quelles défenses empêchent qu'une carte cadeau soit créditée deux fois par des requêtes simultanées ?",
+              "choices": ["Un UPDATE conditionnel atomique (… WHERE utilisee = 0)", "Une contrainte d'unicité en base", "Vérifier deux fois que la carte n'est pas utilisée", "Un verrou en mémoire dans un seul des serveurs"],
+              "answer": [0, 1]
+            },
+            {
+              "id": "rc-test",
+              "prompt": "Comment tester qu'une limite « à usage unique » résiste ?",
+              "choices": ["Envoyer la requête deux fois, l'une après l'autre", "Envoyer de nombreuses requêtes au même instant, en parallèle", "Lire le code source uniquement"],
+              "answer": [1]
+            }
+          ]
+        },
+        {
+          "id": "desserialisation",
+          "title": "La désérialisation non sûre",
+          "minutes": 25,
+          "references": [
+            { "label": "CWE-502 — Deserialization of Untrusted Data", "url": "https://cwe.mitre.org/data/definitions/502.html" },
+            { "label": "OWASP Cheat Sheet — Deserialization", "url": "https://cheatsheetseries.owasp.org/cheatsheets/Deserialization_Cheat_Sheet.html" },
+            { "label": "Documentation Python — pickle", "url": "https://docs.python.org/3/library/pickle.html" }
+          ],
+          "quiz": [
+            {
+              "id": "ds-pourquoi",
+              "prompt": "Pourquoi désérialiser du pickle (Python) ou un objet Java fourni par l'utilisateur est-il dangereux ?",
+              "choices": ["Le format reconstruit des types et peut déclencher des appels de fonctions choisis par l'attaquant", "Le format est trop volumineux", "Le format n'est pas chiffré"],
+              "answer": [0]
+            },
+            {
+              "id": "ds-gadget",
+              "prompt": "Où se trouve la vulnérabilité dans une attaque par chaîne de gadgets ?",
+              "choices": ["Dans la bibliothèque qui contient les gadgets", "Dans le point d'entrée qui désérialise des données non fiables", "Dans le système d'exploitation"],
+              "answer": [1]
+            },
+            {
+              "id": "ds-defense",
+              "prompt": "Quelles mesures protègent contre la désérialisation non sûre ?",
+              "choices": ["N'accepter que des formats de données (JSON) validés par un schéma strict", "Vérifier une signature HMAC avant de désérialiser", "Encoder les objets en Base64", "Supprimer le gadget utilisé dans la dernière attaque"],
+              "answer": [0, 1]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "active-directory-avance",
+      "title": "Active Directory avancé",
+      "summary": "Délégation Kerberos, PKI d'entreprise et DCSync : les chemins d'attaque des tests internes avancés, et comment les détecter.",
+      "prerequisites": ["windows-active-directory", "exploitation-enchainee"],
+      "lessons": [
+        {
+          "id": "delegation-et-adcs",
+          "title": "Délégation Kerberos et AD CS",
+          "minutes": 30,
+          "references": [
+            { "label": "SpecterOps — Certified Pre-Owned (2021)", "url": "https://specterops.io/blog/2021/06/17/certified-pre-owned/" },
+            { "label": "Microsoft Learn — Kerberos constrained delegation overview", "url": "https://learn.microsoft.com/en-us/windows-server/security/kerberos/kerberos-constrained-delegation-overview" },
+            { "label": "MITRE ATT&CK — T1003.006 DCSync", "url": "https://attack.mitre.org/techniques/T1003/006/" },
+            { "label": "ANSSI — Points de contrôle Active Directory", "url": "https://www.cert.ssi.gouv.fr/uploads/guide-ad.html" }
+          ],
+          "quiz": [
+            {
+              "id": "ad-non-contrainte",
+              "prompt": "Pourquoi la délégation non contrainte est-elle si dangereuse ?",
+              "choices": ["Le serveur reçoit une copie utilisable du TGT de chaque utilisateur qui s'y connecte", "Elle désactive Kerberos", "Elle publie les mots de passe dans l'annuaire"],
+              "answer": [0]
+            },
+            {
+              "id": "ad-esc1",
+              "prompt": "Qu'est-ce qui rend un modèle de certificat vulnérable à ESC1 ?",
+              "choices": ["Tout utilisateur peut s'inscrire", "Le certificat permet l'authentification client", "Le demandeur peut choisir le nom inscrit dans le certificat", "Le certificat expire au bout d'un an"],
+              "answer": [0, 1, 2]
+            },
+            {
+              "id": "ad-dcsync",
+              "prompt": "De quoi un attaquant a-t-il besoin pour réaliser un DCSync ?",
+              "choices": ["Un accès physique au contrôleur de domaine", "Un compte disposant des droits de réplication de l'annuaire", "Le mot de passe du compte krbtgt"],
+              "answer": [1]
+            }
+          ]
+        },
+        {
+          "id": "detecter-attaques-ad",
+          "title": "Détecter les attaques contre Active Directory",
+          "minutes": 25,
+          "references": [
+            { "label": "Microsoft Learn — 4769: A Kerberos service ticket was requested", "url": "https://learn.microsoft.com/en-us/previous-versions/windows/it-pro/windows-10/security/threat-protection/auditing/event-4769" },
+            { "label": "MITRE ATT&CK — T1558.003 Kerberoasting", "url": "https://attack.mitre.org/techniques/T1558/003/" },
+            { "label": "Sigma — règles de détection Windows", "url": "https://github.com/SigmaHQ/sigma" }
+          ],
+          "quiz": [
+            {
+              "id": "da-rc4",
+              "prompt": "Pourquoi une règle « tout ticket RC4 (0x17) = alerte » est-elle mauvaise ?",
+              "choices": ["De vieilles applications légitimes n'utilisent que RC4, et les comptes machine ne sont pas cassables", "RC4 n'apparaît jamais dans les journaux", "Les attaquants n'utilisent jamais RC4"],
+              "answer": [0]
+            },
+            {
+              "id": "da-signal",
+              "prompt": "Quel est le signal comportemental du Kerberoasting ?",
+              "choices": ["Un compte qui demande des tickets pour de nombreux services distincts en peu de temps", "Un compte qui se connecte le matin", "Un ticket de service AES"],
+              "answer": [0]
+            },
+            {
+              "id": "da-leurre",
+              "prompt": "Pourquoi un compte de service leurre (SPN, aucun usage réel) fait-il une excellente détection ?",
+              "choices": ["Parce qu'aucune activité légitime ne le vise : toute demande de ticket est suspecte", "Parce qu'il bloque l'attaque", "Parce qu'il chiffre les tickets en AES"],
+              "answer": [0]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "preparation-certifications",
+      "title": "Préparer une certification",
+      "summary": "Choisir la bonne certification, puis réussir un examen pratique : méthode, gestion du temps, preuves et rapport.",
+      "prerequisites": ["exploitation-web-avancee", "active-directory-avance", "rapport-pentest"],
+      "lessons": [
+        {
+          "id": "panorama-certifications",
+          "title": "Les certifications du domaine",
+          "minutes": 20,
+          "references": [
+            { "label": "OffSec — OSCP exam guide", "url": "https://help.offsec.com/hc/en-us/articles/360040165632" },
+            { "label": "CompTIA — Security+", "url": "https://www.comptia.org/certifications/security" },
+            { "label": "ANSSI — Produits et services qualifiés", "url": "https://cyber.gouv.fr/produits-services-qualifies" }
+          ],
+          "quiz": [
+            {
+              "id": "ce-pratique",
+              "prompt": "Que prouve une certification pratique qu'un QCM ne prouve pas ?",
+              "choices": ["Un savoir-faire : compromettre ou défendre un environnement en temps limité, puis le documenter", "Une meilleure mémoire", "Rien de plus"],
+              "answer": [0]
+            },
+            {
+              "id": "ce-oscp",
+              "prompt": "Combien de points faut-il pour réussir l'examen OSCP+ ?",
+              "choices": ["50 sur 100", "70 sur 100", "100 sur 100"],
+              "answer": [1]
+            },
+            {
+              "id": "ce-anssi",
+              "prompt": "Que qualifie l'ANSSI avec PASSI, PDIS et PRIS ?",
+              "choices": ["Des personnes", "Des prestataires (audit, détection, réponse à incident)", "Des logiciels antivirus"],
+              "answer": [1]
+            }
+          ]
+        },
+        {
+          "id": "methode-examen-pratique",
+          "title": "Réussir un examen pratique",
+          "minutes": 20,
+          "references": [
+            { "label": "OffSec — OSCP exam guide", "url": "https://help.offsec.com/hc/en-us/articles/360040165632" },
+            { "label": "PTES — Penetration Testing Execution Standard", "url": "https://pentest-standard.readthedocs.io/" }
+          ],
+          "quiz": [
+            {
+              "id": "me-bloque",
+              "prompt": "Bloqué depuis deux heures sur une machine, que fais-tu ?",
+              "choices": ["Je continue jusqu'à trouver, quoi qu'il en coûte", "Je passe à une autre machine et je reviendrai avec un regard neuf, puis je relance l'énumération", "J'abandonne l'examen"],
+              "answer": [1]
+            },
+            {
+              "id": "me-preuves",
+              "prompt": "Quand capturer les preuves ?",
+              "choices": ["Au moment de chaque étape, avec la commande, sa sortie et l'adresse de la machine", "À la fin, en refaisant tout", "Seulement pour les machines réussies à 100 %"],
+              "answer": [0]
+            },
+            {
+              "id": "me-identifiants",
+              "prompt": "Tu trouves un mot de passe dans un fichier de configuration. Que fais-tu ?",
+              "choices": ["Je le note et je l'essaie sur tous les autres services et comptes du périmètre", "Je l'ignore, il est sûrement périmé", "Je le publie dans le rapport sans le tester"],
+              "answer": [0]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

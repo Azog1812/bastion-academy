@@ -7,7 +7,7 @@ import type { Dataset, DetectionEvent, FieldValue } from './engine.js';
  * stored). Each one hides attacks among benign activity, and plants traps that
  * a naive rule falls into: the point is precision AND recall.
  */
-export const DATASET_KINDS = ['web-sqli', 'auth-spray', 'process-lolbins', 'ssh-bruteforce'] as const;
+export const DATASET_KINDS = ['web-sqli', 'auth-spray', 'process-lolbins', 'ssh-bruteforce', 'kerberoasting'] as const;
 export type DatasetKind = (typeof DATASET_KINDS)[number];
 
 const T0 = 1_768_200_000; // 2026-01-12, 06:40 UTC
@@ -233,6 +233,57 @@ function sshBruteforce(seed: Buffer): Dataset {
   return { fields: SSH_FIELDS, unit: 'entity', entityField: 'src_ip', events, malicious: attackers };
 }
 
+/* ------------------------------------------------------------- kerberoasting */
+
+const KRB_FIELDS = ['ts', 'event_id', 'account', 'src_ip', 'service_name', 'ticket_encryption_type', 'status'] as const;
+const AES = '0x12';
+const RC4 = '0x17';
+/** Machine accounts: random 120-character passwords, not worth roasting. */
+const MACHINES = ['SRV-FICHIERS$', 'SRV-IMPRESSION$', 'SRV-WEB$', 'SRV-MESSAGERIE$', 'SRV-INTRANET$'] as const;
+/** User accounts with an SPN: human passwords, the Kerberoasting targets. */
+const SERVICE_ACCOUNTS = ['svc_sql', 'svc_web', 'svc_sauvegarde', 'svc_sharepoint', 'svc_crm', 'svc_reporting', 'svc_supervision', 'svc_paie'] as const;
+const LEGACY = ['PC-ATELIER-01$', 'PC-ATELIER-02$', 'PC-ATELIER-03$', 'PC-ATELIER-04$', 'PC-ATELIER-05$', 'PC-ATELIER-06$'] as const;
+
+function kerberoasting(seed: Buffer): Dataset {
+  const r = rng(seed, 'krb');
+  const drafts: { e: Draft; bad: boolean }[] = [];
+  const tgs = (ts: number, account: string, ip: string, service: string, enc: string, bad = false) =>
+    drafts.push({ e: { ts, event_id: 4769, account, src_ip: ip, service_name: service, ticket_encryption_type: enc, status: '0x0' }, bad });
+  const users = USERS.slice(0, 20);
+  const ipOf = (user: (typeof users)[number]) => `10.1.0.${String(10 + users.indexOf(user))}`;
+  // A working day: users reach file, print, mail and intranet servers, and renew their TGT, all in AES.
+  for (let k = 0; k < 150; k++) {
+    const user = r.pick(users);
+    tgs(T0 + r.int(28_800), user, ipOf(user), r.pick([...MACHINES, 'krbtgt']), AES);
+  }
+  // Applications that use a service account with an SPN, in AES.
+  for (let k = 0; k < 20; k++) {
+    const user = r.pick(users);
+    tgs(T0 + r.int(28_800), user, ipOf(user), r.pick(['svc_sharepoint', 'svc_crm', 'svc_web']), AES);
+  }
+  // TRAP: the old payroll application only speaks RC4. Every accountant triggers a naive "RC4" rule, daily.
+  for (let k = 0; k < 18; k++) {
+    const user = r.pick(users.slice(0, 6));
+    tgs(T0 + r.int(28_800), user, ipOf(user), 'svc_paie', RC4);
+  }
+  // TRAP: the inventory account queries every server in a few minutes, in AES: a "many services" rule without RC4 fires.
+  const inv = T0 + 3600 + r.int(3600);
+  [...MACHINES, 'svc_sql', 'svc_web', 'svc_reporting', 'svc_crm', 'svc_sharepoint'].forEach((service, n) => tgs(inv + n * 4, 'svc_inventaire', '10.1.9.20', service, AES));
+  // TRAP: monitoring polls old workshop machines that only support RC4: many services, RC4, but machine accounts.
+  for (let round = 0; round < 3; round++)
+    LEGACY.forEach((service, n) => tgs(T0 + round * 9000 + n * 3, 'svc_supervision', '10.1.9.30', service, RC4));
+  // Two compromised users roast every service account: one in a burst, one patiently, under an hour.
+  const fast = r.pick(users.slice(6, 13));
+  const slow = r.pick(users.slice(13));
+  const targets = SERVICE_ACCOUNTS.filter((s) => s !== 'svc_supervision');
+  const tFast = T0 + r.int(20_000);
+  targets.forEach((service, n) => tgs(tFast + n * (1 + r.int(2)), fast, ipOf(fast), service, RC4, true));
+  const tSlow = T0 + 4000 + r.int(16_000);
+  targets.slice(0, 5).forEach((service, n) => tgs(tSlow + n * (600 + r.int(100)), slow, ipOf(slow), service, RC4, true));
+  const { events } = finish(drafts, KRB_FIELDS);
+  return { fields: KRB_FIELDS, unit: 'entity', entityField: 'account', events, malicious: new Set([fast, slow]) };
+}
+
 export function buildDataset(kind: DatasetKind, seed: Buffer): Dataset {
   switch (kind) {
     case 'web-sqli':
@@ -243,6 +294,8 @@ export function buildDataset(kind: DatasetKind, seed: Buffer): Dataset {
       return processLolbins(seed);
     case 'ssh-bruteforce':
       return sshBruteforce(seed);
+    case 'kerberoasting':
+      return kerberoasting(seed);
   }
 }
 

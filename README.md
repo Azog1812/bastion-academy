@@ -33,18 +33,18 @@ from first principles up to the level expected by major industry certifications.
 
 | Milestone | Scope | Status |
 |---|---|---|
-| **v3: foundations** | Learning paths → modules → lessons, progress tracking, web front-end, built on Bastion's auth core | ✅ API, web UI, levels 1 to 5 shipped; level 6 to come |
+| **v3: foundations** | Learning paths → modules → lessons, progress tracking, web front-end, built on Bastion's auth core | ✅ API, web UI, all six levels shipped |
 | **v4: challenges** | Per-user HMAC flags (unshareable), scoreboard, anti-cheat, TOTP MFA | ✅ Shipped: 11 challenges (levels 1 to 3), opt-in scoreboard, TOTP + recovery codes |
-| **v5: isolated labs** | One vulnerable container per learner: no egress, TTL, sandboxed runtime, quotas | ✅ Shipped: 9 labs (SQLi, IDOR, mass assignment, JWT `alg:none`, SSRF, path traversal, command injection, stored XSS with a headless-browser victim, a three-flaw chain), lab runner + gateway, optional gVisor |
-| **v6: blue team** | Level 5 path (logging, SIEM, detection engineering, incident response, forensics) and detection challenges | ✅ Shipped: 6 lessons, 4 detection challenges graded on precision **and** recall · AI tutor, observability: planned |
+| **v5: isolated labs** | One vulnerable container per learner: no egress, TTL, sandboxed runtime, quotas | ✅ Shipped: 10 labs (SQLi, IDOR, mass assignment, JWT `alg:none`, SSRF, path traversal, command injection, stored XSS with a headless-browser victim, a three-flaw chain, a race condition), lab runner + gateway, optional gVisor |
+| **v6: blue team** | Level 5 path (logging, SIEM, detection engineering, incident response, forensics) and detection challenges | ✅ Shipped: 6 lessons, 5 detection challenges graded on precision **and** recall · AI tutor, observability: planned |
 
 The platform is designed to **run locally** (`git clone` + Docker). There is no public
 hosted instance yet.
 
 ### What's available today
 
-The curriculum spans six levels, from **Fundamentals** to **Expert**. Five paths are
-available (in French, 39 lessons, 109 quiz questions):
+The curriculum spans six levels, from **Fundamentals** to **Expert**, all available
+(in French, 45 lessons, 127 quiz questions):
 
 - **Level 1, Fundamentals**: security basics, HTTP, sessions and JWT, then a
   *break it, then fix it* IDOR module.
@@ -61,8 +61,13 @@ available (in French, 39 lessons, 109 quiz questions):
   writing Sigma-style rules, reading web attacks in logs, incident response (NIST SP
   800-61r3, 72-hour GDPR notification), forensics first steps (order of volatility,
   containers).
+- **Level 6, Expert**: race conditions (TOCTOU, single-packet attack) and insecure
+  deserialization (gadget chains, prototype pollution); Kerberos delegation, AD CS
+  (ESC1, ESC8) and DCSync, then how to detect them (4769, 4662, 4887, honey
+  accounts); the certification landscape (OSCP+, CPTS, GIAC, ANSSI qualifications)
+  and the method for a 24-hour practical exam.
 
-**4 detection challenges** ([ADR 0010](docs/adr/0010-detection-challenges.md)): the
+**5 detection challenges** ([ADR 0010](docs/adr/0010-detection-challenges.md)): the
 learner **writes a detection rule** (a JSON subset of Sigma) and the server scores it on
 a log dataset generated for them, where attacks hide among benign activity **and
 traps** built for naive rules. Solved only with every attack caught **and** zero false
@@ -74,6 +79,7 @@ positives, the SOC's daily trade-off.
 | Password spraying (Windows 4624/4625) | Counting failures flags a service account with an expired password |
 | Living off the land (LOLBins) | Alerting on `certutil` or `rundll32` drowns the SOC in admin activity |
 | SSH brute force, fast and slow | A short window misses the patient attacker; a low threshold flags a forgetful user |
+| Kerberoasting (Windows 4769) | "RC4 = alert" flags the legacy payroll app and machine accounts; counting services without RC4 flags the inventory account |
 
 The rule language has **no regular expressions on purpose** (a learner regex would run
 on the server's event loop: ReDoS), and fields are checked against each dataset.
@@ -100,7 +106,7 @@ Puzzles are generated per learner from an HMAC seed (nothing stored), decoys sha
 flag's format, and each generator has a test that solves it the way the brief says
 ([`challenge-generators.test.ts`](test/unit/challenge-generators.test.ts)).
 
-**9 live labs** ([ADR 0009](docs/adr/0009-isolated-labs.md)): a real, intentionally vulnerable
+**10 live labs** ([ADR 0009](docs/adr/0009-isolated-labs.md)): a real, intentionally vulnerable
 service started for one learner, holding that learner's flag, reachable only from their machine.
 
 | Lab | Level | Attack |
@@ -113,6 +119,7 @@ service started for one learner, holding that learner's flag, reachable only fro
 | Un aperçu trop curieux | 2 | SSRF: make the server fetch its own loopback admin service |
 | Le dossier d'à côté | 3 | Path traversal out of a download folder |
 | Trois failles, une chaîne | 4 | **No single flaw is enough**: path traversal → leaked JWT secret → forged admin token (shortcuts like `/proc/self/environ` blocked) |
+| Une carte cadeau, plusieurs fois | 6 | Race condition: a single-use gift card redeemed many times by parallel requests (the fix is Bastion's invariant 5: an atomic compare-and-set) |
 | Un shell, mais dans une cage | 3 | Command injection → a real shell, then **try to escape and see why you can't** (no route out, read-only, `noexec`, no capabilities) |
 
 The lab is vulnerable, the box around it is not:
@@ -195,7 +202,7 @@ curl -s $B/v1/lessons/cia-et-risque -H "authorization: Bearer $ALICE" | jq -r .b
 ```
 
 > [!WARNING]
-> Future labs will ship **intentionally vulnerable** applications. Run them only on
+> The labs are **intentionally vulnerable** applications. Run them only on
 > your own machine, bound to `127.0.0.1`, and **never expose them to a network you
 > don't control**. Only attack targets you own or are explicitly authorised to test.
 
@@ -204,10 +211,10 @@ curl -s $B/v1/lessons/cia-et-risque -H "authorization: Bearer $ALICE" | jq -r .b
 > on exploite une faille réelle dans un lab, puis on étudie le code et le test qui la
 > neutralisent. Progression des bases jusqu'au niveau des grandes certifications.
 > Déjà disponible : une interface web (http://localhost:3000 après installation),
-> l'API d'apprentissage (cursus, progression, quiz corrigés côté serveur), trois
-> parcours en français, « Fondamentaux », « Sécurité web et API » et « Systèmes et
-> réseaux » (27 leçons), des défis à flag personnel, un classement et la MFA TOTP.
-> Les labs seront volontairement vulnérables : à lancer uniquement en local.
+> l'API d'apprentissage (cursus, progression, quiz corrigés côté serveur), six
+> parcours en français, des « Fondamentaux » au niveau « Expert » (45 leçons), des
+> défis à flag personnel, 10 labs isolés, 5 défis de détection, un classement et la
+> MFA TOTP. Les labs sont volontairement vulnérables : à lancer uniquement en local.
 
 ---
 
@@ -270,7 +277,7 @@ generic errors with correlation ids · secret redaction in logs · secrets read 
 files rather than env vars · socket timeouts · privileged operations only via an
 operator CLI, never over HTTP.
 
-**267 tests, ~99 % line coverage** — most of them are *abuse cases*, not happy paths.
+**272 tests, ~99 % line coverage** — most of them are *abuse cases*, not happy paths.
 
 ### Supply chain & infrastructure
 
