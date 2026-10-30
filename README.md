@@ -59,6 +59,24 @@ Every *break it, then fix it* module ends in Bastion's own code: the learner
 attacks Bastion, then reads the exact lines, lint rules, Semgrep rules and tests
 that stop the attack.
 
+**11 challenges**, each one a task from the job, each with a flag unique to the learner:
+
+| Challenge | Level | What the learner does |
+|---|---|---|
+| Encodage n'est pas chiffrement · La crypto maison | 1 | Peel nested Base64; break single-byte XOR with a known-plaintext attack |
+| Un code PIN dans une empreinte rapide | 1 | Brute-force an unsalted SHA-256 PIN hash (10,000 guesses), open the vault |
+| Des en-têtes trop bavards · Un jeton qui parle trop | 1 | Spot a debug header in a raw HTTP response; read the claims of a JWT |
+| Reconstituer une injection SQL à l'aveugle | 2 | **Forensics**: replay sqlmap's binary search from an access log, using only response sizes |
+| Un secret de signature trop faible | 2 | Crack an HS256 JWT secret offline against a wordlist (what `hashcat -m 16500` does) |
+| Un mot de passe sur le fil | 3 | Decode a `tcpdump -X` capture layer by layer, recover HTTP Basic credentials |
+| Qui peut vraiment lire ce fichier ? | 3 | Apply the kernel's exact owner/group/other rule, traps included, to find readable files |
+| La première règle qui gagne | 3 | Evaluate an nftables ruleset (first match, CIDR, protocol, default policy) on real flows |
+| Pulvérisation de mots de passe et porte dérobée | 3 | **SOC triage**: spot a password spray in Windows events, decode `-EncodedCommand` |
+
+Puzzles are generated per learner from an HMAC seed (nothing stored), decoys share the
+flag's format, and each generator has a test that solves it the way the brief says
+([`challenge-generators.test.ts`](test/unit/challenge-generators.test.ts)).
+
 **Start learning** (Node ≥ 22.13):
 
 ```bash
