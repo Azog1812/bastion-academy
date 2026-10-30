@@ -1,0 +1,422 @@
+{
+  "id": "securite-web-api",
+  "title": "Sécurité web et API",
+  "summary": "Les failles qui reviennent dans presque tous les audits. Pour chacune : tu la reproduis, tu comprends sa cause, puis tu étudies la défense que Bastion lui oppose dans son code et ses tests.",
+  "level": 2,
+  "modules": [
+    {
+      "id": "injection-sql",
+      "title": "Casse-le, répare-le : l'injection SQL",
+      "summary": "Quand une donnée devient du code. Tu construis toi-même une requête injectable, puis tu vois comment Bastion rend l'erreur impossible à commettre.",
+      "prerequisites": ["idor"],
+      "lessons": [
+        {
+          "id": "sqli-comprendre",
+          "title": "Comprendre et reproduire une injection SQL",
+          "minutes": 30,
+          "references": [
+            { "label": "OWASP — SQL Injection", "url": "https://owasp.org/www-community/attacks/SQL_Injection" },
+            { "label": "PortSwigger Web Security Academy — SQL injection", "url": "https://portswigger.net/web-security/sql-injection" }
+          ],
+          "quiz": [
+            {
+              "id": "cause-sqli",
+              "prompt": "Quelle est la cause d'une injection SQL ?",
+              "choices": [
+                "Une base de données mal configurée",
+                "Une donnée fournie par l'utilisateur est collée dans le texte de la requête SQL",
+                "L'utilisation de SQLite au lieu de PostgreSQL"
+              ],
+              "answer": [1]
+            },
+            {
+              "id": "payload-or",
+              "prompt": "Pourquoi le mot de passe x' OR '1'='1 permet-il souvent de contourner une authentification vulnérable ?",
+              "choices": [
+                "Il ferme la chaîne SQL et ajoute une condition toujours vraie",
+                "Il contient un mot de passe administrateur par défaut",
+                "Il provoque une erreur qui désactive la vérification"
+              ],
+              "answer": [0]
+            },
+            {
+              "id": "impacts-sqli",
+              "prompt": "Quels impacts une injection SQL peut-elle avoir ?",
+              "choices": [
+                "Lire des données d'autres utilisateurs",
+                "Modifier ou supprimer des données",
+                "Contourner une authentification",
+                "Aucun, si les mots de passe sont hachés"
+              ],
+              "answer": [0, 1, 2]
+            }
+          ]
+        },
+        {
+          "id": "sqli-corriger",
+          "title": "Corriger l'injection SQL, et l'interdire pour toujours",
+          "minutes": 25,
+          "references": [
+            { "label": "OWASP — SQL Injection Prevention Cheat Sheet", "url": "https://cheatsheetseries.owasp.org/cheatsheets/SQL_Injection_Prevention_Cheat_Sheet.html" }
+          ],
+          "quiz": [
+            {
+              "id": "defense-principale",
+              "prompt": "Quelle est la défense principale contre l'injection SQL ?",
+              "choices": [
+                "Échapper les apostrophes à la main",
+                "Les requêtes paramétrées (marqueurs ? liés à des valeurs)",
+                "Filtrer les mots SELECT et DROP dans les entrées"
+              ],
+              "answer": [1]
+            },
+            {
+              "id": "order-by",
+              "prompt": "Un utilisateur choisit la colonne de tri (ORDER BY). Un marqueur ? ne fonctionne pas pour un nom de colonne. Que faire ?",
+              "choices": [
+                "Concaténer la valeur, car c'est un cas particulier",
+                "Comparer la valeur à une liste blanche de colonnes autorisées",
+                "Retirer les espaces de la valeur"
+              ],
+              "answer": [1]
+            },
+            {
+              "id": "garde-fou",
+              "prompt": "Comment Bastion empêche-t-il un développeur de réintroduire une requête concaténée ?",
+              "choices": [
+                "Une règle ESLint qui refuse les gabarits et concaténations dans prepare() et exec()",
+                "Une règle Semgrep exécutée en CI",
+                "Des tests qui envoient de vraies charges d'injection",
+                "Un pare-feu applicatif devant l'API"
+              ],
+              "answer": [0, 1, 2]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "xss",
+      "title": "Casse-le, répare-le : le cross-site scripting (XSS)",
+      "summary": "Quand du texte devient du HTML exécutable dans le navigateur d'une victime. Tu tentes l'attaque contre l'interface de Bastion Academy elle-même.",
+      "prerequisites": ["idor"],
+      "lessons": [
+        {
+          "id": "xss-comprendre",
+          "title": "Comprendre les trois familles de XSS",
+          "minutes": 25,
+          "references": [
+            { "label": "OWASP — Cross Site Scripting (XSS)", "url": "https://owasp.org/www-community/attacks/xss/" },
+            { "label": "PortSwigger Web Security Academy — Cross-site scripting", "url": "https://portswigger.net/web-security/cross-site-scripting" }
+          ],
+          "quiz": [
+            {
+              "id": "xss-stockee",
+              "prompt": "Un commentaire contenant du JavaScript est enregistré, puis exécuté chez chaque visiteur de la page. De quel type de XSS s'agit-il ?",
+              "choices": ["Réfléchie", "Stockée", "Basée sur le DOM"],
+              "answer": [1]
+            },
+            {
+              "id": "xss-dom",
+              "prompt": "Quelle ligne de JavaScript crée une XSS basée sur le DOM ?",
+              "choices": [
+                "el.textContent = location.hash",
+                "el.innerHTML = location.hash",
+                "console.log(location.hash)"
+              ],
+              "answer": [1]
+            },
+            {
+              "id": "xss-impact",
+              "prompt": "Une XSS exécute du code dans la page de la victime. Que peut faire ce code ?",
+              "choices": [
+                "Agir dans l'application au nom de la victime",
+                "Lire ce que la page affiche",
+                "Lire un cookie marqué HttpOnly",
+                "Lire un jeton stocké dans localStorage"
+              ],
+              "answer": [0, 1, 3]
+            }
+          ]
+        },
+        {
+          "id": "xss-corriger",
+          "title": "Se défendre du XSS en profondeur",
+          "minutes": 30,
+          "references": [
+            { "label": "OWASP — Cross Site Scripting Prevention Cheat Sheet", "url": "https://cheatsheetseries.owasp.org/cheatsheets/Cross_Site_Scripting_Prevention_Cheat_Sheet.html" },
+            { "label": "MDN — Trusted Types API", "url": "https://developer.mozilla.org/en-US/docs/Web/API/Trusted_Types_API" }
+          ],
+          "quiz": [
+            {
+              "id": "textcontent",
+              "prompt": "Pourquoi textContent est-il sûr là où innerHTML est dangereux ?",
+              "choices": [
+                "textContent est plus rapide",
+                "textContent insère toujours du texte, jamais du balisage interprété",
+                "textContent filtre les mots-clés JavaScript"
+              ],
+              "answer": [1]
+            },
+            {
+              "id": "trusted-types",
+              "prompt": "Dans Bastion Academy, la CSP impose Trusted Types sans aucune politique autorisée. Que se passe-t-il si un code appelle innerHTML avec une chaîne ?",
+              "choices": ["Le HTML est nettoyé automatiquement", "Le navigateur lève une erreur et n'insère rien", "Le HTML est inséré normalement"],
+              "answer": [1]
+            },
+            {
+              "id": "deux-barrieres",
+              "prompt": "Pourquoi combiner une règle de code (pas de HTML depuis une chaîne) et une CSP stricte ?",
+              "choices": [
+                "Pour qu'une XSS exige deux défaillances indépendantes",
+                "Parce que la CSP seule est interdite par le RGPD",
+                "Parce qu'ESLint ne fonctionne qu'avec une CSP"
+              ],
+              "answer": [0]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "csrf",
+      "title": "Casse-le, répare-le : le CSRF",
+      "summary": "Quand un autre site fait agir ton navigateur à ta place. Pourquoi les jetons Bearer y échappent, et comment Bastion protège ses seules routes à cookie.",
+      "prerequisites": ["xss"],
+      "lessons": [
+        {
+          "id": "csrf-comprendre",
+          "title": "Comprendre le CSRF",
+          "minutes": 20,
+          "references": [
+            { "label": "OWASP — Cross Site Request Forgery (CSRF)", "url": "https://owasp.org/www-community/attacks/csrf" },
+            { "label": "PortSwigger Web Security Academy — CSRF", "url": "https://portswigger.net/web-security/csrf" }
+          ],
+          "quiz": [
+            {
+              "id": "cause-csrf",
+              "prompt": "Sur quoi repose une attaque CSRF ?",
+              "choices": [
+                "Le navigateur envoie automatiquement les cookies du site visé, même quand la requête vient d'un autre site",
+                "L'attaquant vole le mot de passe de la victime",
+                "Le serveur exécute du JavaScript injecté"
+              ],
+              "answer": [0]
+            },
+            {
+              "id": "bearer-csrf",
+              "prompt": "Une API qui authentifie uniquement par l'en-tête Authorization: Bearer est-elle exposée au CSRF classique ?",
+              "choices": [
+                "Oui, comme toute API",
+                "Non : un autre site ne peut pas faire ajouter cet en-tête par le navigateur de la victime"
+              ],
+              "answer": [1]
+            }
+          ]
+        },
+        {
+          "id": "csrf-corriger",
+          "title": "Se défendre du CSRF",
+          "minutes": 25,
+          "references": [
+            { "label": "OWASP — CSRF Prevention Cheat Sheet", "url": "https://cheatsheetseries.owasp.org/cheatsheets/Cross-Site_Request_Forgery_Prevention_Cheat_Sheet.html" },
+            { "label": "MDN — SameSite cookies", "url": "https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Set-Cookie#samesitesamesite-value" }
+          ],
+          "quiz": [
+            {
+              "id": "samesite-strict",
+              "prompt": "Que fait l'attribut SameSite=Strict sur un cookie ?",
+              "choices": [
+                "Il chiffre le cookie",
+                "Le navigateur n'envoie pas le cookie sur une requête initiée par un autre site",
+                "Il empêche JavaScript de lire le cookie"
+              ],
+              "answer": [1]
+            },
+            {
+              "id": "defenses-bastion",
+              "prompt": "Quelles protections Bastion applique-t-il à ses routes /v1/session/* ?",
+              "choices": [
+                "Cookie SameSite=Strict",
+                "Corps JSON obligatoire (un formulaire HTML ne peut pas en envoyer)",
+                "Refus des en-têtes Origin étrangers",
+                "Un CAPTCHA à chaque requête"
+              ],
+              "answer": [0, 1, 2]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "jwt",
+      "title": "Casse-le, répare-le : les attaques sur les JWT",
+      "summary": "Falsifier, rejouer, garder un jeton éternel : tu attaques les jetons de Bastion, puis tu lis chaque ligne qui t'en empêche.",
+      "prerequisites": ["idor"],
+      "lessons": [
+        {
+          "id": "jwt-attaques",
+          "title": "Attaquer des JWT",
+          "minutes": 30,
+          "references": [
+            { "label": "PortSwigger Web Security Academy — JWT attacks", "url": "https://portswigger.net/web-security/jwt" },
+            { "label": "RFC 8725 — JSON Web Token Best Current Practices", "url": "https://www.rfc-editor.org/rfc/rfc8725" }
+          ],
+          "quiz": [
+            {
+              "id": "alg-none",
+              "prompt": "En quoi consiste l'attaque alg: none ?",
+              "choices": [
+                "Envoyer un jeton déclaré non signé, en espérant que le serveur fasse confiance à l'en-tête",
+                "Supprimer la date d'expiration du jeton",
+                "Chiffrer le jeton avec une clé nulle"
+              ],
+              "answer": [0]
+            },
+            {
+              "id": "confusion",
+              "prompt": "Dans une confusion d'algorithme RS256 → HS256, avec quoi l'attaquant signe-t-il son jeton ?",
+              "choices": ["La clé privée volée du serveur", "La clé publique du serveur, utilisée comme secret HMAC", "Un secret aléatoire"],
+              "answer": [1]
+            },
+            {
+              "id": "secret-faible",
+              "prompt": "Un serveur signe ses jetons en HS256 avec le secret « secret123 ». Quel est le risque ?",
+              "choices": [
+                "Aucun, HS256 est un algorithme sûr",
+                "Le secret peut être retrouvé hors ligne par force brute à partir d'un seul jeton, puis servir à forger n'importe quel jeton"
+              ],
+              "answer": [1]
+            }
+          ]
+        },
+        {
+          "id": "jwt-defenses",
+          "title": "Durcir la vérification des JWT",
+          "minutes": 25,
+          "references": [
+            { "label": "OWASP — JSON Web Token Cheat Sheet", "url": "https://cheatsheetseries.owasp.org/cheatsheets/JSON_Web_Token_Cheat_Sheet.html" }
+          ],
+          "quiz": [
+            {
+              "id": "liste-blanche",
+              "prompt": "Quelle règle bloque à la fois alg: none et la confusion d'algorithme ?",
+              "choices": [
+                "Lire l'algorithme dans l'en-tête du jeton",
+                "Imposer côté serveur une liste blanche d'algorithmes",
+                "Raccourcir la durée de vie du jeton"
+              ],
+              "answer": [1]
+            },
+            {
+              "id": "revocation",
+              "prompt": "Comment Bastion révoque-t-il instantanément tous les jetons d'accès d'un utilisateur, alors qu'un JWT est valide jusqu'à son expiration ?",
+              "choices": [
+                "Il change la clé de signature de tout le serveur",
+                "Chaque jeton porte une version (tv), comparée à celle de la base à chaque requête",
+                "Il ne peut pas : il attend l'expiration"
+              ],
+              "answer": [1]
+            },
+            {
+              "id": "claims-verifies",
+              "prompt": "Quels éléments Bastion vérifie-t-il en plus de la signature ?",
+              "choices": [
+                "L'émetteur (iss) et l'audience (aud)",
+                "Le type de jeton (typ: at+jwt)",
+                "La présence de exp, iat, sub et jti",
+                "L'adresse IP de création du jeton"
+              ],
+              "answer": [0, 1, 2]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "controle-acces-api",
+      "title": "Casse-le, répare-le : propriétés et fonctions d'une API",
+      "summary": "L'assignation de masse (OWASP API3) et l'accès aux fonctions d'administration (OWASP API5) : devenir admin en ajoutant un champ, ou en appelant la bonne URL.",
+      "prerequisites": ["idor"],
+      "lessons": [
+        {
+          "id": "assignation-de-masse",
+          "title": "Assignation de masse et fuite de propriétés",
+          "minutes": 25,
+          "references": [
+            { "label": "OWASP API Security Top 10 — API3:2023 BOPLA", "url": "https://owasp.org/API-Security/editions/2023/en/0xa3-broken-object-property-level-authorization/" },
+            { "label": "OWASP — Mass Assignment Cheat Sheet", "url": "https://cheatsheetseries.owasp.org/cheatsheets/Mass_Assignment_Cheat_Sheet.html" }
+          ],
+          "quiz": [
+            {
+              "id": "principe-mass",
+              "prompt": "Qu'est-ce que l'assignation de masse ?",
+              "choices": [
+                "Le serveur copie tous les champs reçus dans l'objet, y compris ceux que le client n'aurait pas dû pouvoir modifier",
+                "Envoyer beaucoup de requêtes en même temps",
+                "Créer des milliers de comptes"
+              ],
+              "answer": [0]
+            },
+            {
+              "id": "strict-bastion",
+              "prompt": "Que répond Bastion si l'inscription contient un champ \"role\": \"admin\" ?",
+              "choices": [
+                "201 : le champ est ignoré en silence",
+                "400 : tout champ inconnu est refusé",
+                "201 : le compte est créé administrateur"
+              ],
+              "answer": [1]
+            },
+            {
+              "id": "projection",
+              "prompt": "Pourquoi Bastion construit-il ses réponses champ par champ au lieu de renvoyer l'objet lu en base ?",
+              "choices": [
+                "Pour qu'un champ sensible ajouté plus tard (hash, réponse de quiz) ne fuite pas par accident",
+                "Pour réduire la taille des réponses",
+                "Parce que SQLite l'impose"
+              ],
+              "answer": [0]
+            }
+          ]
+        },
+        {
+          "id": "fonctions-admin",
+          "title": "Contrôle d'accès aux fonctions",
+          "minutes": 20,
+          "references": [
+            { "label": "OWASP API Security Top 10 — API5:2023 BFLA", "url": "https://owasp.org/API-Security/editions/2023/en/0xa5-broken-function-level-authorization/" }
+          ],
+          "quiz": [
+            {
+              "id": "bfla",
+              "prompt": "Une API cache le lien vers /admin dans son interface, mais la route ne vérifie pas le rôle. Est-ce protégé ?",
+              "choices": ["Oui, personne ne connaît l'URL", "Non : l'URL se devine ou fuite, et le serveur doit vérifier le rôle"],
+              "answer": [1]
+            },
+            {
+              "id": "role-en-base",
+              "prompt": "Pourquoi Bastion lit-il le rôle en base à chaque requête plutôt que dans le jeton ?",
+              "choices": [
+                "Pour qu'une rétrogradation prenne effet immédiatement",
+                "Parce que le jeton n'est pas signé",
+                "Pour économiser de la mémoire"
+              ],
+              "answer": [0]
+            },
+            {
+              "id": "promotion",
+              "prompt": "Comment devient-on administrateur dans Bastion ?",
+              "choices": [
+                "Par une route HTTP réservée",
+                "Uniquement par la commande d'exploitation (CLI) sur le serveur",
+                "En modifiant le rôle dans son jeton"
+              ],
+              "answer": [1]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -61,8 +61,15 @@ describe('markdown parser (front-end, no HTML ever produced)', () => {
     });
     expect(blocks[2]).toEqual({ t: 'code', lang: 'bash', v: 'curl -i http://localhost:3000' });
     expect(blocks[3]).toMatchObject({ ordered: false, items: [[{ t: 'text', v: 'one wrapped' }], [{ t: 'text', v: 'two' }]] });
-    expect(blocks[4]).toMatchObject({ ordered: true });
+    expect(blocks[4]).toMatchObject({ ordered: true, start: 1 });
     expect(blocks[6]).toMatchObject({ t: 'table', head: [[{ t: 'text', v: 'A' }], [{ t: 'text', v: 'B' }]], rows: [[[{ t: 'code', v: 'x' }], [{ t: 'text', v: 'y' }]]] });
+  });
+
+  it('handles code fences indented inside a list, and resumed numbering', () => {
+    const blocks = parseMarkdown(['1. **First** step:', '', '   ```ts', '   const x = 1;', '     nested();', '   ```', '', '2. Second step'].join('\n'));
+    expect(blocks.map((b) => b.t)).toEqual(['list', 'code', 'list']);
+    expect(blocks[1]).toEqual({ t: 'code', lang: 'ts', v: 'const x = 1;\n  nested();' });
+    expect(blocks[2]).toMatchObject({ ordered: true, start: 2 });
   });
 
   it('keeps raw HTML as plain text', () => {
@@ -93,9 +100,12 @@ describe('markdown parser (front-end, no HTML ever produced)', () => {
 
   it('every shipped lesson only uses supported syntax', () => {
     for (const lesson of loadCurriculum().lessons.values()) {
-      for (const line of inlinesOf(parseMarkdown(lesson.body))) {
+      const blocks = parseMarkdown(lesson.body);
+      // An empty inline code span means a malformed fence was read as backticks in prose.
+      expect(JSON.stringify(blocks), `lesson ${lesson.id}`).not.toContain('{"t":"code","v":""}');
+      for (const line of inlinesOf(blocks)) {
         // Leftover markers mean the author used syntax the renderer would show raw.
-        expect(prose(line), `lesson ${lesson.id}`).not.toMatch(/\]\(|\*\*|^#|<\/?[a-z]/i);
+        expect(prose(line), `lesson ${lesson.id}`).not.toMatch(/\]\(|\*\*|^#|<\/?[a-z]|```/i);
       }
     }
   });
