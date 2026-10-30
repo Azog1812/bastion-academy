@@ -21,6 +21,8 @@ export const forbidden = (message = 'Forbidden') => new HttpError(403, 'forbidde
 /** Also used for "exists but belongs to someone else": never confirm another user's resource exists. */
 export const notFound = (message = 'Not found') => new HttpError(404, 'not_found', message);
 export const conflict = (message: string) => new HttpError(409, 'conflict', message);
+/** A dependency (e.g. the lab runner) is off or failing: say so, without its internals. */
+export const unavailable = (message: string) => new HttpError(503, 'unavailable', message);
 export const locked = (retryAfterSeconds: number) =>
   new HttpError(429, 'too_many_attempts', 'Too many failed attempts, try again later', {
     'Retry-After': String(retryAfterSeconds),

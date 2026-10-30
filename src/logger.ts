@@ -4,10 +4,10 @@ import { pino, type Logger } from 'pino';
  * Structured JSON logs (ready for Loki / ELK / a SIEM). Secrets are redacted
  * at the logger level, so a careless `log.info(req.body)` cannot leak them.
  */
-export function createLogger(level: string): Logger {
+export function createLogger(level: string, service = 'bastion'): Logger {
   return pino({
     level,
-    base: { service: 'bastion' },
+    base: { service },
     timestamp: pino.stdTimeFunctions.isoTime,
     redact: {
       paths: [
@@ -20,6 +20,7 @@ export function createLogger(level: string): Logger {
         '*.refreshToken',
         '*.accessToken',
         '*.token',
+        '*.flag',
       ],
       censor: '[REDACTED]',
     },

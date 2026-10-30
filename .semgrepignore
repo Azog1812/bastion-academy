@@ -5,3 +5,6 @@ src/security/common-passwords.ts
 dist/
 coverage/
 node_modules/
+# Intentionally vulnerable lab applications (ADR 0009). They run only in isolated
+# lab containers; the platform code that runs them (src/labs/) IS scanned.
+labs/

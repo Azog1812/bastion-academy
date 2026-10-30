@@ -86,8 +86,14 @@ node dist/cli.js gen-secrets > .env
 set -a && . ./.env && set +a && NODE_ENV=development npm start
 ```
 
-Then open **http://localhost:3000**, create an account and follow the path. With Docker, generate
-`.env` as above, then run `docker compose up --build`.
+Then open **http://localhost:3000**, create an account and follow the path.
+
+**With the labs** (Docker required), generate `.env` as above, then:
+
+```bash
+docker compose --profile labs build   # lab images, once
+docker compose up --build             # platform + lab runner + lab gateway, all on 127.0.0.1
+```
 
 | Endpoint | Purpose |
 |---|---|
@@ -192,6 +198,8 @@ flowchart LR
 | JWT attacks (`alg:none`, alg confusion, tampering, replay) | Algorithm allow-list, `iss`/`aud`/`typ`/`exp` enforced, claims re-validated | [`tokens.test.ts`](test/unit/tokens.test.ts) |
 | Phished or reused password | Optional **TOTP MFA**: replay-proof codes (compare-and-set on the time step), single-use 5-attempt login challenge, encrypted seeds, hashed one-time recovery codes | [`mfa.test.ts`](test/security/mfa.test.ts), [`totp.test.ts`](test/unit/totp.test.ts) |
 | Flag sharing, scoreboard cheating | **Per-learner HMAC flags**, constant-time check, per-account rate limit, shared flags attributed in the audit log | [`challenges.test.ts`](test/security/challenges.test.ts) |
+| Escaping a lab (to the host, the platform, other labs, the Internet) | Hardened container, **per-instance internal network**, gateway as the only peer, Docker socket held by the runner only, closed lab catalog | [`lab-runner.test.ts`](test/unit/lab-runner.test.ts), [`labs.test.ts`](test/security/labs.test.ts) |
+| SSRF through the lab gateway | Upstream **built** from a 32-hex instance id, never read from the request | [`lab-runner.test.ts`](test/unit/lab-runner.test.ts) |
 | Stolen refresh token | Single-use **rotation with reuse detection**: replay kills the whole session family (RFC 9700) | [`authentication.test.ts`](test/security/authentication.test.ts) |
 | Race conditions (TOCTOU) on refresh & lockout | Token claimed atomically before any `await`; `UPDATE … RETURNING` counters | parallel-request tests |
 | "Stateless" JWT that can't be revoked | `token_version` + role checked on every request → instant logout-everywhere and demotion | [`authorization.test.ts`](test/security/authorization.test.ts) |
@@ -270,6 +278,7 @@ src/
                        learning (progress, server-side gating) · mfa ·
                        challenges (per-learner flags, scoreboard)
   challenges/          closed set of challenge artifact generators
+  labs/                lab catalog · runner (the only Docker client) · gateway (per-lab origin)
   curriculum/          loads and validates content/ at boot (fail closed)
   http/                middleware (authn, RBAC, errors) · strict schemas · routes
   audit.ts             HMAC-chained, append-only audit trail
@@ -277,7 +286,9 @@ src/
 test/
   unit/                crypto, tokens, config, audit chain
   security/            authentication, authorization/IDOR, injection & transport, learning,
-                       MFA, challenges & scoreboard
+                       MFA, challenges & scoreboard, labs
+  labs/                each lab is exploitable as intended, and only that way
+labs/                  intentionally vulnerable lab apps (excluded from lint/SAST on purpose)
 content/               curriculum as code: levels, paths, quizzes, challenges (JSON), lessons (Markdown)
 web/                   front-end: plain TypeScript, no dependency, Markdown → DOM, Trusted Types
 deploy/k8s/            hardened manifests (PSS restricted, NetworkPolicy, secrets as files)

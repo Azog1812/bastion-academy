@@ -8,7 +8,8 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       include: ['src/**/*.ts'],
-      exclude: ['src/server.ts', 'src/cli.ts', 'src/security/common-passwords.ts'],
+      // Entry points (process wiring, signals) are exercised end to end, not by unit tests.
+      exclude: ['src/server.ts', 'src/cli.ts', 'src/labs/runner/main.ts', 'src/labs/gateway/main.ts', 'src/security/common-passwords.ts'],
       reporter: ['text', 'lcov', 'json-summary'],
       thresholds: { lines: 90, functions: 90, branches: 80, statements: 90 },
     },

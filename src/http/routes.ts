@@ -4,6 +4,7 @@ import type { AuditLog } from '../audit.js';
 import type { TokenSigner } from '../crypto/tokens.js';
 import { isMfaChallenge, type AuthService, type LoginResult, type RequestContext } from '../services/auth-service.js';
 import type { ChallengeService } from '../services/challenge-service.js';
+import type { LabService } from '../services/lab-service.js';
 import type { LearningService } from '../services/learning-service.js';
 import type { MfaService } from '../services/mfa-service.js';
 import type { NoteService } from '../services/note-service.js';
@@ -35,10 +36,11 @@ export interface RouteDeps {
   notes: NoteService;
   learning: LearningService;
   challenges: ChallengeService;
+  labs: LabService;
   mfa: MfaService;
   audit: AuditLog;
   signer: TokenSigner;
-  rateLimits: { auth: number; refresh: number; quiz: number };
+  rateLimits: { auth: number; refresh: number; quiz: number; lab: number };
   refreshTtlSeconds: number;
 }
 
@@ -375,7 +377,39 @@ export function buildRouter(d: RouteDeps): Router {
     requireAuth,
     handler((req, res) => {
       const { id } = parse(challengeIdSchema, req.params);
-      res.json(d.challenges.get(uid(req), id, ctx(req).ip));
+      const challenge = d.challenges.get(uid(req), id, ctx(req).ip);
+      res.json({ ...challenge, lab: challenge.lab === null ? null : { id: challenge.lab, ...d.labs.view(uid(req), id) } });
+    }),
+  );
+
+  // Each start creates a network and a container: a per-account budget, like flags.
+  const labLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    limit: d.rateLimits.lab,
+    standardHeaders: 'draft-8',
+    legacyHeaders: false,
+    identifier: 'lab',
+    keyGenerator: (req) => uid(req),
+    message: { error: 'rate_limited', message: 'Too many lab starts, keep working on the one you have' },
+  });
+
+  r.post(
+    '/challenges/:id/lab',
+    requireAuth,
+    labLimiter,
+    handler(async (req, res) => {
+      const { id } = parse(challengeIdSchema, req.params);
+      res.status(201).json(await d.labs.start(uid(req), id, ctx(req).ip));
+    }),
+  );
+
+  r.delete(
+    '/challenges/:id/lab',
+    requireAuth,
+    handler(async (req, res) => {
+      const { id } = parse(challengeIdSchema, req.params);
+      await d.labs.stop(uid(req), id, ctx(req).ip);
+      res.status(204).end();
     }),
   );
 

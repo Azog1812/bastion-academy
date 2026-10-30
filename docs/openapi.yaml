@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Bastion API
-  version: 4.0.0
+  version: 5.0.0
   summary: Hardened, envelope-encrypted notes API.
   description: |
     Every note is encrypted at rest with its own AES-256-GCM data key, wrapped by a
@@ -415,6 +415,35 @@ paths:
         "403": { description: Module not unlocked yet, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "404": { $ref: "#/components/responses/Error" }
         "429": { $ref: "#/components/responses/RateLimited" }
+  /v1/challenges/{id}/lab:
+    parameters:
+      - { name: id, in: path, required: true, schema: { $ref: "#/components/schemas/Slug" } }
+    post:
+      tags: [challenges]
+      summary: Start my lab for this challenge
+      description: |
+        Starts an isolated instance of the challenge's intentionally vulnerable service, holding
+        this learner's flag (ADR 0009). One running lab per learner; idempotent for the same
+        challenge; rate-limited per account. The URL is a per-instance origin on the local
+        lab gateway.
+      requestBody: { required: false, content: { application/json: { schema: { type: object, additionalProperties: false } } } }
+      responses:
+        "201": { description: Running, content: { application/json: { schema: { $ref: "#/components/schemas/LabInstance" } } } }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { description: Module not unlocked yet, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "404": { description: Unknown challenge, or not a lab challenge, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "409": { description: Another lab is running for this account, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { description: Labs disabled, image not built, or runner unavailable, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+    delete:
+      tags: [challenges]
+      summary: Stop my lab for this challenge
+      responses:
+        "204": { description: Stopped }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { description: No running lab of mine for this challenge, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
   /v1/scoreboard:
     get:
       tags: [challenges]
@@ -605,7 +634,22 @@ components:
         - type: object
           properties:
             brief: { type: string, description: Markdown }
-            artifact: { type: object, additionalProperties: { type: string }, description: Per-learner data hiding the flag. Display as text only. }
+            artifact: { type: object, additionalProperties: { type: string }, description: Per-learner data hiding the flag. Display as text only. Empty for lab challenges. }
+            lab:
+              description: Present for lab challenges (null otherwise)
+              oneOf:
+                - type: "null"
+                - type: object
+                  properties:
+                    id: { type: string, description: Catalog lab id }
+                    enabled: { type: boolean, description: Whether this installation runs labs }
+                    ttlSeconds: { type: integer }
+                    instance: { oneOf: [{ type: "null" }, { $ref: "#/components/schemas/LabInstance" }] }
+    LabInstance:
+      type: object
+      properties:
+        url: { type: string, format: uri, example: "http://l0123456789abcdef0123456789abcdef.lab.localhost:8088/" }
+        expiresAt: { type: string, format: date-time }
     Error:
       type: object
       required: [error, message, requestId]

@@ -1,5 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { describe, expect, it } from 'vitest';
+import { loadConfig } from '../../src/config.js';
 import { auditActions, newUser, setup, STRONG_PASSWORD, type TestContext } from '../helpers.js';
 
 async function aliceWithNote(t: TestContext) {
@@ -148,6 +149,9 @@ describe('operator CLI', () => {
   it('generates fresh, valid secrets', () => {
     // Run tsx through the current node binary: spawning `npx` directly fails on Windows (npx.cmd).
     const out = execFileSync(process.execPath, ['--import', 'tsx', 'src/cli.ts', 'gen-secrets'], { encoding: 'utf8' });
-    expect(out).toMatch(/^JWT_SECRET=.+\nAUDIT_HMAC_KEY=.+\nFLAG_HMAC_KEY=.+\nENCRYPTION_KEYS=k1:.+\nACTIVE_KEY_ID=k1\n$/);
+    expect(out).toMatch(/^JWT_SECRET=.+\nAUDIT_HMAC_KEY=.+\nFLAG_HMAC_KEY=.+\nLAB_RUNNER_TOKEN=.+\nENCRYPTION_KEYS=k1:.+\nACTIVE_KEY_ID=k1\n$/);
+    // Every generated secret is accepted by the configuration it is meant for.
+    const env = Object.fromEntries(out.trim().split('\n').map((l) => [l.slice(0, l.indexOf('=')), l.slice(l.indexOf('=') + 1)]));
+    expect(() => loadConfig({ ...env, LAB_RUNNER_URL: 'http://lab-runner:4000' })).not.toThrow();
   });
 });
