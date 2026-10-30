@@ -103,6 +103,23 @@ services:
     build: { context: labs, args: { LAB: mass-assignment } }
     image: bastion-lab-mass-assignment:local
     profiles: [labs]
+  lab-ssrf-preview:
+    build: { context: labs, args: { LAB: ssrf-preview } }
+    image: bastion-lab-ssrf-preview:local
+    profiles: [labs]
+  lab-path-traversal:
+    build: { context: labs, args: { LAB: path-traversal } }
+    image: bastion-lab-path-traversal:local
+    profiles: [labs]
+  lab-jwt-none:
+    build: { context: labs, args: { LAB: jwt-none } }
+    image: bastion-lab-jwt-none:local
+    profiles: [labs]
+  # Its own Dockerfile: this lab needs a shell (see the comment in it).
+  lab-command-injection:
+    build: { context: labs, dockerfile: command-injection/Dockerfile }
+    image: bastion-lab-command-injection:local
+    profiles: [labs]
 
 networks:
   # Platform ↔ runner only. No route out, nothing else joins it.

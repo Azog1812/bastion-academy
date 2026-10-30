@@ -7,6 +7,11 @@ export const LABS = {
   'sqli-login': { image: 'bastion-lab-sqli-login:local', port: 8080 },
   'idor-invoices': { image: 'bastion-lab-idor-invoices:local', port: 8080 },
   'mass-assignment': { image: 'bastion-lab-mass-assignment:local', port: 8080 },
+  'ssrf-preview': { image: 'bastion-lab-ssrf-preview:local', port: 8080 },
+  'path-traversal': { image: 'bastion-lab-path-traversal:local', port: 8080 },
+  /** The only lab image with a shell, on purpose: code execution is the lesson (ADR 0009). */
+  'command-injection': { image: 'bastion-lab-command-injection:local', port: 8080 },
+  'jwt-none': { image: 'bastion-lab-jwt-none:local', port: 8080 },
 } as const satisfies Record<string, { image: string; port: number }>;
 
 export type LabId = keyof typeof LABS;

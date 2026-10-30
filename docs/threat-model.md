@@ -144,7 +144,10 @@ network has no route out. Reaching another learner's lab or the platform fails: 
 instance network contains only the lab and the gateway, and the names do not resolve.
 Writing to the image or escalating inside the container fails: read-only root,
 non-root user, no capabilities, `noexec` tmpfs. What is left is a kernel or runtime
-vulnerability, which is why the runner can run labs under gVisor.
+vulnerability, which is why the runner can run labs under gVisor. The command-injection
+lab gives the learner a real shell on purpose; all of the above was checked from that
+shell (`wget` fails, `touch` on the root fails, a script in `/tmp` cannot run, every
+capability set is zero).
 
 ## 5. Accepted risks
 

@@ -111,6 +111,38 @@
       "points": 250,
       "lab": "mass-assignment",
       "brief": "Démarre ton lab : l'API d'un espace membres. N'importe qui peut s'inscrire, mais le rapport `/api/admin/rapport` est réservé aux administrateurs.\n\n1. Inscris-toi normalement et regarde la réponse : le compte créé contient des champs que tu n'as pas envoyés. Lesquels ?\n\n   ```bash\n   curl -s -X POST http://ADRESSE-DU-LAB/api/inscription -H 'content-type: application/json' -d '{\"email\":\"moi@lab.test\",\"mot_de_passe\":\"x\"}'\n   ```\n\n2. Avec ton jeton, demande le rapport : refusé.\n3. Le serveur recopie **tout** le corps de la requête dans le nouveau compte. Que se passe-t-il si tu envoies toi-même l'un de ces champs à l'inscription ?\n\nC'est l'**assignation de masse** (OWASP API3:2023). La correction : n'accepter qu'une liste explicite de champs. Dans Bastion, tous les schémas d'entrée sont `.strict()` : un champ inconnu, comme `role`, est refusé avec une erreur 400, et le rôle ne se change que par la CLI de l'opérateur, jamais par HTTP."
+    },
+    {
+      "id": "lab-jeton-sans-signature",
+      "title": "Lab : un jeton sans signature",
+      "moduleId": "jwt",
+      "points": 250,
+      "lab": "jwt-none",
+      "brief": "Démarre ton lab : l'API d'un service partenaires. `POST /api/invite` te donne un jeton **invité** ; `/api/admin/secrets` exige le rôle `admin`. Le secret de signature est aléatoire et long : inutile d'essayer de le casser.\n\n1. Récupère un jeton invité et décode ses deux premières parties (Base64url) : l'en-tête annonce `\"alg\": \"HS256\"`, le contenu `\"role\": \"invite\"`.\n2. Change le rôle en `admin` sans toucher à la signature : refusé, la signature ne correspond plus. Bien.\n3. Mais ce serveur lit l'**algorithme dans le jeton lui-même**. La norme JWT prévoit `\"alg\": \"none\"`, un jeton *non signé*. Que se passe-t-il si tu fabriques un en-tête `{\"alg\":\"none\",\"typ\":\"JWT\"}`, un contenu avec `\"role\":\"admin\"`, et une signature vide (le jeton se termine par un point) ?\n\n```bash\nb64url() { printf '%s' \"$1\" | base64 | tr -d '=' | tr '/+' '_-'; }\nJETON=\"$(b64url '{\"alg\":\"none\",\"typ\":\"JWT\"}').$(b64url '{\"sub\":\"moi\",\"role\":\"admin\"}').\"\ncurl -s http://ADRESSE-DU-LAB/api/admin/secrets -H \"authorization: Bearer $JETON\"\n```\n\nLa correction : c'est le **serveur** qui décide de l'algorithme, jamais le jeton. Bastion passe une liste d'algorithmes autorisés (`algorithms: ['HS256']`) à la bibliothèque `jose`, et vérifie aussi `iss`, `aud`, `typ` et `exp`. Le test `tokens.test.ts` essaie précisément `alg: none`."
+    },
+    {
+      "id": "lab-apercu-trop-curieux",
+      "title": "Lab : un aperçu trop curieux (SSRF)",
+      "moduleId": "controle-acces-api",
+      "points": 300,
+      "lab": "ssrf-preview",
+      "brief": "Démarre ton lab : un service d'**aperçu de liens**. Tu donnes une URL, le **serveur** va la chercher et te montre le début de la réponse.\n\nLe problème est dans « le serveur va la chercher ». Depuis Internet, tu ne vois que ce qui est publié. Le serveur, lui, voit aussi son propre réseau interne et sa propre interface `127.0.0.1`. Faire envoyer des requêtes par le serveur à ta place, c'est une **SSRF** (*Server-Side Request Forgery*, OWASP API7:2023). Dans le cloud, c'est la faille qui permet de lire les identifiants de l'instance sur `http://169.254.169.254/` : c'est ainsi que Capital One a perdu les données de 100 millions de clients en 2019.\n\nCe serveur fait tourner un service d'administration interne sur le **port 9000**, écouté uniquement sur `127.0.0.1` : « personne ne peut l'atteindre de l'extérieur ».\n\n1. Fais afficher par l'aperçu une adresse sur `127.0.0.1:9000`.\n2. Le service liste ses routes : suis-les jusqu'à la clé d'API, qui est ton flag.\n\nLa correction : ne jamais aller chercher une URL fournie par l'utilisateur sans **liste d'autorisation** (domaines, schémas), en refusant les adresses privées, de bouclage et de métadonnées **après résolution DNS**, et en filtrant le trafic **sortant**. Bastion n'a aucune fonction de ce type, et sa NetworkPolicy n'autorise aucune sortie : même compromis, il ne pourrait joindre personne."
+    },
+    {
+      "id": "lab-dossier-voisin",
+      "title": "Lab : le dossier d'à côté (path traversal)",
+      "moduleId": "linux-securite",
+      "points": 200,
+      "lab": "path-traversal",
+      "brief": "Démarre ton lab : l'intranet d'une entreprise propose ses documents publics en téléchargement, via `/telecharger?fichier=<nom>`. La page d'accueil indique même où ils sont rangés sur le disque.\n\nLe serveur colle le nom demandé au chemin du dossier. Or sous Linux, `..` désigne le **dossier parent** : `documents/public/../../secrets` remonte de deux niveaux, puis redescend ailleurs. C'est la **traversée de répertoires** (*path traversal*, CWE-22).\n\n1. Télécharge un document normal et note le chemin du dossier.\n2. Un dossier `secrets` se trouve à côté de `documents`. Il contient un fichier `sauvegarde.conf`.\n3. Construis le nom qui remonte jusqu'à lui. Le mot de passe de la sauvegarde est ton flag.\n\n(Avec `curl`, ajoute `--path-as-is` si tu mets des `../` dans le chemin de l'URL : sinon curl les simplifie avant d'envoyer la requête. Ici, ils sont dans un paramètre, ce n'est pas nécessaire.)\n\nLa correction : résoudre le chemin final puis **vérifier qu'il reste dans le dossier autorisé**, ou mieux, ne jamais utiliser un nom fourni par l'utilisateur et passer par un identifiant. Bastion ne sert ses fichiers statiques qu'avec une racine fixe, refuse les fichiers cachés, et n'accepte que des identifiants `[a-z0-9-]` pour les leçons, vérifiés avant tout accès au disque."
+    },
+    {
+      "id": "lab-un-shell-en-cage",
+      "title": "Lab : un shell, mais dans une cage",
+      "moduleId": "linux-securite",
+      "points": 300,
+      "lab": "command-injection",
+      "brief": "Démarre ton lab : un outil de **diagnostic DNS**. Tu donnes un nom de domaine, le serveur lance `nslookup` dessus et t'affiche la commande exécutée et son résultat.\n\nLa commande est construite en **collant** ton texte dans une ligne de shell. Or pour un shell, `;` sépare deux commandes. Ajouter `; id` après un nom de domaine, c'est demander au serveur d'exécuter `id` en plus : c'est l'**injection de commande** (CWE-78), et elle donne un vrai shell sur le serveur.\n\n1. Vérifie l'injection avec `exemple.test; id` : sous quel utilisateur tournes-tu ?\n2. Le flag est dans les **variables d'environnement** du processus. Quelle commande les affiche ?\n3. **Puis essaie de sortir de la cage**, c'est la vraie leçon de ce lab :\n   - `wget -T 3 http://example.com` : le conteneur n'a aucune route vers Internet, donc ni téléchargement d'outils, ni shell inversé ;\n   - `touch /lab/porte-derobee` : le système de fichiers est en lecture seule ;\n   - écris un script dans `/tmp` puis exécute-le : `/tmp` est monté `noexec` ;\n   - `cat /proc/self/status | grep Cap` : toutes les capacités sont à zéro.\n\nC'est la **défense en profondeur** : la faille est réelle, mais tout ce dont un attaquant aurait besoin pour aller plus loin a été retiré. La plateforme applique exactement ces règles à chaque lab (`src/labs/runner/spec.ts`), et l'image de Bastion n'a même pas de shell.\n\nLa correction de la faille elle-même : ne jamais passer par un shell. On appelle le programme directement avec ses arguments dans une liste (`execFile('nslookup', [domaine])`), après avoir validé l'entrée (un nom de domaine n'a ni espace ni `;`)."
     }
   ]
 }
