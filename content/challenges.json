@@ -87,6 +87,30 @@
       "points": 250,
       "kind": "powershell-encoded",
       "brief": "Tu es analyste au SOC. Voici un extrait des journaux de sécurité Windows d'un serveur de fichiers (`events`), cette nuit. Trois identifiants d'événements à connaître :\n\n| ID | Signification |\n|---|---|\n| **4625** | Échec d'ouverture de session |\n| **4624** | Ouverture de session réussie (`LogonType=3` : depuis le réseau) |\n| **4688** | Création d'un processus, avec sa ligne de commande |\n\n1. **Repère l'attaque.** Une même adresse essaie de nombreux comptes différents, une fois chacun : c'est une **pulvérisation de mots de passe** (*password spraying*). Un mot de passe courant, essayé une seule fois par compte, ne déclenche pas le verrouillage. Quel compte a cédé ?\n2. **Suis le compte compromis.** Juste après, il lance un PowerShell caché (`-W Hidden`) avec `-EncodedCommand`. Cette option attend la commande en **Base64 de l'UTF-16LE** (deux octets par caractère), une technique courante pour masquer une commande aux regards et aux filtres naïfs.\n3. **Décode-la.**\n\n```python\nimport base64\nprint(base64.b64decode('la-valeur').decode('utf-16-le'))\n```\n\nL'attaquant a créé un compte de porte dérobée et l'a ajouté aux administrateurs. **Son mot de passe est ton flag.**\n\nLes commandes encodées de `adm-jdupont` sont légitimes : décode-les aussi, c'est le quotidien d'un analyste de distinguer l'administration normale de l'attaque.\n\nMorale : contre la pulvérisation, on combine MFA, mots de passe refusés s'ils figurent dans une liste de mots de passe courants (comme le fait Bastion à l'inscription) et une alerte sur les échecs répartis sur de nombreux comptes depuis une même source. Contre les commandes masquées : journalisation PowerShell (*Script Block Logging*, événement 4104), qui enregistre la commande **décodée**."
+    },
+    {
+      "id": "lab-factures-des-autres",
+      "title": "Lab : les factures des autres",
+      "moduleId": "idor",
+      "points": 200,
+      "lab": "idor-invoices",
+      "brief": "Ton premier **lab** : une vraie application qui tourne rien que pour toi, dans un conteneur isolé (pas d'accès à Internet, aucun autre apprenant ne peut l'atteindre). Démarre-la avec le bouton ci-dessous, puis ouvre son adresse.\n\nC'est l'API de facturation d'une petite entreprise. Le compte de démonstration `alice` / `alice` est affiché sur la page d'accueil. L'authentification fonctionne. Mais l'API vérifie-t-elle à **qui** appartient chaque facture ?\n\n1. Connecte-toi et récupère ton jeton :\n\n   ```bash\n   curl -s -X POST http://ADRESSE-DU-LAB/api/connexion -H 'content-type: application/json' -d '{\"identifiant\":\"alice\",\"mot_de_passe\":\"alice\"}'\n   ```\n\n2. Liste tes factures (`/api/mes-factures`) et regarde leurs numéros.\n3. Demande une facture qui n'est **pas** dans ta liste (`/api/factures/{id}`). La note d'une facture de la direction contient ton flag.\n\nLa correction : dans Bastion, chaque requête sur une note contient `owner_id` **dans la requête SQL elle-même**, et une note d'un autre utilisateur renvoie la même 404 qu'une note inexistante. Une règle Semgrep refuse toute requête qui l'oublierait."
+    },
+    {
+      "id": "lab-connexion-back-office",
+      "title": "Lab : entrer sans mot de passe",
+      "moduleId": "injection-sql",
+      "points": 250,
+      "lab": "sqli-login",
+      "brief": "Démarre ton lab : c'est le **back-office** d'une boutique en ligne. Le mot de passe de l'administrateur est aléatoire, impossible à deviner. Mais le formulaire de connexion construit sa requête SQL en **collant** ce que tu tapes :\n\n```sql\nSELECT identifiant, role FROM utilisateurs\nWHERE identifiant = '<identifiant>' AND mot_de_passe = '<mot de passe>'\n```\n\n1. Tape une simple apostrophe `'` comme identifiant. L'application affiche une erreur SQL **avec la requête complète** : c'est le premier indice qu'une injection est possible, et une faute de configuration à part entière.\n2. Trouve un identifiant qui transforme la requête pour qu'elle renvoie la ligne `admin` **sans vérifier le mot de passe**. Indice : en SQL, `--` commence un commentaire, tout ce qui suit est ignoré.\n3. Une fois connecté en administrateur, le coffre affiche ton flag.\n\nLa correction : une **requête préparée**, où l'entrée de l'utilisateur est envoyée à part, comme une donnée, jamais comme du code SQL. Dans Bastion, toutes les requêtes sont préparées, et ESLint comme Semgrep refusent une requête construite par concaténation."
+    },
+    {
+      "id": "lab-promu-administrateur",
+      "title": "Lab : promu administrateur",
+      "moduleId": "controle-acces-api",
+      "points": 250,
+      "lab": "mass-assignment",
+      "brief": "Démarre ton lab : l'API d'un espace membres. N'importe qui peut s'inscrire, mais le rapport `/api/admin/rapport` est réservé aux administrateurs.\n\n1. Inscris-toi normalement et regarde la réponse : le compte créé contient des champs que tu n'as pas envoyés. Lesquels ?\n\n   ```bash\n   curl -s -X POST http://ADRESSE-DU-LAB/api/inscription -H 'content-type: application/json' -d '{\"email\":\"moi@lab.test\",\"mot_de_passe\":\"x\"}'\n   ```\n\n2. Avec ton jeton, demande le rapport : refusé.\n3. Le serveur recopie **tout** le corps de la requête dans le nouveau compte. Que se passe-t-il si tu envoies toi-même l'un de ces champs à l'inscription ?\n\nC'est l'**assignation de masse** (OWASP API3:2023). La correction : n'accepter qu'une liste explicite de champs. Dans Bastion, tous les schémas d'entrée sont `.strict()` : un champ inconnu, comme `role`, est refusé avec une erreur 400, et le rôle ne se change que par la CLI de l'opérateur, jamais par HTTP."
     }
   ]
 }

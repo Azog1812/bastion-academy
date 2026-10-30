@@ -34,8 +34,8 @@ from first principles up to the level expected by major industry certifications.
 | Milestone | Scope | Status |
 |---|---|---|
 | **v3: foundations** | Learning paths → modules → lessons, progress tracking, web front-end, built on Bastion's auth core | ✅ API, web UI, levels 1 to 3 shipped; levels 4 to 6 to come |
-| **v4: challenges** | Per-user HMAC flags (unshareable), scoreboard, anti-cheat, TOTP MFA | ✅ Shipped: 4 challenges, opt-in scoreboard, TOTP + recovery codes |
-| **v5: isolated labs** | One vulnerable container per learner: no egress, TTL, sandboxed runtime, quotas | Planned |
+| **v4: challenges** | Per-user HMAC flags (unshareable), scoreboard, anti-cheat, TOTP MFA | ✅ Shipped: 11 challenges (levels 1 to 3), opt-in scoreboard, TOTP + recovery codes |
+| **v5: isolated labs** | One vulnerable container per learner: no egress, TTL, sandboxed runtime, quotas | ✅ Shipped: 3 labs (SQL injection, IDOR, mass assignment), lab runner + gateway, optional gVisor |
 | **v6: advanced** | Blue-team labs (log analysis, detection), AI tutor, observability | Planned |
 
 The platform is designed to **run locally** (`git clone` + Docker). There is no public
@@ -76,6 +76,33 @@ that stop the attack.
 Puzzles are generated per learner from an HMAC seed (nothing stored), decoys share the
 flag's format, and each generator has a test that solves it the way the brief says
 ([`challenge-generators.test.ts`](test/unit/challenge-generators.test.ts)).
+
+**3 live labs** ([ADR 0009](docs/adr/0009-isolated-labs.md)): a real, intentionally vulnerable
+service started for one learner, holding that learner's flag, reachable only from their machine.
+
+| Lab | Level | Attack |
+|---|---|---|
+| Les factures des autres | 1 | IDOR / BOLA on an invoicing API |
+| Entrer sans mot de passe | 2 | SQL injection on a login form (verbose errors as the first clue) |
+| Promu administrateur | 2 | Mass assignment on sign-up (`"role": "admin"`) |
+
+The lab is vulnerable, the box around it is not:
+
+```
+browser ─► bastion :3000 ──(internal network, token)──► lab-runner ── Docker socket
+browser ─► lab-gateway :8088 ──(one internal network per lab)──► lab container
+```
+
+- **Only the lab runner touches Docker** (root-equivalent): unreachable except from the
+  platform, token-protected, and it never takes an image, mount or option from a request.
+- **Each lab** runs non-root, read-only, with no capabilities, capped memory/CPU/PIDs,
+  no published port, on its **own network with no route out**: no tool download, no
+  reverse shell, no neighbour. Optional **gVisor** (`LAB_RUNTIME=runsc`).
+- **Each lab has its own origin** (`l<id>.lab.localhost`): a lab's XSS cannot touch the
+  platform session.
+- One lab per learner, a TTL enforced by both the platform and the runner, starts
+  rate-limited. Isolation was checked live: from a lab, the Internet, the runner and the
+  platform are all unreachable.
 
 **Start learning** (Node ≥ 22.13):
 
@@ -214,7 +241,7 @@ generic errors with correlation ids · secret redaction in logs · secrets read 
 files rather than env vars · socket timeouts · privileged operations only via an
 operator CLI, never over HTTP.
 
-**184 tests, ~99 % line coverage** — most of them are *abuse cases*, not happy paths.
+**233 tests, ~99 % line coverage** — most of them are *abuse cases*, not happy paths.
 
 ### Supply chain & infrastructure
 
