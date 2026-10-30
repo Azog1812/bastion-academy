@@ -34,7 +34,7 @@ from first principles up to the level expected by major industry certifications.
 | Milestone | Scope | Status |
 |---|---|---|
 | **v3: foundations** | Learning paths → modules → lessons, progress tracking, web front-end, built on Bastion's auth core | ✅ API, web UI, levels 1 to 3 shipped; levels 4 to 6 to come |
-| **v4: challenges** | Per-user HMAC flags (unshareable), scoreboard, anti-cheat, TOTP MFA | ✅ Shipped: 11 challenges (levels 1 to 3), opt-in scoreboard, TOTP + recovery codes |
+| **v4: challenges** | Per-user HMAC flags (unshareable), scoreboard, anti-cheat, TOTP MFA | ✅ Shipped: 4 challenges, opt-in scoreboard, TOTP + recovery codes |
 | **v5: isolated labs** | One vulnerable container per learner: no egress, TTL, sandboxed runtime, quotas | Planned |
 | **v6: advanced** | Blue-team labs (log analysis, detection), AI tutor, observability | Planned |
 
@@ -206,7 +206,7 @@ generic errors with correlation ids · secret redaction in logs · secrets read 
 files rather than env vars · socket timeouts · privileged operations only via an
 operator CLI, never over HTTP.
 
-**196 tests, ~99 % line coverage** — most of them are *abuse cases*, not happy paths.
+**184 tests, ~99 % line coverage** — most of them are *abuse cases*, not happy paths.
 
 ### Supply chain & infrastructure
 
