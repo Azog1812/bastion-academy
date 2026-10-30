@@ -21,7 +21,8 @@ it. Curriculum goes crescendo from basics to major-certification level. Mileston
 v3 foundations (paths/modules/lessons, progress, web front-end) → v4 challenges (per-user
 HMAC flags, scoreboard, TOTP MFA) → v5 isolated per-learner lab containers (shipped, ADR 0009)
 → v6 blue team (detection challenges + level 5 path shipped, ADR 0010; AI tutor and
-observability to come). Distribution is **local only** for now (clone + Docker);
+observability to come). All six levels have a path (level 6 "Expert": race conditions,
+deserialization, advanced AD and its detection, certification prep). Distribution is **local only** for now (clone + Docker);
 hosting comes later. Lab apps are intentionally vulnerable: they must bind to 127.0.0.1,
 stay out of `src/`, and never weaken the platform's own invariants below.
 
@@ -34,7 +35,7 @@ explain the *why* (threat, standard, trade-off), not only the *what*.
 npm ci --ignore-scripts      # never run install scripts
 npm run lint                 # ESLint strictTypeChecked + security plugin + custom SQL rules
 npm run typecheck            # tsc strict, noUncheckedIndexedAccess, exactOptionalPropertyTypes
-npm test                     # vitest (267 tests)
+npm test                     # vitest (272 tests)
 npm run test:coverage        # thresholds: lines/statements/functions 90 %, branches 80 %
 npm run check                # lint + typecheck + coverage
 npm run build && node dist/cli.js gen-secrets > .env   # local secrets (gitignored)

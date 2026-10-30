@@ -65,7 +65,7 @@ const json = (body: unknown, token?: string) => ({
 const bearer = (token: string) => ({ headers: { authorization: `Bearer ${token}` } });
 
 describe('labs refuse to start without a flag', () => {
-  it.each(['sqli-login', 'idor-invoices', 'mass-assignment', 'ssrf-preview', 'path-traversal', 'command-injection', 'jwt-none', 'xss-stored', 'chained-intranet'])('%s', async (name) => {
+  it.each(['sqli-login', 'idor-invoices', 'mass-assignment', 'ssrf-preview', 'path-traversal', 'command-injection', 'jwt-none', 'xss-stored', 'chained-intranet', 'race-coupon'])('%s', async (name) => {
     const child = spawn(process.execPath, [`labs/${name}/server.mjs`], { env: { PATH: process.env.PATH }, stdio: 'ignore' });
     expect(await new Promise((resolve) => child.on('exit', resolve))).toBe(1);
   });
@@ -225,5 +225,26 @@ describe('lab chained-intranet', () => {
     const h = Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url');
     const forged = `${h}.${admin}.${createHmac('sha256', secret).update(`${h}.${admin}`).digest('base64url')}`;
     expect(((await (await fetch(`${base}/api/admin/rapport`, bearer(forged))).json()) as { reference: string }).reference).toBe(flag);
+  });
+});
+
+describe('lab race-coupon', () => {
+  it('one request at a time the card works once; sent in parallel it is credited many times', async () => {
+    const flag = newFlag();
+    const base = await lab('race-coupon', flag);
+    const redeem = () => fetch(`${base}/api/cartes/utiliser`, json({ code: 'BIENVENUE10' }));
+    const buy = (article: string) => fetch(`${base}/api/acheter`, json({ article }));
+    // Honest path: the single-use rule holds, 10 € never buys the 50 € report.
+    expect((await redeem()).status).toBe(200);
+    expect((await redeem()).status).toBe(409);
+    expect((await buy('rapport-confidentiel')).status).toBe(402);
+    expect((await buy('nope')).status).toBe(404);
+    expect((await fetch(`${base}/api/cartes/utiliser`, json({ code: 'AUTRE' }))).status).toBe(404);
+    // Race: every concurrent request passes the check before any of them marks the card.
+    await fetch(`${base}/api/reinitialiser`, { method: 'POST' });
+    const results = await Promise.all(Array.from({ length: 8 }, redeem));
+    expect(results.filter((r) => r.status === 200).length).toBeGreaterThanOrEqual(5);
+    const report = (await (await buy('rapport-confidentiel')).json()) as { contenu: string };
+    expect(report.contenu).toContain(flag);
   });
 });

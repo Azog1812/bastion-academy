@@ -23,9 +23,11 @@ export const LABS = {
   /** Ships a shell on purpose: code execution is the lesson (ADR 0009). */
   'command-injection': { image: 'bastion-lab-command-injection:local', port: 8080 },
   'jwt-none': { image: 'bastion-lab-jwt-none:local', port: 8080 },
-  /** Ships a headless Chromium as the victim: a browser needs more memory and processes. */
   /** Level 4: three flaws chained (path traversal → leaked JWT secret → forged admin token). */
   'chained-intranet': { image: 'bastion-lab-chained-intranet:local', port: 8080 },
+  /** Level 6: a single-use gift card credited after an await (race condition, TOCTOU). */
+  'race-coupon': { image: 'bastion-lab-race-coupon:local', port: 8080 },
+  /** Ships a headless Chromium as the victim: a browser needs more memory and processes. */
   'xss-stored': { image: 'bastion-lab-xss-stored:local', port: 8080, limits: { memoryMiB: 512, pids: 256, cpus: 1 } },
 } as const satisfies Record<string, { image: string; port: number; limits?: LabLimits }>;
 

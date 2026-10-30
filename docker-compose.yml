@@ -115,6 +115,10 @@ services:
     build: { context: labs, args: { LAB: chained-intranet } }
     image: bastion-lab-chained-intranet:local
     profiles: [labs]
+  lab-race-coupon:
+    build: { context: labs, args: { LAB: race-coupon } }
+    image: bastion-lab-race-coupon:local
+    profiles: [labs]
   lab-jwt-none:
     build: { context: labs, args: { LAB: jwt-none } }
     image: bastion-lab-jwt-none:local

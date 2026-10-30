@@ -30,6 +30,11 @@ const REFERENCE: Record<DatasetKind, unknown> = {
     match: { event: ['failed_password', 'invalid_user'] },
     threshold: { groupBy: 'src_ip', min: 10, windowSeconds: 3600 },
   },
+  kerberoasting: {
+    match: { event_id: 4769, ticket_encryption_type: '0x17' },
+    exclude: { 'service_name|endswith': '$' },
+    threshold: { groupBy: 'account', distinct: 'service_name', min: 4, windowSeconds: 3600 },
+  },
 };
 
 describe('detection datasets', () => {
@@ -64,6 +69,14 @@ describe('detection datasets', () => {
     expect(run('ssh-bruteforce', { match: { program: 'sshd' }, threshold: { groupBy: 'src_ip', min: 10, windowSeconds: 3600 } }).falsePositives).toBeGreaterThan(0);
     // Too sensitive: the person who forgot their password is not an attacker.
     expect(run('ssh-bruteforce', { match: { event: 'failed_password' }, threshold: { groupBy: 'src_ip', min: 5, windowSeconds: 3600 } }).falsePositives).toBeGreaterThan(0);
+  });
+
+  it('kerberoasting: RC4 alone flags the payroll app; no RC4 filter flags inventory; machine accounts and short windows mislead', () => {
+    const roast = { groupBy: 'account', distinct: 'service_name', min: 4, windowSeconds: 3600 };
+    expect(run('kerberoasting', { match: { ticket_encryption_type: '0x17' } }).falsePositives).toBeGreaterThan(0); // accountants, monitoring
+    expect(run('kerberoasting', { match: { event_id: 4769 }, exclude: { 'service_name|endswith': '$' }, threshold: roast }).falsePositives).toBeGreaterThan(0); // inventory
+    expect(run('kerberoasting', { match: { ticket_encryption_type: '0x17' }, threshold: roast }).falsePositives).toBe(1); // monitoring the workshop
+    expect(run('kerberoasting', { match: { ticket_encryption_type: '0x17' }, exclude: { 'service_name|endswith': '$' }, threshold: { ...roast, windowSeconds: 300 } }).missed).toBe(1);
   });
 
   it('is deterministic per learner and differs between learners; ids carry no hint', () => {
