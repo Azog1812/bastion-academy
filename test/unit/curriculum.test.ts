@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { buildCurriculum, CurriculumError, loadCurriculum, type CurriculumSource } from '../../src/curriculum/catalog.js';
+import { LAB_IDS } from '../../src/labs/catalog.js';
 
 const quiz = [{ id: 'q1', prompt: 'p', choices: ['a', 'b'], answer: [0] }];
 
@@ -96,6 +97,11 @@ describe('curriculum validation (fail closed at startup)', () => {
     const c = loadCurriculum();
     expect(c.lessons.size).toBeGreaterThan(0);
     expect(c.paths[0]?.level).toBe(1);
+  });
+
+  it('every lab in the catalog is offered by a shipped challenge (a lab left out would be silently unreachable)', () => {
+    const offered = new Set([...loadCurriculum().challenges.values()].map((c) => c.lab).filter((l) => l !== undefined));
+    expect([...offered].sort()).toEqual([...LAB_IDS].sort());
   });
 
   it('every shipped path directory is listed in index.json (a path left out would be silently invisible)', () => {
