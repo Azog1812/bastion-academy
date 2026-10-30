@@ -8,16 +8,28 @@ import { z } from 'zod';
  * control must never silently degrade to an insecure default.
  */
 
-const PLACEHOLDER = /change[-_ ]?me|example|secret|password|xxxx/i;
+const BASE64 = /^[A-Za-z0-9+/]+={0,2}$/;
 
+/**
+ * A secret key: standard base64 of random bytes. Placeholders are recognised by
+ * what makes them placeholders, not by words: searching random base64 for
+ * "xxxx" or "secret" rejects about one real key in 25,000 (it did, in CI).
+ * - "change-me-…" and other typed values are not strict base64;
+ * - base64 of a repeated word ("secretsecret…") decodes to a handful of distinct
+ *   bytes, where 32 random bytes have about 30.
+ */
 export const base64Key = (minBytes: number) =>
   z
     .string()
-    .refine((v) => !PLACEHOLDER.test(v), 'looks like a placeholder value')
+    .refine((v) => BASE64.test(v) && v.length % 4 === 0, 'must be standard base64 of random bytes (node dist/cli.js gen-secrets)')
     .transform((v, ctx) => {
       const buf = Buffer.from(v, 'base64');
       if (buf.length < minBytes) {
         ctx.addIssue({ code: 'custom', message: `must decode to at least ${minBytes} bytes` });
+        return z.NEVER;
+      }
+      if (new Set(buf).size < 16) {
+        ctx.addIssue({ code: 'custom', message: 'looks like a placeholder or low-entropy value, not random bytes' });
         return z.NEVER;
       }
       return buf;
