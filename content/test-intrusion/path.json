@@ -1,0 +1,209 @@
+{
+  "id": "test-intrusion",
+  "title": "Test d'intrusion",
+  "summary": "La méthode d'un auditeur professionnel : un cadre légal écrit, la reconnaissance, l'enchaînement des failles, la post-exploitation maîtrisée, puis un rapport qui fait corriger. Avec un lab où il faut trois failles pour atteindre le flag.",
+  "level": 4,
+  "modules": [
+    {
+      "id": "methodologie-pentest",
+      "title": "Cadre et méthode",
+      "summary": "Ce qui distingue un test d'intrusion d'un délit, et comment on cartographie une cible avant de l'attaquer.",
+      "prerequisites": ["controle-acces-api", "segmentation-reseau"],
+      "lessons": [
+        {
+          "id": "cadre-et-perimetre",
+          "title": "Le test d'intrusion : cadre, périmètre, méthode",
+          "minutes": 20,
+          "references": [
+            { "label": "Légifrance — Code pénal, atteintes aux systèmes de traitement automatisé de données", "url": "https://www.legifrance.gouv.fr/codes/section_lc/LEGITEXT000006070719/LEGISCTA000006149839/" },
+            { "label": "PTES — Penetration Testing Execution Standard", "url": "https://pentest-standard.readthedocs.io/" },
+            { "label": "OWASP Web Security Testing Guide", "url": "https://owasp.org/www-project-web-security-testing-guide/" },
+            { "label": "ANSSI — Prestataires d'audit de la sécurité des SI (PASSI)", "url": "https://cyber.gouv.fr/produits-services-qualifies/passi" }
+          ],
+          "quiz": [
+            {
+              "id": "pt-legal",
+              "prompt": "Qu'est-ce qui rend un test d'intrusion légal ?",
+              "choices": ["Le fait de ne rien casser", "Une autorisation écrite de la personne habilitée, sur un périmètre défini", "Le fait de prévenir l'équipe informatique par téléphone"],
+              "answer": [1]
+            },
+            {
+              "id": "pt-convention",
+              "prompt": "Que fixe la convention d'audit ?",
+              "choices": ["Le périmètre et les techniques exclues", "Les contacts d'urgence", "Le mot de passe administrateur du client", "Les dates et horaires du test"],
+              "answer": [0, 1, 3]
+            },
+            {
+              "id": "pt-boite-blanche",
+              "prompt": "Pourquoi un test en boîte blanche est-il souvent plus efficace pour un budget donné ?",
+              "choices": ["Parce que l'auditeur n'a pas à passer des jours à découvrir ce que le client peut lui donner (code, architecture)", "Parce qu'il est plus réaliste qu'une attaque externe", "Parce qu'il ne nécessite pas d'autorisation"],
+              "answer": [0]
+            }
+          ]
+        },
+        {
+          "id": "reconnaissance",
+          "title": "La reconnaissance",
+          "minutes": 20,
+          "references": [
+            { "label": "OWASP WSTG — Information Gathering", "url": "https://owasp.org/www-project-web-security-testing-guide/" },
+            { "label": "PTES — Intelligence Gathering", "url": "https://pentest-standard.readthedocs.io/" }
+          ],
+          "quiz": [
+            {
+              "id": "rc-passive",
+              "prompt": "Lesquelles de ces sources relèvent de la reconnaissance passive ?",
+              "choices": ["Les journaux de transparence des certificats", "Un scan nmap de la cible", "Des dépôts de code publics", "Une découverte de contenu avec ffuf"],
+              "answer": [0, 2]
+            },
+            {
+              "id": "rc-erreurs",
+              "prompt": "Pourquoi une page d'erreur détaillée intéresse-t-elle l'auditeur ?",
+              "choices": ["Elle peut révéler le langage, les bibliothèques et l'arborescence du serveur", "Elle contient toujours un mot de passe", "Elle prouve que le site est vulnérable à l'injection SQL"],
+              "answer": [0]
+            },
+            {
+              "id": "rc-ct",
+              "prompt": "Que révèlent les journaux de transparence des certificats ?",
+              "choices": ["Les mots de passe des serveurs", "Les noms de domaine pour lesquels un certificat a été émis, y compris des sous-domaines peu connus", "Les ports ouverts"],
+              "answer": [1]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "exploitation-enchainee",
+      "title": "Exploitation et post-exploitation",
+      "summary": "Penser en chaînes, mesurer l'impact réel, et rester dans le cadre jusqu'au nettoyage final.",
+      "prerequisites": ["methodologie-pentest", "linux-securite"],
+      "lessons": [
+        {
+          "id": "chainer-les-failles",
+          "title": "Enchaîner les failles",
+          "minutes": 20,
+          "references": [
+            { "label": "OWASP WSTG", "url": "https://owasp.org/www-project-web-security-testing-guide/" },
+            { "label": "CWE-22 — Path Traversal", "url": "https://cwe.mitre.org/data/definitions/22.html" }
+          ],
+          "quiz": [
+            {
+              "id": "ch-mineures",
+              "prompt": "Trois failles notées « faible » ou « moyenne » peuvent-elles mener à une compromission totale ?",
+              "choices": ["Non, la gravité ne s'additionne pas", "Oui, si chacune ouvre l'accès à la suivante", "Seulement si l'une d'elles est critique"],
+              "answer": [1]
+            },
+            {
+              "id": "ch-maillon",
+              "prompt": "Côté défense, que faut-il pour casser une chaîne d'attaque ?",
+              "choices": ["Corriger toutes les failles en même temps", "Qu'au moins un maillon résiste", "Ajouter un pare-feu applicatif"],
+              "answer": [1]
+            },
+            {
+              "id": "ch-question",
+              "prompt": "Quelle question l'auditeur se pose-t-il à chaque découverte ?",
+              "choices": ["Qu'est-ce que ça me donne, et à quoi ça me donne accès ensuite ?", "Quel est son score CVSS ?", "Est-elle déjà connue publiquement ?"],
+              "answer": [0]
+            }
+          ]
+        },
+        {
+          "id": "post-exploitation",
+          "title": "Post-exploitation : jusqu'où aller ?",
+          "minutes": 20,
+          "references": [
+            { "label": "GTFOBins", "url": "https://gtfobins.github.io/" },
+            { "label": "PTES — Post Exploitation", "url": "https://pentest-standard.readthedocs.io/" }
+          ],
+          "quiz": [
+            {
+              "id": "pe-preuve",
+              "prompt": "L'auditeur accède à la base des clients. Que fait-il ?",
+              "choices": ["Il exporte toute la base pour prouver l'impact", "Il capture une preuve minimale de l'accès, sans extraire les données", "Il supprime une ligne pour montrer qu'il peut modifier"],
+              "answer": [1]
+            },
+            {
+              "id": "pe-hors-perimetre",
+              "prompt": "Des identifiants trouvés ouvrent une machine hors périmètre. Que faire ?",
+              "choices": ["L'exploiter, puisque l'accès est déjà acquis", "Le signaler dans le rapport sans l'exploiter", "Demander le mot de passe à l'administrateur"],
+              "answer": [1]
+            },
+            {
+              "id": "pe-intrusion-reelle",
+              "prompt": "Pendant le test, l'auditeur découvre les traces d'un autre attaquant. Que fait-il ?",
+              "choices": ["Il continue pour finir son test", "Il arrête et prévient le contact d'urgence prévu par la convention", "Il efface les traces pour protéger le client"],
+              "answer": [1]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "rapport-pentest",
+      "title": "Évaluer et rapporter",
+      "summary": "Noter la gravité avec CVSS 4.0, prioriser, et écrire un rapport qui fait corriger.",
+      "prerequisites": ["exploitation-enchainee"],
+      "lessons": [
+        {
+          "id": "cvss-et-priorisation",
+          "title": "Évaluer la gravité : CVSS et priorisation",
+          "minutes": 25,
+          "references": [
+            { "label": "FIRST — CVSS v4.0", "url": "https://www.first.org/cvss/v4-0/" },
+            { "label": "FIRST — CVSS v4.0 Specification", "url": "https://www.first.org/cvss/v4.0/specification-document" },
+            { "label": "NVD — calculateur CVSS v4.0", "url": "https://nvd.nist.gov/vuln-metrics/cvss/v4-calculator" }
+          ],
+          "quiz": [
+            {
+              "id": "cv-critique",
+              "prompt": "À partir de quel score une faille est-elle « critique » en CVSS ?",
+              "choices": ["7,0", "9,0", "10,0 uniquement"],
+              "answer": [1]
+            },
+            {
+              "id": "cv-pr",
+              "prompt": "Que mesure la métrique PR ?",
+              "choices": ["Les privilèges dont l'attaquant a besoin avant l'attaque", "La priorité de correction", "Le nombre de preuves fournies"],
+              "answer": [0]
+            },
+            {
+              "id": "cv-priorite",
+              "prompt": "Pourquoi ne pas corriger les failles uniquement par ordre de score CVSS ?",
+              "choices": ["Parce que le score évalue une faille isolée : une chaîne et le coût de correction changent la priorité", "Parce que le CVSS est obsolète", "Parce que seules les failles critiques comptent"],
+              "answer": [0]
+            }
+          ]
+        },
+        {
+          "id": "rediger-le-rapport",
+          "title": "Rédiger le rapport",
+          "minutes": 20,
+          "references": [
+            { "label": "OWASP WSTG — Reporting", "url": "https://owasp.org/www-project-web-security-testing-guide/" },
+            { "label": "PTES — Reporting", "url": "https://pentest-standard.readthedocs.io/" }
+          ],
+          "quiz": [
+            {
+              "id": "rp-preuve",
+              "prompt": "Que doit permettre la preuve d'un constat ?",
+              "choices": ["De rejouer le test rapidement pour le corriger et vérifier la correction", "D'impressionner la direction", "De publier la faille"],
+              "answer": [0]
+            },
+            {
+              "id": "rp-synthese",
+              "prompt": "À qui s'adresse la synthèse managériale ?",
+              "choices": ["Aux développeurs", "À la direction : risque global, impacts métier, priorités, sans jargon", "À l'hébergeur"],
+              "answer": [1]
+            },
+            {
+              "id": "rp-sensible",
+              "prompt": "Pourquoi le rapport est-il un document sensible ?",
+              "choices": ["Parce qu'il décrit comment entrer chez le client", "Parce qu'il contient le tarif de la mission", "Il ne l'est pas"],
+              "answer": [0]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

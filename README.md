@@ -33,9 +33,9 @@ from first principles up to the level expected by major industry certifications.
 
 | Milestone | Scope | Status |
 |---|---|---|
-| **v3: foundations** | Learning paths → modules → lessons, progress tracking, web front-end, built on Bastion's auth core | ✅ API, web UI, levels 1 to 3 shipped; levels 4 to 6 to come |
+| **v3: foundations** | Learning paths → modules → lessons, progress tracking, web front-end, built on Bastion's auth core | ✅ API, web UI, levels 1 to 5 shipped; level 6 to come |
 | **v4: challenges** | Per-user HMAC flags (unshareable), scoreboard, anti-cheat, TOTP MFA | ✅ Shipped: 11 challenges (levels 1 to 3), opt-in scoreboard, TOTP + recovery codes |
-| **v5: isolated labs** | One vulnerable container per learner: no egress, TTL, sandboxed runtime, quotas | ✅ Shipped: 8 labs (SQLi, IDOR, mass assignment, JWT `alg:none`, SSRF, path traversal, command injection, stored XSS with a headless-browser victim), lab runner + gateway, optional gVisor |
+| **v5: isolated labs** | One vulnerable container per learner: no egress, TTL, sandboxed runtime, quotas | ✅ Shipped: 9 labs (SQLi, IDOR, mass assignment, JWT `alg:none`, SSRF, path traversal, command injection, stored XSS with a headless-browser victim, a three-flaw chain), lab runner + gateway, optional gVisor |
 | **v6: blue team** | Level 5 path (logging, SIEM, detection engineering, incident response, forensics) and detection challenges | ✅ Shipped: 6 lessons, 4 detection challenges graded on precision **and** recall · AI tutor, observability: planned |
 
 The platform is designed to **run locally** (`git clone` + Docker). There is no public
@@ -43,8 +43,8 @@ hosted instance yet.
 
 ### What's available today
 
-The curriculum spans six levels, from **Fundamentals** to **Expert**. Four paths are
-available (in French, 33 lessons, 91 quiz questions):
+The curriculum spans six levels, from **Fundamentals** to **Expert**. Five paths are
+available (in French, 39 lessons, 109 quiz questions):
 
 - **Level 1, Fundamentals**: security basics, HTTP, sessions and JWT, then a
   *break it, then fix it* IDOR module.
@@ -54,6 +54,9 @@ available (in French, 33 lessons, 91 quiz questions):
 - **Level 3, Systems and networks**: TCP/IP, DNS and TLS, legal port scanning, Linux
   permissions and privilege escalation, container hardening, Windows accounts and
   tokens, Kerberos and Active Directory attacks, network segmentation.
+- **Level 4, Penetration testing**: the legal frame and rules of engagement (French
+  penal code, PASSI), PTES and OWASP WSTG, reconnaissance, chaining flaws,
+  post-exploitation within scope, CVSS 4.0 and writing a report that gets things fixed.
 - **Level 5, Defense and detection** (blue team): what to log, SIEM and correlation,
   writing Sigma-style rules, reading web attacks in logs, incident response (NIST SP
   800-61r3, 72-hour GDPR notification), forensics first steps (order of volatility,
@@ -97,7 +100,7 @@ Puzzles are generated per learner from an HMAC seed (nothing stored), decoys sha
 flag's format, and each generator has a test that solves it the way the brief says
 ([`challenge-generators.test.ts`](test/unit/challenge-generators.test.ts)).
 
-**8 live labs** ([ADR 0009](docs/adr/0009-isolated-labs.md)): a real, intentionally vulnerable
+**9 live labs** ([ADR 0009](docs/adr/0009-isolated-labs.md)): a real, intentionally vulnerable
 service started for one learner, holding that learner's flag, reachable only from their machine.
 
 | Lab | Level | Attack |
@@ -109,6 +112,7 @@ service started for one learner, holding that learner's flag, reachable only fro
 | Un modérateur trop confiant | 2 | Stored XSS against a **real headless Chromium** moderator; exfiltrate its cookie *through the app itself*, since labs have no route out |
 | Un aperçu trop curieux | 2 | SSRF: make the server fetch its own loopback admin service |
 | Le dossier d'à côté | 3 | Path traversal out of a download folder |
+| Trois failles, une chaîne | 4 | **No single flaw is enough**: path traversal → leaked JWT secret → forged admin token (shortcuts like `/proc/self/environ` blocked) |
 | Un shell, mais dans une cage | 3 | Command injection → a real shell, then **try to escape and see why you can't** (no route out, read-only, `noexec`, no capabilities) |
 
 The lab is vulnerable, the box around it is not:
@@ -266,7 +270,7 @@ generic errors with correlation ids · secret redaction in logs · secrets read 
 files rather than env vars · socket timeouts · privileged operations only via an
 operator CLI, never over HTTP.
 
-**265 tests, ~99 % line coverage** — most of them are *abuse cases*, not happy paths.
+**267 tests, ~99 % line coverage** — most of them are *abuse cases*, not happy paths.
 
 ### Supply chain & infrastructure
 
