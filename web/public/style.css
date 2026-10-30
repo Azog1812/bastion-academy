@@ -89,7 +89,8 @@ legend { font-weight: 600; padding: 0 0.3rem; }
 
 pre.artifact {
   background: #0a0e12; border: 1px solid var(--border); border-radius: 6px; padding: 1rem;
-  overflow-x: auto; white-space: pre-wrap; word-break: break-all;
+  /* Logs and captures keep one record per line, as in a terminal; long ones scroll. */
+  overflow: auto; white-space: pre; max-height: 32rem;
   font-family: ui-monospace, 'Cascadia Code', Consolas, monospace; font-size: 0.9em;
 }
 tr.me td { color: var(--accent); font-weight: 600; }

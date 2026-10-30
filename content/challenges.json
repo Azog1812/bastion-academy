@@ -31,6 +31,62 @@
       "points": 100,
       "kind": "jwt-claims",
       "brief": "Une API a glissé une note de débogage dans le **JWT** qu'elle remet à ses utilisateurs, en pensant que le jeton était secret.\n\nUn JWT, c'est trois parties séparées par des points : `en-tête.contenu.signature`. Les deux premières sont du **Base64url**, pas du chiffrement. La signature empêche de *modifier* le contenu, pas de le *lire*.\n\nDécode la partie centrale du jeton et trouve le flag.\n\n```bash\necho 'partie-centrale' | tr '_-' '/+' | base64 -d\n```\n\n(Si `base64` se plaint, ajoute un ou deux `=` à la fin : Base64url supprime le remplissage.)\n\nRègle à retenir : on ne met jamais d'information sensible dans un JWT."
+    },
+    {
+      "id": "code-pin-rapide",
+      "title": "Un code PIN dans une empreinte rapide",
+      "moduleId": "socle-securite",
+      "points": 150,
+      "kind": "weak-pin-hash",
+      "brief": "Une application de coffre-fort numérique protège ses données par un **code PIN à 4 chiffres**. Elle ne stocke pas le PIN, seulement son empreinte **SHA-256** (`storedHash`), et elle chiffre le coffre (`vault`) avec une clé dérivée du PIN.\n\nLe développeur pensait qu'une empreinte était irréversible. C'est vrai pour une entrée imprévisible, pas pour une entrée qui n'a que **10 000 valeurs possibles** : on les calcule toutes, et on compare. SHA-256 est conçu pour être *rapide*, un ordinateur portable en teste des millions par seconde.\n\nRetrouve le PIN, puis ouvre le coffre :\n\n```python\nimport hashlib\nstored = 'colle-storedHash-ici'\nvault = bytes.fromhex('colle-vault-ici')\n\nfor n in range(10000):\n    pin = f'{n:04d}'\n    if hashlib.sha256(pin.encode()).hexdigest() == stored:\n        pad = b''.join(hashlib.sha256(f'{pin}:{i}'.encode()).digest() for i in (0, 1))\n        print(pin, bytes(b ^ k for b, k in zip(vault, pad)).decode())\n```\n\nMorale : pour un secret humain, on utilise une fonction **lente et salée**. Bastion stocke les mots de passe avec scrypt (128 Mio de mémoire par essai, sel aléatoire), et un PIN de 4 chiffres ne protégerait de toute façon rien sans limitation du nombre d'essais."
+    },
+    {
+      "id": "injection-a-l-aveugle",
+      "title": "Reconstituer une injection SQL à l'aveugle",
+      "moduleId": "injection-sql",
+      "points": 300,
+      "kind": "blind-sqli-log",
+      "brief": "Cette nuit, un attaquant a exfiltré une valeur de la table `secrets` d'une boutique en ligne. Tu es l'analyste : tu n'as que le **journal d'accès** du serveur web (`accessLog`).\n\nLa page `/produits?id=` est vulnérable, mais elle n'affiche jamais le résultat de la requête : c'est une injection **à l'aveugle** (*blind*). L'attaquant pose donc des questions dont la réponse est oui ou non :\n\n```sql\n3 AND ASCII(SUBSTR((SELECT valeur FROM secrets LIMIT 1), 5, 1)) > 77\n```\n\n« Le code ASCII du 5ᵉ caractère est-il supérieur à 77 ? » Si oui, la condition est vraie et la page produit s'affiche (**5120 octets**). Sinon, la page « aucun produit » répond (**312 octets**). La taille de la réponse, dans la dernière colonne chiffrée du journal, trahit chaque réponse.\n\nL'outil (sqlmap) procède **par dichotomie** : pour chaque position, il coupe l'intervalle 32..126 en deux jusqu'à trouver le caractère, en 7 requêtes environ. Rejoue son raisonnement :\n\n1. décode l'URL de chaque requête (`urllib.parse.unquote`) ;\n2. pour chaque position, pars de `bas = 32, haut = 126` ; si `> n` est vrai (5120), `bas = n + 1`, sinon `haut = n` ;\n3. à la fin, le caractère est `chr(bas)`.\n\nLa valeur volée est ton flag.\n\nCôté défense : une seule requête préparée (paramètres liés) rend tout ceci impossible. Dans Bastion, une règle ESLint et une règle Semgrep refusent toute requête SQL construite par concaténation. Et côté détection : des centaines de requêtes d'une même adresse avec `SUBSTR`, `ASCII` et l'agent `sqlmap`, c'est un signal d'alerte évident."
+    },
+    {
+      "id": "secret-jwt-faible",
+      "title": "Un secret de signature trop faible",
+      "moduleId": "jwt",
+      "points": 200,
+      "kind": "jwt-weak-secret",
+      "brief": "Cette API signe ses jetons en **HS256** : `signature = HMAC-SHA256(secret, en-tête.contenu)`. Celui qui connaît le secret peut fabriquer n'importe quel jeton, par exemple avec `\"role\": \"admin\"`.\n\nLe problème : le développeur a choisi un secret **courant**. Or l'attaque se fait **hors ligne** : avec un seul jeton valide, on calcule la signature pour chaque mot candidat, sans jamais contacter le serveur, donc sans limitation du nombre d'essais ni journalisation. En vrai, on utilise `hashcat -m 16500` avec des millions de mots ; ici, la liste `wordlist` suffit.\n\nTrouve le secret, puis utilise-le pour ouvrir le coffre (`vault`) :\n\n```python\nimport base64, hashlib, hmac\ntoken = 'colle-le-jeton-ici'\nwordlist = '''colle-la-liste-ici'''.split()\nvault = bytes.fromhex('colle-vault-ici')\n\nhead, body, sig = token.split('.')\nfor word in wordlist:\n    mac = hmac.new(word.encode(), f'{head}.{body}'.encode(), hashlib.sha256).digest()\n    if base64.urlsafe_b64encode(mac).rstrip(b'=').decode() == sig:\n        pad = b''.join(hashlib.sha256(f'{word}:{i}'.encode()).digest() for i in (0, 1))\n        print(word, bytes(b ^ k for b, k in zip(vault, pad)).decode())\n```\n\nMorale : un secret HS256 doit avoir au moins 256 bits d'**aléa**, pas être un mot. Bastion refuse de démarrer si `JWT_SECRET` fait moins de 32 octets (256 bits), `gen-secrets` le tire au hasard, et Bastion vérifie l'algorithme attendu pour éviter les attaques `alg: none`."
+    },
+    {
+      "id": "mot-de-passe-sur-le-fil",
+      "title": "Un mot de passe sur le fil",
+      "moduleId": "reseau-tcp-ip",
+      "points": 150,
+      "kind": "cleartext-capture",
+      "brief": "Voici un paquet capturé avec `tcpdump -X` sur le réseau d'une entreprise (`capture`) : un administrateur consulte l'intranet **en HTTP**, sans TLS.\n\nChaque ligne montre 16 octets : leur position, leur valeur en hexadécimal, puis leur traduction en ASCII (un `.` pour ce qui n'est pas imprimable). Repère les couches que tu as vues dans la leçon :\n\n- les **20 premiers octets** sont l'en-tête IPv4 (`45` = version 4, en-tête de 5 × 4 octets ; `06` en 10ᵉ position = TCP) ;\n- les **20 suivants** sont l'en-tête TCP (port destination `0050` = 80) ;\n- le reste est la requête HTTP, lisible telle quelle.\n\nDans la requête, l'en-tête `Authorization: Basic` transporte `utilisateur:mot-de-passe` encodé en **Base64**, ce qui n'est pas du chiffrement. La valeur est coupée sur plusieurs lignes : recolle-la, puis décode-la.\n\n```bash\necho 'la-valeur-base64' | base64 -d\n```\n\nLe mot de passe de l'administrateur est ton flag.\n\nMorale : sans TLS, toute personne placée sur le chemin (Wi-Fi partagé, équipement compromis, empoisonnement ARP) lit et rejoue les identifiants. Bastion envoie `Strict-Transport-Security` pour que le navigateur refuse de lui parler en clair, et ses cookies de session portent l'attribut `Secure`."
+    },
+    {
+      "id": "qui-peut-lire",
+      "title": "Qui peut vraiment lire ce fichier ?",
+      "moduleId": "linux-securite",
+      "points": 200,
+      "kind": "linux-permissions",
+      "brief": "Tu viens d'obtenir un shell sur un serveur web, en tant que `www-data` (voir `id`). Un administrateur a rangé un secret en quatre morceaux, `part-1` à `part-4`, dans `/srv/coffre/`. Chaque morceau existe en trois exemplaires, dont **un seul** est lisible par toi. Les autres sont des leurres.\n\nTu as la liste des fichiers (`listing`, comme `ls -l`) et, pour t'éviter un aller-retour, leur contenu (`contents`). À toi de déterminer lesquels `www-data` peut **réellement** lire, puis de recoller les morceaux dans l'ordre.\n\nLa règle exacte du noyau, avec ses pièges :\n\n1. si tu es le **propriétaire**, seuls les droits du propriétaire comptent ;\n2. sinon, si tu fais partie du **groupe** (y compris un groupe secondaire comme `adm`), seuls les droits du groupe comptent ;\n3. sinon, ce sont les droits des **autres**.\n\nUne seule classe s'applique, jamais la meilleure des trois. `----r--r--` avec toi comme propriétaire : tu ne peux **pas** lire, même si « les autres » le peuvent. (On suppose que tous les répertoires sont traversables.)\n\nMorale : lire une permission, c'est d'abord savoir **quelle** classe s'applique. C'est aussi pourquoi l'image de Bastion donne son code à `root` en `0555` et fait tourner le processus sous un autre UID : même compromis, il ne peut pas modifier son propre code."
+    },
+    {
+      "id": "premiere-regle-qui-gagne",
+      "title": "La première règle qui gagne",
+      "moduleId": "segmentation-reseau",
+      "points": 200,
+      "kind": "firewall-flows",
+      "brief": "Voici le pare-feu `nftables` d'un serveur (`ruleset`) et les nouvelles connexions qu'il a reçues (`connections`). Seules les connexions **acceptées** ont livré leurs données à l'application : mises bout à bout dans l'ordre, elles forment ton flag. Les connexions bloquées transportaient des leurres.\n\nComment `nftables` décide, pour chaque nouvelle connexion :\n\n- il lit les règles **de haut en bas** ; la **première** qui correspond décide (`accept` ou `drop`) ;\n- une règle ne correspond que si **toutes** ses conditions sont vraies : adresse source (`ip saddr`, avec un masque CIDR : `10.0.9.0/24` couvre `10.0.9.0` à `10.0.9.255`), protocole (`tcp` ou `udp`) et port de destination (`dport`) ;\n- si aucune règle ne correspond, c'est la **politique par défaut** (`policy drop`) qui s'applique ;\n- la ligne `ct state established,related` ne concerne pas les *nouvelles* connexions.\n\nAttention à l'ordre : une règle de quarantaine placée avant une autorisation l'emporte sur elle.\n\nMorale : refus par défaut, puis autorisation explicite de chaque flux, et l'ordre des règles est une partie de la politique. Bastion applique la même logique en Kubernetes : une NetworkPolicy refuse tout, dans les deux sens, et une seule règle ouvre le port 3000 au contrôleur d'entrée."
+    },
+    {
+      "id": "pulverisation-et-porte-derobee",
+      "title": "Pulvérisation de mots de passe et porte dérobée",
+      "moduleId": "windows-active-directory",
+      "points": 250,
+      "kind": "powershell-encoded",
+      "brief": "Tu es analyste au SOC. Voici un extrait des journaux de sécurité Windows d'un serveur de fichiers (`events`), cette nuit. Trois identifiants d'événements à connaître :\n\n| ID | Signification |\n|---|---|\n| **4625** | Échec d'ouverture de session |\n| **4624** | Ouverture de session réussie (`LogonType=3` : depuis le réseau) |\n| **4688** | Création d'un processus, avec sa ligne de commande |\n\n1. **Repère l'attaque.** Une même adresse essaie de nombreux comptes différents, une fois chacun : c'est une **pulvérisation de mots de passe** (*password spraying*). Un mot de passe courant, essayé une seule fois par compte, ne déclenche pas le verrouillage. Quel compte a cédé ?\n2. **Suis le compte compromis.** Juste après, il lance un PowerShell caché (`-W Hidden`) avec `-EncodedCommand`. Cette option attend la commande en **Base64 de l'UTF-16LE** (deux octets par caractère), une technique courante pour masquer une commande aux regards et aux filtres naïfs.\n3. **Décode-la.**\n\n```python\nimport base64\nprint(base64.b64decode('la-valeur').decode('utf-16-le'))\n```\n\nL'attaquant a créé un compte de porte dérobée et l'a ajouté aux administrateurs. **Son mot de passe est ton flag.**\n\nLes commandes encodées de `adm-jdupont` sont légitimes : décode-les aussi, c'est le quotidien d'un analyste de distinguer l'administration normale de l'attaque.\n\nMorale : contre la pulvérisation, on combine MFA, mots de passe refusés s'ils figurent dans une liste de mots de passe courants (comme le fait Bastion à l'inscription) et une alerte sur les échecs répartis sur de nombreux comptes depuis une même source. Contre les commandes masquées : journalisation PowerShell (*Script Block Logging*, événement 4104), qui enregistre la commande **décodée**."
     }
   ]
 }

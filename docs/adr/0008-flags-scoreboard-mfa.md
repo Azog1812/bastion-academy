@@ -27,6 +27,13 @@ raises the value of an account, and the threat model listed "no MFA" as an accep
   a kind, it never ships code. Artifacts are derived from a second HMAC, so they are
   stable per learner without storage. Challenges open with their module (same
   server-side gating as lessons).
+- **Every generator is proven solvable, and only by solving it.** A test per kind
+  recovers the flag the way the brief tells the learner to (brute force, log replay,
+  packet decoding, an independent re-implementation of the permission and nftables
+  rules), on random flags and seeds, and checks the flag never appears verbatim in the
+  artifact. Decoys have the flag's exact format, so filtering by shape does not work.
+  Generation is pure CPU and bounded: measured at most ~1 ms and ~57 kB (the blind SQL
+  injection log) per artifact, behind the authenticated, rate-limited API.
 
 Rejected: random flags stored per user (a DB leak exposes them, and storage for nothing);
 one global flag per challenge (copyable, which defeats a scoreboard).
