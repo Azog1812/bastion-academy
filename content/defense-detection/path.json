@@ -1,0 +1,208 @@
+{
+  "id": "defense-detection",
+  "title": "Défense et détection",
+  "summary": "Changer de camp : journaliser, détecter, répondre. Tu écris de vraies règles de détection, évaluées sur des journaux où se cachent les attaques des niveaux précédents, et des pièges pour les règles trop naïves.",
+  "level": 5,
+  "modules": [
+    {
+      "id": "journaux-siem",
+      "title": "Journaux et SIEM",
+      "summary": "Ce qu'il faut journaliser, comment, et comment un SIEM transforme des millions d'événements en quelques alertes utiles.",
+      "prerequisites": ["reseau-tcp-ip"],
+      "lessons": [
+        {
+          "id": "journaux-sources",
+          "title": "Journaliser ce qui compte",
+          "minutes": 20,
+          "references": [
+            { "label": "OWASP Logging Cheat Sheet", "url": "https://cheatsheetseries.owasp.org/cheatsheets/Logging_Cheat_Sheet.html" },
+            { "label": "OWASP Top 10 A09:2021 — Security Logging and Monitoring Failures", "url": "https://owasp.org/Top10/A09_2021-Security_Logging_and_Monitoring_Failures/" },
+            { "label": "ANSSI — Recommandations de sécurité pour la mise en œuvre d'un système de journalisation", "url": "https://cyber.gouv.fr/publications/recommandations-de-securite-pour-la-mise-en-oeuvre-dun-systeme-de-journalisation" }
+          ],
+          "quiz": [
+            {
+              "id": "journal-secrets",
+              "prompt": "Lesquelles de ces informations ne doivent jamais apparaître dans un journal ?",
+              "choices": ["Le mot de passe saisi lors d'une connexion échouée", "L'adresse IP source d'une connexion", "Le jeton de session de l'utilisateur", "L'identifiant de corrélation de la requête"],
+              "answer": [0, 2]
+            },
+            {
+              "id": "journal-utc",
+              "prompt": "Pourquoi horodater les journaux en UTC, sur des horloges synchronisées ?",
+              "choices": ["Pour économiser de la place", "Pour pouvoir reconstituer une chronologie fiable à partir de plusieurs machines", "Parce que c'est obligatoire pour le format JSON"],
+              "answer": [1]
+            },
+            {
+              "id": "journal-chaine",
+              "prompt": "Dans Bastion, un attaquant supprime les déclencheurs SQL puis modifie une ligne du journal d'audit. Que se passe-t-il ?",
+              "choices": ["Rien n'est détectable", "La commande verify-audit signale la première entrée dont le HMAC chaîné ne correspond plus", "La base de données refuse de démarrer"],
+              "answer": [1]
+            }
+          ]
+        },
+        {
+          "id": "siem-correlation",
+          "title": "SIEM, corrélation et faux positifs",
+          "minutes": 20,
+          "references": [
+            { "label": "MITRE ATT&CK", "url": "https://attack.mitre.org/" },
+            { "label": "MITRE ATT&CK — T1110.003 Password Spraying", "url": "https://attack.mitre.org/techniques/T1110/003/" }
+          ],
+          "quiz": [
+            {
+              "id": "siem-fatigue",
+              "prompt": "Une règle génère 400 alertes par jour, dont 2 sont de vraies attaques. Quel est le risque principal ?",
+              "choices": ["Aucun : toutes les attaques sont détectées", "La fatigue d'alerte : les analystes finissent par ignorer les alertes, y compris les vraies", "Le SIEM va manquer d'espace disque"],
+              "answer": [1]
+            },
+            {
+              "id": "siem-comportement",
+              "prompt": "Quelle règle détecte le mieux une pulvérisation de mots de passe ?",
+              "choices": ["Alerter sur chaque échec de connexion", "Alerter quand une même source échoue sur de nombreux comptes différents en peu de temps", "Alerter quand un utilisateur échoue trois fois de suite"],
+              "answer": [1]
+            },
+            {
+              "id": "siem-faux-negatif",
+              "prompt": "Qu'est-ce qu'un faux négatif ?",
+              "choices": ["Une alerte levée sans raison", "Une attaque réelle qui ne déclenche aucune alerte", "Une alerte levée deux fois pour la même attaque"],
+              "answer": [1]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "detection-ingenierie",
+      "title": "Ingénierie de la détection",
+      "summary": "Écrire, tester et affiner des règles de détection au format Sigma, et lire les attaques web dans les journaux d'accès.",
+      "prerequisites": ["journaux-siem", "injection-sql"],
+      "lessons": [
+        {
+          "id": "regles-sigma",
+          "title": "Écrire une règle de détection",
+          "minutes": 25,
+          "references": [
+            { "label": "Sigma — Rules specification", "url": "https://sigmahq.io/docs/basics/rules.html" },
+            { "label": "SigmaHQ — dépôt des règles communautaires", "url": "https://github.com/SigmaHQ/sigma" }
+          ],
+          "quiz": [
+            {
+              "id": "sigma-et-ou",
+              "prompt": "Dans un bloc de règle, deux conditions sur des champs différents, et une liste de valeurs pour un même champ : quelle est la logique ?",
+              "choices": ["ET entre les champs, OU entre les valeurs d'un champ", "OU entre les champs, ET entre les valeurs", "ET partout"],
+              "answer": [0]
+            },
+            {
+              "id": "sigma-regex",
+              "prompt": "Pourquoi les règles des défis de Bastion n'acceptent-elles pas d'expressions régulières ?",
+              "choices": ["Parce que Sigma ne les permet pas", "Parce qu'une expression mal construite peut bloquer le serveur partagé (ReDoS)", "Parce qu'elles sont plus lentes à écrire"],
+              "answer": [1]
+            },
+            {
+              "id": "sigma-exclusion",
+              "prompt": "Quelle exclusion est la plus sûre pour écarter un agent de supervision légitime ?",
+              "choices": ["Exclure toutes les adresses du réseau interne", "Exclure précisément le processus parent de l'agent identifié", "Exclure tous les événements PowerShell"],
+              "answer": [1]
+            }
+          ]
+        },
+        {
+          "id": "detecter-attaques-web",
+          "title": "Détecter les attaques web dans les journaux",
+          "minutes": 20,
+          "references": [
+            { "label": "OWASP CRS — Core Rule Set", "url": "https://coreruleset.org/" },
+            { "label": "OWASP Logging Cheat Sheet", "url": "https://cheatsheetseries.owasp.org/cheatsheets/Logging_Cheat_Sheet.html" }
+          ],
+          "quiz": [
+            {
+              "id": "web-user-agent",
+              "prompt": "Pourquoi une règle fondée uniquement sur l'agent utilisateur « sqlmap » est-elle insuffisante ?",
+              "choices": ["Parce que l'agent utilisateur est déclaré par le client : l'attaquant peut le changer", "Parce que sqlmap n'envoie pas d'agent utilisateur", "Parce que les journaux ne contiennent pas l'agent utilisateur"],
+              "answer": [0]
+            },
+            {
+              "id": "web-casse",
+              "prompt": "Un attaquant envoie « UnIoN SeLeCt ». Que doit faire la règle ?",
+              "choices": ["Comparer sans tenir compte de la casse", "Lister toutes les combinaisons de majuscules", "Ignorer, c'est sans danger"],
+              "answer": [0]
+            },
+            {
+              "id": "web-post",
+              "prompt": "Une injection SQL dans le corps d'un formulaire POST apparaît-elle dans un journal d'accès classique ?",
+              "choices": ["Oui, toujours", "Généralement non : il faut les journaux de l'application", "Seulement en HTTPS"],
+              "answer": [1]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "reponse-incident",
+      "title": "Réponse à incident et forensique",
+      "summary": "Le cycle de réponse à incident, les obligations, et les premiers gestes qui préservent les preuves.",
+      "prerequisites": ["detection-ingenierie", "windows-active-directory"],
+      "lessons": [
+        {
+          "id": "cycle-reponse-incident",
+          "title": "La réponse à incident",
+          "minutes": 20,
+          "references": [
+            { "label": "NIST SP 800-61 Rev. 3 — Incident Response Recommendations and Considerations", "url": "https://csrc.nist.gov/pubs/sp/800/61/r3/final" },
+            { "label": "CNIL — Notifier une violation de données personnelles", "url": "https://www.cnil.fr/fr/notifier-une-violation-de-donnees-personnelles" },
+            { "label": "CERT-FR", "url": "https://www.cert.ssi.gouv.fr/" }
+          ],
+          "quiz": [
+            {
+              "id": "ri-eteindre",
+              "prompt": "Un serveur est compromis. Pourquoi l'isoler du réseau plutôt que de l'éteindre ?",
+              "choices": ["Pour ne pas perdre la mémoire vive : processus, connexions, traces de l'attaquant", "Parce qu'un serveur éteint ne peut plus être rallumé", "Parce que c'est plus rapide"],
+              "answer": [0]
+            },
+            {
+              "id": "ri-cnil",
+              "prompt": "Dans quel délai une violation de données personnelles doit-elle être notifiée à la CNIL ?",
+              "choices": ["24 heures", "72 heures après en avoir pris connaissance", "30 jours"],
+              "answer": [1]
+            },
+            {
+              "id": "ri-preparation",
+              "prompt": "Que contient la phase de préparation ?",
+              "choices": ["Les contacts, les procédures, les outils et la journalisation, mis en place avant l'incident", "L'analyse des journaux après l'attaque", "La restauration des sauvegardes"],
+              "answer": [0]
+            }
+          ]
+        },
+        {
+          "id": "forensique-premiers-gestes",
+          "title": "Forensique : les premiers gestes",
+          "minutes": 20,
+          "references": [
+            { "label": "RFC 3227 — Guidelines for Evidence Collection and Archiving", "url": "https://www.rfc-editor.org/rfc/rfc3227" },
+            { "label": "NIST SP 800-86 — Guide to Integrating Forensic Techniques into Incident Response", "url": "https://csrc.nist.gov/pubs/sp/800/86/final" }
+          ],
+          "quiz": [
+            {
+              "id": "fo-volatilite",
+              "prompt": "Dans quel ordre collecter ces preuves ?",
+              "choices": ["Disque, puis mémoire vive, puis journaux distants", "Mémoire vive, puis disque, puis journaux distants", "Journaux distants, puis disque, puis mémoire vive"],
+              "answer": [1]
+            },
+            {
+              "id": "fo-empreinte",
+              "prompt": "À quoi sert l'empreinte SHA-256 calculée au moment de la collecte ?",
+              "choices": ["À chiffrer la preuve", "À prouver plus tard que la copie n'a pas été modifiée", "À compresser l'image disque"],
+              "answer": [1]
+            },
+            {
+              "id": "fo-tmpfs",
+              "prompt": "Un conteneur en lecture seule a un /tmp en tmpfs. Comment récupérer ce que l'attaquant y a écrit ?",
+              "choices": ["Avec docker diff après l'arrêt", "Depuis l'intérieur du conteneur en marche (docker exec), avant de l'arrêter", "Avec docker export après suppression"],
+              "answer": [1]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

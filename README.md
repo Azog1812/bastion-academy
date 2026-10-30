@@ -36,15 +36,15 @@ from first principles up to the level expected by major industry certifications.
 | **v3: foundations** | Learning paths → modules → lessons, progress tracking, web front-end, built on Bastion's auth core | ✅ API, web UI, levels 1 to 3 shipped; levels 4 to 6 to come |
 | **v4: challenges** | Per-user HMAC flags (unshareable), scoreboard, anti-cheat, TOTP MFA | ✅ Shipped: 11 challenges (levels 1 to 3), opt-in scoreboard, TOTP + recovery codes |
 | **v5: isolated labs** | One vulnerable container per learner: no egress, TTL, sandboxed runtime, quotas | ✅ Shipped: 8 labs (SQLi, IDOR, mass assignment, JWT `alg:none`, SSRF, path traversal, command injection, stored XSS with a headless-browser victim), lab runner + gateway, optional gVisor |
-| **v6: advanced** | Blue-team labs (log analysis, detection), AI tutor, observability | Planned |
+| **v6: blue team** | Level 5 path (logging, SIEM, detection engineering, incident response, forensics) and detection challenges | ✅ Shipped: 6 lessons, 4 detection challenges graded on precision **and** recall · AI tutor, observability: planned |
 
 The platform is designed to **run locally** (`git clone` + Docker). There is no public
 hosted instance yet.
 
 ### What's available today
 
-The curriculum spans six levels, from **Fundamentals** to **Expert**. Three paths are
-available (in French, 27 lessons, 73 quiz questions):
+The curriculum spans six levels, from **Fundamentals** to **Expert**. Four paths are
+available (in French, 33 lessons, 91 quiz questions):
 
 - **Level 1, Fundamentals**: security basics, HTTP, sessions and JWT, then a
   *break it, then fix it* IDOR module.
@@ -54,6 +54,26 @@ available (in French, 27 lessons, 73 quiz questions):
 - **Level 3, Systems and networks**: TCP/IP, DNS and TLS, legal port scanning, Linux
   permissions and privilege escalation, container hardening, Windows accounts and
   tokens, Kerberos and Active Directory attacks, network segmentation.
+- **Level 5, Defense and detection** (blue team): what to log, SIEM and correlation,
+  writing Sigma-style rules, reading web attacks in logs, incident response (NIST SP
+  800-61r3, 72-hour GDPR notification), forensics first steps (order of volatility,
+  containers).
+
+**4 detection challenges** ([ADR 0010](docs/adr/0010-detection-challenges.md)): the
+learner **writes a detection rule** (a JSON subset of Sigma) and the server scores it on
+a log dataset generated for them, where attacks hide among benign activity **and
+traps** built for naive rules. Solved only with every attack caught **and** zero false
+positives, the SOC's daily trade-off.
+
+| Challenge | What the naive rule gets wrong |
+|---|---|
+| SQL injections in access logs | An apostrophe flags *O'Connor*; the user agent misses the attacker who hides behind a browser |
+| Password spraying (Windows 4624/4625) | Counting failures flags a service account with an expired password |
+| Living off the land (LOLBins) | Alerting on `certutil` or `rundll32` drowns the SOC in admin activity |
+| SSH brute force, fast and slow | A short window misses the patient attacker; a low threshold flags a forgetful user |
+
+The rule language has **no regular expressions on purpose** (a learner regex would run
+on the server's event loop: ReDoS), and fields are checked against each dataset.
 
 Every *break it, then fix it* module ends in Bastion's own code: the learner
 attacks Bastion, then reads the exact lines, lint rules, Semgrep rules and tests
@@ -246,7 +266,7 @@ generic errors with correlation ids · secret redaction in logs · secrets read 
 files rather than env vars · socket timeouts · privileged operations only via an
 operator CLI, never over HTTP.
 
-**244 tests, ~99 % line coverage** — most of them are *abuse cases*, not happy paths.
+**262 tests, ~99 % line coverage** — most of them are *abuse cases*, not happy paths.
 
 ### Supply chain & infrastructure
 
@@ -311,6 +331,7 @@ src/
                        challenges (per-learner flags, scoreboard)
   challenges/          closed set of challenge artifact generators
   labs/                lab catalog · runner (the only Docker client) · gateway (per-lab origin)
+  detection/           rule engine (Sigma subset, no regex) · labelled per-learner datasets
   curriculum/          loads and validates content/ at boot (fail closed)
   http/                middleware (authn, RBAC, errors) · strict schemas · routes
   audit.ts             HMAC-chained, append-only audit trail

@@ -16,6 +16,8 @@ export const alert = (message: string, kind: 'error' | 'info' = 'error') => h('p
 export function errorMessage(err: unknown): string {
   if (err instanceof ApiError) {
     if (err.status === 429) return 'Trop de tentatives. Fais une pause avant de réessayer.';
+    // Validation errors say what to fix: show the reasons, as text (never interpreted as HTML).
+    if (err.issues.length > 0) return `${err.message} : ${err.issues.map((i) => (i.path ? `${i.path} : ${i.message}` : i.message)).join(' ; ')}`;
     return err.message;
   }
   return 'Le serveur ne répond pas. Vérifie que Bastion est bien lancé.';

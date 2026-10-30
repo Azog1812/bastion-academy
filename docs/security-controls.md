@@ -107,6 +107,15 @@ Standards: **OWASP API Security Top 10 (2023)** and **OWASP ASVS 4.0.3** (Level 
 | 14.4.7 | Anti-framing | CSP `frame-ancestors` + `X-Frame-Options: DENY` |
 | 14.5.2 | Origin header not used for access control | Access control relies on bearer tokens. Only the three browser-session routes read a cookie; there the `Origin` check is an extra CSRF barrier on top of `SameSite=Strict` and JSON-only bodies, never the sole control |
 
+## Detection challenges (v6, ADR 0010) — evaluating learner input safely
+
+| Control | Implementation | Evidence |
+|---|---|---|
+| ReDoS prevention (OWASP: Regular expression Denial of Service) | No regular expressions in the rule language; linear string tests only | `src/detection/engine.ts`, `detection.test.ts` |
+| Input validation with an allow-list (ASVS 5.1.3, 5.1.4) | Rule keys must be fields of the dataset plus a known modifier; strict schema, bounded sizes | same |
+| Prototype pollution (ASVS 5.5.x) | Field allow-list, `Object.hasOwn` reads, no merge of learner objects | same |
+| Anti-automation (ASVS 11.1.4) | Per-account evaluation rate limit | `detection.test.ts` › rate limit |
+
 ## Labs (v5, ADR 0009) — container isolation
 
 | Control | Implementation | Evidence |

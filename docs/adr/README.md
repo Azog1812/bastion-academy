@@ -14,3 +14,4 @@ Format: context → decision → consequences.
 | [0007](0007-web-front-end.md) | Web front-end: zero dependencies, HttpOnly refresh cookie, Trusted Types |
 | [0008](0008-flags-scoreboard-mfa.md) | Per-learner HMAC flags, opt-in scoreboard, TOTP MFA |
 | [0009](0009-isolated-labs.md) | Isolated per-learner labs: lab runner, per-instance networks, gateway |
+| [0010](0010-detection-challenges.md) | Blue-team detection challenges: learner rules (Sigma subset, no regex) scored on labelled datasets |

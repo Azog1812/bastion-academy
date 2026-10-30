@@ -68,6 +68,9 @@ export const challengeIdSchema = z.object({ id: slug }).strict();
 
 export const submitFlagSchema = z.object({ flag: z.string().trim().min(1).max(100) }).strict();
 
+/** The rule itself is validated against the challenge's dataset fields by the service (ADR 0010). */
+export const detectSchema = z.object({ rule: z.record(z.string(), z.unknown()) }).strict();
+
 /** Letters, digits, space, dash, underscore; no leading/trailing space. Rendered with textContent anyway. */
 export const profileSchema = z
   .object({
