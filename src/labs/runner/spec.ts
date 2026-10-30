@@ -1,4 +1,4 @@
-import { containerName, LABS, type LabId } from '../catalog.js';
+import { containerName, labLimits, LABS, type LabId } from '../catalog.js';
 
 const MiB = 1024 * 1024;
 
@@ -28,6 +28,7 @@ export function networkSpec(instanceId: string, expiresAt: number) {
  */
 export function containerSpec(lab: LabId, instanceId: string, flag: string, expiresAt: number, runtime?: string) {
   const net = containerName(instanceId);
+  const limits = labLimits(lab);
   return {
     Image: LABS[lab].image,
     // The learner's own flag, and nothing else from the platform.
@@ -44,10 +45,10 @@ export function containerSpec(lab: LabId, instanceId: string, flag: string, expi
       CapDrop: ['ALL'],
       SecurityOpt: ['no-new-privileges:true'],
       Tmpfs: { '/tmp': 'rw,noexec,nosuid,nodev,size=16m' },
-      Memory: 128 * MiB,
-      MemorySwap: 128 * MiB,
-      NanoCpus: 500_000_000,
-      PidsLimit: 64,
+      Memory: limits.memoryMiB * MiB,
+      MemorySwap: limits.memoryMiB * MiB,
+      NanoCpus: Math.round(limits.cpus * 1e9),
+      PidsLimit: limits.pids,
       Ulimits: [{ Name: 'nofile', Soft: 1024, Hard: 1024 }],
       LogConfig: { Type: 'json-file', Config: { 'max-size': '1m', 'max-file': '1' } },
       RestartPolicy: { Name: 'no' },

