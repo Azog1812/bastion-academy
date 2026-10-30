@@ -12,3 +12,4 @@ Format: context → decision → consequences.
 | [0005](0005-distroless-signed-images.md) | Distroless runtime, signed images, admission control |
 | [0006](0006-curriculum-as-code.md) | Curriculum as code (validated at boot), progress in the database |
 | [0007](0007-web-front-end.md) | Web front-end: zero dependencies, HttpOnly refresh cookie, Trusted Types |
+| [0008](0008-flags-scoreboard-mfa.md) | Per-learner HMAC flags, opt-in scoreboard, TOTP MFA |

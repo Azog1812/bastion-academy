@@ -12,7 +12,9 @@ import { buildRouter } from './http/routes.js';
 import { webRouter } from './http/web.js';
 import type { Curriculum } from './curriculum/catalog.js';
 import { AuthService } from './services/auth-service.js';
+import { ChallengeService } from './services/challenge-service.js';
 import { LearningService } from './services/learning-service.js';
+import { MfaService } from './services/mfa-service.js';
 import { NoteService } from './services/note-service.js';
 
 export interface AppOptions {
@@ -28,7 +30,7 @@ export interface AppOptions {
 
 export interface App {
   app: Express;
-  services: { auth: AuthService; notes: NoteService; learning: LearningService; audit: AuditLog };
+  services: { auth: AuthService; notes: NoteService; learning: LearningService; challenges: ChallengeService; mfa: MfaService; audit: AuditLog };
 }
 
 export function createApp({ config, db, logger, curriculum, rateLimits, web }: AppOptions): App {
@@ -46,9 +48,12 @@ export function createApp({ config, db, logger, curriculum, rateLimits, web }: A
     audience: config.JWT_AUDIENCE,
     ttlSeconds: config.ACCESS_TOKEN_TTL_SECONDS,
   });
-  const auth = new AuthService(db, config, signer, audit);
-  const notes = new NoteService(db, { keys: config.ENCRYPTION_KEYS, activeKeyId: config.ACTIVE_KEY_ID }, audit);
+  const ring = { keys: config.ENCRYPTION_KEYS, activeKeyId: config.ACTIVE_KEY_ID };
+  const mfa = new MfaService(db, ring, audit, config.MFA_ISSUER);
+  const auth = new AuthService(db, config, signer, audit, mfa);
+  const notes = new NoteService(db, ring, audit);
   const learning = new LearningService(db, curriculum, audit);
+  const challenges = new ChallengeService(db, curriculum, learning, audit, config.FLAG_HMAC_KEY);
 
   const app = express();
 
@@ -115,6 +120,8 @@ export function createApp({ config, db, logger, curriculum, rateLimits, web }: A
       auth,
       notes,
       learning,
+      challenges,
+      mfa,
       audit,
       signer,
       rateLimits: { auth: limits.auth, refresh: limits.refresh, quiz: limits.quiz },
@@ -124,5 +131,5 @@ export function createApp({ config, db, logger, curriculum, rateLimits, web }: A
   app.use(notFoundHandler);
   app.use(errorHandler(logger));
 
-  return { app, services: { auth, notes, learning, audit } };
+  return { app, services: { auth, notes, learning, challenges, mfa, audit } };
 }

@@ -63,3 +63,31 @@ export const auditQuerySchema = z
     before: z.coerce.number().int().positive().optional(),
   })
   .strict();
+
+export const challengeIdSchema = z.object({ id: slug }).strict();
+
+export const submitFlagSchema = z.object({ flag: z.string().trim().min(1).max(100) }).strict();
+
+/** Letters, digits, space, dash, underscore; no leading/trailing space. Rendered with textContent anyway. */
+export const profileSchema = z
+  .object({
+    displayName: z
+      .string()
+      .trim()
+      .min(3)
+      .max(24)
+      .regex(/^[\p{L}\p{N} _-]+$/u, 'letters, digits, spaces, "-" and "_" only')
+      .refine((v) => !v.includes('  '), 'no double spaces')
+      .nullable(),
+  })
+  .strict();
+
+export const reauthSchema = z.object({ password }).strict();
+
+const otp = z.string().trim().min(6).max(19);
+
+export const mfaCodeSchema = z.object({ code: otp }).strict();
+
+export const mfaDisableSchema = z.object({ password, code: otp }).strict();
+
+export const mfaLoginSchema = z.object({ mfaToken: z.string().min(20).max(100), code: otp }).strict();

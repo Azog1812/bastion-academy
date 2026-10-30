@@ -64,6 +64,9 @@ const schema = z
     /** HMAC key for the tamper-evident audit chain. Kept apart from every other key. */
     AUDIT_HMAC_KEY: base64Key(32),
 
+    /** Derives each learner's challenge flags. A leak lets someone compute every flag, nothing more: kept apart for that reason. */
+    FLAG_HMAC_KEY: base64Key(32),
+
     ENCRYPTION_KEYS: keyRing,
     ACTIVE_KEY_ID: z.string().min(1),
 
@@ -74,6 +77,8 @@ const schema = z
     RATE_LIMIT_AUTH: z.coerce.number().int().min(1).default(10),
     RATE_LIMIT_REFRESH: z.coerce.number().int().min(1).default(30),
     RATE_LIMIT_QUIZ: z.coerce.number().int().min(1).default(30),
+    /** Issuer shown in authenticator apps next to the account name. */
+    MFA_ISSUER: z.string().min(1).max(40).default('Bastion Academy'),
     MAX_FAILED_LOGINS: z.coerce.number().int().min(3).max(20).default(5),
     LOCKOUT_SECONDS: z.coerce.number().int().min(60).max(86_400).default(900),
   })
@@ -88,7 +93,7 @@ const schema = z
 
 export type Config = Readonly<z.output<typeof schema>>;
 
-const FILE_SECRETS = ['JWT_SECRET', 'AUDIT_HMAC_KEY', 'ENCRYPTION_KEYS'] as const;
+const FILE_SECRETS = ['JWT_SECRET', 'AUDIT_HMAC_KEY', 'FLAG_HMAC_KEY', 'ENCRYPTION_KEYS'] as const;
 
 /**
  * Secrets can be provided as files (`JWT_SECRET_FILE=/run/secrets/jwt`), the

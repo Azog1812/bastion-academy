@@ -116,3 +116,22 @@ export function rewrap(ring: KeyRing, keyId: string, wrappedDek: Buffer, noteId:
     dek.fill(0);
   }
 }
+
+/**
+ * Small account secrets (TOTP seeds) are sealed directly under the active KEK:
+ * no per-item DEK is needed for 20 bytes, but the same rules hold. The AAD
+ * names the purpose and the owner, so a sealed blob copied to another user's
+ * row, or reused for another purpose, fails to open.
+ */
+export function sealSecret(ring: KeyRing, secret: Buffer, aad: string): { keyId: string; blob: Buffer } {
+  const keyId = ring.activeKeyId;
+  const { iv, tag, ciphertext } = gcmEncrypt(kek(ring, keyId), secret, Buffer.from(`${aad}:${keyId}`));
+  return { keyId, blob: Buffer.concat([iv, tag, ciphertext]) };
+}
+
+export function openSecret(ring: KeyRing, keyId: string, blob: Buffer, aad: string): Buffer {
+  if (blob.length <= IV_LEN + TAG_LEN) throw new DecryptionError();
+  const iv = blob.subarray(0, IV_LEN);
+  const tag = blob.subarray(IV_LEN, IV_LEN + TAG_LEN);
+  return gcmDecrypt(kek(ring, keyId), iv, tag, blob.subarray(IV_LEN + TAG_LEN), Buffer.from(`${aad}:${keyId}`));
+}

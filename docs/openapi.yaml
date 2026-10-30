@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Bastion API
-  version: 2.0.0
+  version: 4.0.0
   summary: Hardened, envelope-encrypted notes API.
   description: |
     Every note is encrypted at rest with its own AES-256-GCM data key, wrapped by a
@@ -25,6 +25,10 @@ tags:
     description: Curriculum and progress (Bastion Academy)
   - name: session
     description: Browser sessions, refresh token in an HttpOnly cookie (ADR 0007)
+  - name: mfa
+    description: TOTP second factor (RFC 6238) and recovery codes (ADR 0008)
+  - name: challenges
+    description: Per-learner HMAC flags and the opt-in scoreboard (ADR 0008)
   - name: admin
   - name: probes
 
@@ -60,9 +64,21 @@ paths:
     post:
       tags: [auth]
       summary: Exchange credentials for a token pair
-      description: Unknown e-mail, wrong password and locked account all return the same 401.
+      description: Unknown e-mail, wrong password and locked account all return the same 401. If the account has MFA enabled, the response is an MFA challenge to complete with /v1/auth/mfa.
       security: []
       requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/Credentials" } } } }
+      responses:
+        "200": { description: Authenticated or second factor required, content: { application/json: { schema: { oneOf: [{ $ref: "#/components/schemas/TokenPair" }, { $ref: "#/components/schemas/MfaChallenge" }] } } } }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+  /v1/auth/mfa:
+    post:
+      tags: [auth, mfa]
+      summary: Complete a login with a TOTP code or a recovery code
+      description: The challenge is single-use, expires after 5 minutes and dies after 5 wrong codes. Wrong codes count towards the account lockout. A TOTP code is never accepted twice.
+      security: []
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/MfaLogin" } } } }
       responses:
         "200": { description: Authenticated, content: { application/json: { schema: { $ref: "#/components/schemas/TokenPair" } } } }
         "400": { $ref: "#/components/responses/ValidationError" }
@@ -95,6 +111,18 @@ paths:
       security: []
       requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/Credentials" } } } }
       responses:
+        "200": { description: Logged in (cookie set) or second factor required (no cookie yet), content: { application/json: { schema: { oneOf: [{ $ref: "#/components/schemas/AccessToken" }, { $ref: "#/components/schemas/MfaChallenge" }] } } } }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { description: Cross-origin request refused, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "429": { $ref: "#/components/responses/RateLimited" }
+  /v1/session/mfa:
+    post:
+      tags: [session, mfa]
+      summary: Browser variant of /v1/auth/mfa; sets the refresh cookie on success
+      security: []
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/MfaLogin" } } } }
+      responses:
         "200": { description: Logged in, content: { application/json: { schema: { $ref: "#/components/schemas/AccessToken" } } } }
         "400": { $ref: "#/components/responses/ValidationError" }
         "401": { $ref: "#/components/responses/Unauthorized" }
@@ -124,8 +152,74 @@ paths:
       tags: [me]
       summary: Current principal
       responses:
-        "200": { description: OK, content: { application/json: { schema: { type: object, properties: { id: { type: string, format: uuid }, role: { enum: [user, admin] } } } } } }
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string, format: uuid }
+                  role: { enum: [user, admin] }
+                  displayName: { type: [string, "null"] }
+                  mfaEnabled: { type: boolean }
         "401": { $ref: "#/components/responses/Unauthorized" }
+  /v1/me/profile:
+    put:
+      tags: [me, challenges]
+      summary: Set or remove my public scoreboard pseudonym
+      description: Opt-in. null removes the user from the scoreboard. Unique, case-insensitive.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [displayName]
+              properties:
+                displayName: { type: [string, "null"], minLength: 3, maxLength: 24, pattern: "^[\\p{L}\\p{N} _-]+$" }
+      responses:
+        "200": { description: Saved, content: { application/json: { schema: { type: object, properties: { displayName: { type: [string, "null"] } } } } } }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "409": { $ref: "#/components/responses/Error" }
+  /v1/me/mfa/setup:
+    post:
+      tags: [mfa]
+      summary: Start TOTP enrolment (re-authentication required)
+      description: Returns the seed once. MFA is not active until /v1/me/mfa/enable confirms a code.
+      requestBody: { required: true, content: { application/json: { schema: { type: object, additionalProperties: false, required: [password], properties: { password: { type: string } } } } } }
+      responses:
+        "200": { description: Seed for the authenticator app, content: { application/json: { schema: { type: object, properties: { secret: { type: string, description: Base32 }, otpauthUri: { type: string } } } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "409": { $ref: "#/components/responses/Error" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+  /v1/me/mfa/enable:
+    post:
+      tags: [mfa]
+      summary: Confirm enrolment with a first code; returns 10 single-use recovery codes (shown once)
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/MfaCode" } } } }
+      responses:
+        "200": { description: Enabled, content: { application/json: { schema: { type: object, properties: { recoveryCodes: { type: array, items: { type: string } } } } } } }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "409": { $ref: "#/components/responses/Error" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+  /v1/me/mfa/disable:
+    post:
+      tags: [mfa]
+      summary: Turn MFA off; needs both the password and a valid code
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: false, required: [password, code], properties: { password: { type: string }, code: { type: string, minLength: 6, maxLength: 19 } } }
+      responses:
+        "204": { description: Disabled }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "429": { $ref: "#/components/responses/RateLimited" }
   /v1/me/password:
     post:
       tags: [me]
@@ -278,6 +372,65 @@ paths:
         "404": { $ref: "#/components/responses/Error" }
         "429": { $ref: "#/components/responses/RateLimited" }
 
+  /v1/challenges:
+    get:
+      tags: [challenges]
+      summary: Challenges with my lock and solve state (no artifacts, no briefs)
+      responses:
+        "200": { description: Challenges, content: { application/json: { schema: { type: object, properties: { items: { type: array, items: { $ref: "#/components/schemas/ChallengeSummary" } } } } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /v1/challenges/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { $ref: "#/components/schemas/Slug" } }
+    get:
+      tags: [challenges]
+      summary: A challenge's brief and my personal artifact
+      responses:
+        "200": { description: Challenge, content: { application/json: { schema: { $ref: "#/components/schemas/Challenge" } } } }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { description: Module not unlocked yet, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "404": { $ref: "#/components/responses/Error" }
+  /v1/challenges/{id}/submit:
+    parameters:
+      - { name: id, in: path, required: true, schema: { $ref: "#/components/schemas/Slug" } }
+    post:
+      tags: [challenges]
+      summary: Submit a flag
+      description: Flags are per learner. A wrong flag and another learner's flag get the same answer; the latter is recorded in the audit log. Idempotent once solved. Rate-limited per account.
+      requestBody: { required: true, content: { application/json: { schema: { type: object, additionalProperties: false, required: [flag], properties: { flag: { type: string, maxLength: 100 } } } } } }
+      responses:
+        "200":
+          description: Checked
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - type: object
+                    properties: { correct: { const: true }, points: { type: integer }, alreadySolved: { type: boolean } }
+                  - type: object
+                    properties: { correct: { const: false } }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { description: Module not unlocked yet, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "404": { $ref: "#/components/responses/Error" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+  /v1/scoreboard:
+    get:
+      tags: [challenges]
+      summary: Opt-in scoreboard (pseudonym and score only) and my own score
+      responses:
+        "200":
+          description: Scoreboard
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  entries: { type: array, maxItems: 50, items: { type: object, properties: { rank: { type: integer }, displayName: { type: string }, score: { type: integer } } } }
+                  me: { type: object, properties: { score: { type: integer }, rank: { type: [integer, "null"] }, displayName: { type: [string, "null"] } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
   /v1/admin/audit:
     get:
       tags: [admin]
@@ -417,6 +570,42 @@ components:
               multiple: { type: boolean }
         completed: { type: boolean }
         completedAt: { type: [string, "null"], format: date-time }
+    MfaChallenge:
+      type: object
+      properties:
+        mfaRequired: { const: true }
+        mfaToken: { type: string, description: Opaque, single-use }
+        expiresIn: { type: integer, description: Seconds }
+    MfaCode:
+      type: object
+      additionalProperties: false
+      required: [code]
+      properties:
+        code: { type: string, minLength: 6, maxLength: 19, description: 6-digit TOTP code }
+    MfaLogin:
+      type: object
+      additionalProperties: false
+      required: [mfaToken, code]
+      properties:
+        mfaToken: { type: string, minLength: 20, maxLength: 100 }
+        code: { type: string, minLength: 6, maxLength: 19, description: 6-digit TOTP code or XXXX-XXXX-XXXX-XXXX recovery code }
+    ChallengeSummary:
+      type: object
+      properties:
+        id: { type: string }
+        title: { type: string }
+        moduleId: { type: string }
+        points: { type: integer }
+        unlocked: { type: boolean }
+        solved: { type: boolean }
+        solvedAt: { type: [string, "null"], format: date-time }
+    Challenge:
+      allOf:
+        - $ref: "#/components/schemas/ChallengeSummary"
+        - type: object
+          properties:
+            brief: { type: string, description: Markdown }
+            artifact: { type: object, additionalProperties: { type: string }, description: Per-learner data hiding the flag. Display as text only. }
     Error:
       type: object
       required: [error, message, requestId]

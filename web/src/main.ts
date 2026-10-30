@@ -1,6 +1,8 @@
+import { accountView } from './account.js';
 import {
   api,
   ApiError,
+  completeMfa,
   isLoggedIn,
   login,
   logout,
@@ -9,10 +11,13 @@ import {
   type Completion,
   type Curriculum,
   type Lesson,
+  type LoginStep,
   type ModuleView,
 } from './api.js';
+import { challengesView, challengeView, scoreboardView } from './challenges.js';
 import { h, renderBlocks } from './dom.js';
 import { parseMarkdown } from './markdown.js';
+import { alert, errorMessage, onSubmit, show } from './ui.js';
 
 /**
  * Single-page app with hash routes (#/, #/connexion, #/lecon/<id>): the
@@ -21,24 +26,7 @@ import { parseMarkdown } from './markdown.js';
  * the UI only displays it.
  */
 
-const root = document.getElementById('app') as HTMLElement;
 const nav = document.getElementById('nav') as HTMLElement;
-
-function show(...nodes: (Node | null)[]): void {
-  root.replaceChildren(...nodes.filter((n): n is Node => n !== null));
-  root.focus({ preventScroll: true });
-  window.scrollTo(0, 0);
-}
-
-const alert = (message: string, kind: 'error' | 'info' = 'error') => h('p', { class: `alert alert-${kind}`, role: 'alert' }, message);
-
-function errorMessage(err: unknown): string {
-  if (err instanceof ApiError) {
-    if (err.status === 429) return 'Trop de tentatives. Fais une pause et relis la leçon avant de réessayer.';
-    return err.message;
-  }
-  return 'Le serveur ne répond pas. Vérifie que Bastion est bien lancé.';
-}
 
 function renderNav(): void {
   if (!isLoggedIn()) {
@@ -51,10 +39,47 @@ function renderNav(): void {
       location.hash = '#/connexion';
     });
   });
-  nav.replaceChildren(h('a', { href: '#/' }, 'Parcours'), out);
+  nav.replaceChildren(
+    h('a', { href: '#/' }, 'Parcours'),
+    h('a', { href: '#/defis' }, 'Défis'),
+    h('a', { href: '#/classement' }, 'Classement'),
+    h('a', { href: '#/compte' }, 'Compte'),
+    out,
+  );
 }
 
 /* ---------- authentication ---------- */
+
+/** Second login step: the password was right, the account has TOTP enabled. */
+function mfaView(mfaToken: string): void {
+  const code = h('input', { type: 'text', name: 'code', required: true, inputmode: 'numeric', autocomplete: 'one-time-code', maxlength: '19' });
+  const status = h('div', { 'aria-live': 'polite' });
+  const form = h(
+    'form',
+    { class: 'card narrow' },
+    h('h1', {}, 'Vérification en deux étapes'),
+    h('p', { class: 'hint' }, "Saisis le code à 6 chiffres de ton application d'authentification, ou un code de secours."),
+    h('label', {}, 'Code', code),
+    status,
+    h('button', { type: 'submit' }, 'Vérifier'),
+    h('p', { class: 'hint' }, h('a', { href: '#/connexion' }, 'Recommencer la connexion')),
+  );
+  onSubmit(form, status, async () => {
+    try {
+      await completeMfa(mfaToken, code.value.replaceAll(' ', ''));
+      location.hash = '#/';
+    } finally {
+      code.value = '';
+    }
+  });
+  show(form);
+  code.focus();
+}
+
+const afterLogin = (step: LoginStep): void => {
+  if (step.done) location.hash = '#/';
+  else mfaView(step.mfaToken);
+};
 
 function authView(mode: 'login' | 'register'): void {
   const email = h('input', { type: 'email', name: 'email', required: true, autocomplete: 'username', maxlength: '254' });
@@ -93,9 +118,7 @@ function authView(mode: 'login' | 'register'): void {
     status.replaceChildren();
     const action = mode === 'login' ? login(email.value, password.value) : register(email.value, password.value);
     action
-      .then(() => {
-        location.hash = '#/';
-      })
+      .then(afterLogin)
       .catch((err: unknown) => {
         status.replaceChildren(alert(errorMessage(err)));
       })
@@ -286,10 +309,15 @@ async function route(): Promise<void> {
   renderNav();
   try {
     const lesson = /^#\/lecon\/([a-z0-9-]{1,64})$/.exec(target);
+    const challenge = /^#\/defi\/([a-z0-9-]{1,64})$/.exec(target);
     if (target === '#/connexion') authView('login');
     else if (target === '#/inscription') authView('register');
     else if (!isLoggedIn()) location.hash = '#/connexion';
     else if (lesson?.[1]) await lessonView(lesson[1]);
+    else if (challenge?.[1]) await challengeView(challenge[1]);
+    else if (target === '#/defis') await challengesView();
+    else if (target === '#/classement') await scoreboardView();
+    else if (target === '#/compte') await accountView();
     else await catalogView();
   } catch (err) {
     if (err instanceof ApiError && err.status === 401) {

@@ -1,23 +1,32 @@
-import { Router, type Request } from 'express';
+import { Router, type Request, type Response } from 'express';
 import { rateLimit } from 'express-rate-limit';
 import type { AuditLog } from '../audit.js';
 import type { TokenSigner } from '../crypto/tokens.js';
-import type { AuthService, RequestContext } from '../services/auth-service.js';
+import { isMfaChallenge, type AuthService, type LoginResult, type RequestContext } from '../services/auth-service.js';
+import type { ChallengeService } from '../services/challenge-service.js';
 import type { LearningService } from '../services/learning-service.js';
+import type { MfaService } from '../services/mfa-service.js';
 import type { NoteService } from '../services/note-service.js';
 import { unauthorized } from '../errors.js';
 import { authenticate, handler, parse, requireRole } from './middleware.js';
 import { browserView, clearRefreshCookie, refreshTokenFrom, sameOriginOnly, setRefreshCookie } from './session.js';
 import {
   auditQuerySchema,
+  challengeIdSchema,
   changePasswordSchema,
   completeLessonSchema,
   createNoteSchema,
   credentialsSchema,
   lessonIdSchema,
+  mfaCodeSchema,
+  mfaDisableSchema,
+  mfaLoginSchema,
   noteIdSchema,
   paginationSchema,
+  profileSchema,
+  reauthSchema,
   refreshSchema,
+  submitFlagSchema,
   updateNoteSchema,
 } from './schemas.js';
 
@@ -25,6 +34,8 @@ export interface RouteDeps {
   auth: AuthService;
   notes: NoteService;
   learning: LearningService;
+  challenges: ChallengeService;
+  mfa: MfaService;
   audit: AuditLog;
   signer: TokenSigner;
   rateLimits: { auth: number; refresh: number; quiz: number };
@@ -38,6 +49,16 @@ const uid = (req: Request): string => {
   if (!req.principal) throw unauthorized();
   return req.principal.id;
 };
+
+/** Browser variant of a login result: the refresh token goes to the HttpOnly cookie, never to the page. */
+function sendBrowserLogin(res: Response, result: LoginResult, ttl: number): void {
+  if (isMfaChallenge(result)) {
+    res.json(result);
+    return;
+  }
+  setRefreshCookie(res, result.refreshToken, ttl);
+  res.json(browserView(result));
+}
 
 const limiter = (limit: number, name: string) =>
   rateLimit({
@@ -77,6 +98,15 @@ export function buildRouter(d: RouteDeps): Router {
   );
 
   r.post(
+    '/auth/mfa',
+    authLimiter,
+    handler(async (req, res) => {
+      const { mfaToken, code } = parse(mfaLoginSchema, req.body);
+      res.json(await d.auth.completeMfa(mfaToken, code, ctx(req)));
+    }),
+  );
+
+  r.post(
     '/auth/refresh',
     refreshLimiter,
     handler(async (req, res) => {
@@ -103,9 +133,17 @@ export function buildRouter(d: RouteDeps): Router {
     authLimiter,
     handler(async (req, res) => {
       const { email, password } = parse(credentialsSchema, req.body);
-      const pair = await d.auth.login(email, password, ctx(req));
-      setRefreshCookie(res, pair.refreshToken, d.refreshTtlSeconds);
-      res.json(browserView(pair));
+      sendBrowserLogin(res, await d.auth.login(email, password, ctx(req)), d.refreshTtlSeconds);
+    }),
+  );
+
+  r.post(
+    '/session/mfa',
+    sameOriginOnly,
+    authLimiter,
+    handler(async (req, res) => {
+      const { mfaToken, code } = parse(mfaLoginSchema, req.body);
+      sendBrowserLogin(res, await d.auth.completeMfa(mfaToken, code, ctx(req)), d.refreshTtlSeconds);
     }),
   );
 
@@ -147,7 +185,56 @@ export function buildRouter(d: RouteDeps): Router {
     '/me',
     requireAuth,
     handler((req, res) => {
-      res.json({ id: req.principal?.id, role: req.principal?.role });
+      res.json({ id: uid(req), role: req.principal?.role, ...d.auth.profile(uid(req)) });
+    }),
+  );
+
+  r.put(
+    '/me/profile',
+    requireAuth,
+    handler((req, res) => {
+      const { displayName } = parse(profileSchema, req.body);
+      res.json(d.auth.setDisplayName(uid(req), displayName, ctx(req)));
+    }),
+  );
+
+  /* ---------- two-factor authentication (TOTP, RFC 6238) ---------- */
+
+  r.post(
+    '/me/mfa/setup',
+    requireAuth,
+    authLimiter,
+    handler(async (req, res) => {
+      const { password } = parse(reauthSchema, req.body);
+      const { email } = await d.auth.confirmPassword(uid(req), password, ctx(req));
+      res.json(d.mfa.setup(uid(req), email, ctx(req).ip));
+    }),
+  );
+
+  r.post(
+    '/me/mfa/enable',
+    requireAuth,
+    authLimiter,
+    handler((req, res) => {
+      const { code } = parse(mfaCodeSchema, req.body);
+      res.json({ recoveryCodes: d.mfa.enable(uid(req), code, ctx(req).ip) });
+    }),
+  );
+
+  r.post(
+    '/me/mfa/disable',
+    requireAuth,
+    authLimiter,
+    handler(async (req, res) => {
+      const { password, code } = parse(mfaDisableSchema, req.body);
+      await d.auth.confirmPassword(uid(req), password, ctx(req));
+      // Both factors: a hijacked session alone, or a stolen password alone, cannot remove MFA.
+      if (!d.mfa.verify(uid(req), code, ctx(req).ip)) {
+        d.audit.record({ action: 'mfa.disable', outcome: 'failure', actorId: uid(req), ip: ctx(req).ip });
+        throw unauthorized('Invalid verification code');
+      }
+      d.mfa.disable(uid(req), ctx(req).ip);
+      res.status(204).end();
     }),
   );
 
@@ -259,6 +346,55 @@ export function buildRouter(d: RouteDeps): Router {
       const { id } = parse(lessonIdSchema, req.params);
       const { answers } = parse(completeLessonSchema, req.body ?? {});
       res.json(d.learning.complete(uid(req), id, answers, ctx(req).ip));
+    }),
+  );
+
+  /* ---------- challenges and scoreboard ---------- */
+
+  // Same reasoning as quizzes: flag guessing is a per-account abuse.
+  const flagLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    limit: d.rateLimits.quiz,
+    standardHeaders: 'draft-8',
+    legacyHeaders: false,
+    identifier: 'flag',
+    keyGenerator: (req) => uid(req),
+    message: { error: 'rate_limited', message: 'Too many attempts, take a break and look at the artifact again' },
+  });
+
+  r.get(
+    '/challenges',
+    requireAuth,
+    handler((req, res) => {
+      res.json(d.challenges.list(uid(req)));
+    }),
+  );
+
+  r.get(
+    '/challenges/:id',
+    requireAuth,
+    handler((req, res) => {
+      const { id } = parse(challengeIdSchema, req.params);
+      res.json(d.challenges.get(uid(req), id, ctx(req).ip));
+    }),
+  );
+
+  r.post(
+    '/challenges/:id/submit',
+    requireAuth,
+    flagLimiter,
+    handler((req, res) => {
+      const { id } = parse(challengeIdSchema, req.params);
+      const { flag } = parse(submitFlagSchema, req.body);
+      res.json(d.challenges.submit(uid(req), id, flag, ctx(req).ip));
+    }),
+  );
+
+  r.get(
+    '/scoreboard',
+    requireAuth,
+    handler((req, res) => {
+      res.json(d.challenges.scoreboard(uid(req)));
     }),
   );
 

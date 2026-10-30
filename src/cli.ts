@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { AuditLog } from './audit.js';
 import { loadConfig } from './config.js';
 import { openDatabase } from './db.js';
+import { MfaService } from './services/mfa-service.js';
 import { NoteService } from './services/note-service.js';
 
 /**
@@ -24,6 +25,7 @@ function main(): number {
       [
         `JWT_SECRET=${b64(32)}`,
         `AUDIT_HMAC_KEY=${b64(32)}`,
+        `FLAG_HMAC_KEY=${b64(32)}`,
         `ENCRYPTION_KEYS=k1:${b64(32)}`,
         'ACTIVE_KEY_ID=k1',
         '',
@@ -46,10 +48,11 @@ function main(): number {
       return 0;
     }
     case 'rotate-keys': {
-      const notes = new NoteService(db, { keys: config.ENCRYPTION_KEYS, activeKeyId: config.ACTIVE_KEY_ID }, audit);
-      const { rewrapped } = notes.rotateKeys();
-      audit.record({ action: 'admin.key_rotation', outcome: 'success', details: { activeKeyId: config.ACTIVE_KEY_ID, rewrapped } });
-      console.log(`re-wrapped ${rewrapped} data keys under ${config.ACTIVE_KEY_ID}; old keys can now be retired`);
+      const ring = { keys: config.ENCRYPTION_KEYS, activeKeyId: config.ACTIVE_KEY_ID };
+      const { rewrapped } = new NoteService(db, ring, audit).rotateKeys();
+      const resealed = new MfaService(db, ring, audit, config.MFA_ISSUER).rotateKeys();
+      audit.record({ action: 'admin.key_rotation', outcome: 'success', details: { activeKeyId: config.ACTIVE_KEY_ID, rewrapped, resealed } });
+      console.log(`re-wrapped ${rewrapped} data keys and ${resealed} MFA secrets under ${config.ACTIVE_KEY_ID}; old keys can now be retired`);
       return 0;
     }
     case 'verify-audit': {

@@ -14,6 +14,9 @@ changes (the PR template asks for it).
 | Key ring (KEKs) | Decrypts every note | Secret store → mounted file, never in the DB |
 | JWT signing key | Forge any identity, including admin | Secret store → mounted file |
 | Audit HMAC key | Forge or hide audit history | Secret store → mounted file |
+| Flag HMAC key | Compute every learner's flags (forge scores only) | Secret store → mounted file |
+| TOTP seeds, recovery codes | Bypass the second factor | `user_mfa.secret` (AES-256-GCM under the KEK ring, AAD-bound to the user); `mfa_recovery_codes.code_hash` (SHA-256) |
+| Scores and pseudonyms | Scoreboard integrity; pseudonyms are the only cross-user data shown | `challenge_solves`, `users.display_name` (opt-in) |
 | Audit trail | Detection, forensics, accountability | `audit_log` (append-only, HMAC chain) |
 | Learning progress | Learners' record; future scoreboard and certificates depend on its integrity | `lesson_progress` (scoped by `user_id`) |
 | Learning content | What learners are taught; a tampered lesson could mislead or carry malicious links | `content/` in git, shipped read-only in the signed image |
@@ -32,7 +35,7 @@ flowchart LR
     subgraph NS["namespace bastion — PSS restricted, default-deny network"]
       API[Bastion API<br/>non-root, read-only FS,<br/>no shell, no egress]
       DB[(SQLite volume<br/>ciphertext only)]
-      S[[Mounted secrets<br/>KEKs, JWT key, audit key]]
+      S[[Mounted secrets<br/>KEKs, JWT key, audit key, flag key]]
     end
   end
   subgraph Ops["Operator (trusted, shell access)"]
@@ -66,6 +69,9 @@ Trust boundaries crossed by data:
 | Threat | Element | Attack | Mitigation | Evidence |
 |---|---|---|---|---|
 | **S**poofing | Login | Credential stuffing, brute force | Per-IP rate limit (10 / 15 min), progressive account lockout, breached-password blocklist | `authentication.test.ts` › brute-force protection |
+| **S**poofing | Login (stolen password) | Phished or reused password | Optional TOTP second factor (RFC 6238); refresh cookie and tokens only issued after it | `mfa.test.ts` |
+| **S**poofing | TOTP code | Replay of an observed code; brute force of the 6 digits | Last accepted time step stored, compare-and-set update (no reuse, no race); challenge single-use, 5-min life, 5 attempts; wrong codes feed the account lockout | `mfa.test.ts`, `totp.test.ts` |
+| **S**poofing | MFA removal | Hijacked session or stolen password turns MFA off | Disabling requires the password *and* a valid code; setup requires the password | `mfa.test.ts` › removal |
 | **S**poofing | Access token | `alg: none`, algorithm confusion, forged/modified token, cross-service replay | Algorithm allow-list, `iss`/`aud`/`typ` checks, mandatory `exp`, claims re-validated | `tokens.test.ts` |
 | **S**poofing | Refresh token | Stolen token replayed | Single-use rotation + reuse detection → whole family revoked + access tokens invalidated (RFC 9700 §4.14) | `authentication.test.ts` › reuse |
 | **T**ampering | Stored note | Attacker with DB write access edits or swaps ciphertexts | AES-GCM authentication, AAD binds ciphertext to note id *and* owner id | `envelope.test.ts`, `authorization.test.ts` › data at rest |
@@ -80,6 +86,8 @@ Trust boundaries crossed by data:
 | **S**poofing / **I**nformation disclosure | Browser session | XSS steals the session | Refresh token only in an HttpOnly `__Host-` cookie; access token in memory, never in web storage (ESLint ban); UI built without HTML strings (ESLint ban); CSP `script-src 'self'` + Trusted Types with no policy, so HTML sinks throw | `web.test.ts`, `markdown.test.ts`, ADR 0007 |
 | **T**ampering | Browser session | CSRF on cookie routes (refresh, logout, login) | `SameSite=Strict`, JSON-only bodies (forms cannot send JSON; cross-origin JSON needs a preflight nobody passes, no CORS configured), explicit `Origin` check | `web.test.ts` › CSRF |
 | **T**ampering | Lesson rendering | Script or dangerous link in Markdown content | Parser produces a tree, never HTML; raw HTML stays text; only `https:` and `#/` links survive | `markdown.test.ts` |
+| **T**ampering | Scores | Copying a flag from the repo or another learner; guessing flags; submitting twice | Flags are HMAC(key, challenge, user), never stored or in the repo; constant-time compare; per-account rate limit; shared flags attributed in the audit log; solves idempotent | `challenges.test.ts` |
+| **I**nformation disclosure | Scoreboard | Learner enumeration or e-mail harvesting | Opt-in pseudonyms only; response carries pseudonym + score, no id or e-mail; a shared flag gets the same answer as a wrong one (no oracle on other accounts) | `challenges.test.ts` › scoreboard |
 | **I**nformation disclosure | Accounts | User enumeration via login messages or timing | Identical 401 for unknown user / bad password / locked; dummy scrypt hash for unknown users | `authentication.test.ts` › enumeration |
 | **I**nformation disclosure | Database dump | Backup or snapshot leaks | Envelope encryption: KEKs never stored with data; refresh tokens stored as hashes | `authorization.test.ts` › raw dump |
 | **I**nformation disclosure | Errors & logs | Stack traces, SQL, secrets in logs | Central error handler with generic messages; logger-level redaction of secrets | `input-and-transport.test.ts` |
@@ -119,12 +127,14 @@ audit key, which lives outside the database.
 | Risk | Why accepted | Revisit when |
 |---|---|---|
 | Registration reveals whether an e-mail is taken (409) | No e-mail channel to send "if this address is free, check your inbox". Mitigated by the auth rate limit. | An e-mail verification flow is added |
-| Account lockout can be triggered by an attacker (targeted DoS) | Trade-off against online brute force; lockout is temporary (15 min, progressive, capped at 24 h). | Adding MFA or CAPTCHA-on-risk |
+| Account lockout can be triggered by an attacker (targeted DoS) | Trade-off against online brute force; lockout is temporary (15 min, progressive, capped at 24 h). Wrong TOTP codes count too, so someone holding the password can lock the account. | Adding CAPTCHA-on-risk |
 | Rate limiting is in-memory, per replica | Single replica by design (SQLite). | Moving to PostgreSQL + several replicas → Redis store |
-| Quiz answers are readable in the public repository | Content is open source by design and the platform runs locally; the quiz checks learning, it is not an exam. Integrity-sensitive scoring (v4) will use per-user HMAC flags that cannot be read from the repo. | A scoreboard or certificates are introduced |
+| Quiz answers are readable in the public repository | Content is open source by design and the platform runs locally; the quiz checks learning, it is not an exam. Lessons only weigh 10 points on the scoreboard; challenges use per-learner HMAC flags that cannot be read from the repo (ADR 0008). | Certificates are introduced |
 | Failed quiz responses say which questions are wrong | Pedagogical feedback beats secrecy here; enumeration is slowed by the per-account rate limit. | Same as above |
 | JWT signed with a symmetric key (HS256) | One service both issues and verifies tokens; no third party needs to verify them. | Another service must verify tokens → EdDSA + JWKS |
-| No MFA | Out of scope for v2. | v3 roadmap (WebAuthn) |
+| MFA is optional, and TOTP is phishable in real time (a proxy relays a fresh code within 30 s) | Local learning platform; replay protection limits a relayed code to one use. | WebAuthn/passkeys (roadmap), or admins on a hosted instance |
+| A learner with a correct artifact can always score (challenges teach, they are not proctored) | Artifacts are deterministic per learner by design; the scoreboard is for motivation, not certification. | v5 labs: flags only obtainable by exploiting a running service |
+| Scoreboard computed over all users on each request | Fine at local-install scale; one indexed aggregate query. | Hosting with many learners → cache or materialised scores |
 | Unfixed OS CVEs in the base images (mostly glibc, libstdc++, zlib; medium/low) | No upstream patch exists. Distroless removes the shell and tools most exploits need, the container runs non-root on a read-only FS with no egress, and Trivy only raises alerts for fixable CVEs (full list in the SBOM). | A fix is published: the digest-pinned base image is bumped by Dependabot and Trivy flags it |
 | Single-maintainer project: PRs are not reviewed by a second person (Scorecard *Code-Review*) | Every change still goes through a PR with 11 required CI checks (ruleset `protect-main`). | A second maintainer joins |
 
