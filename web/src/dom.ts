@@ -57,7 +57,11 @@ export function renderBlocks(blocks: Block[]): Node[] {
       case 'code':
         return h('pre', {}, h('code', b.lang ? { 'data-lang': b.lang } : {}, b.v));
       case 'list':
-        return h(b.ordered ? 'ol' : 'ul', {}, ...b.items.map((item) => h('li', {}, ...inline(item))));
+        return h(
+          b.ordered ? 'ol' : 'ul',
+          b.ordered && b.start !== 1 ? { start: String(b.start) } : {},
+          ...b.items.map((item) => h('li', {}, ...inline(item))),
+        );
       case 'quote':
         return h('blockquote', {}, ...renderBlocks(b.c));
       case 'table':
