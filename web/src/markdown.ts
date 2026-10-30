@@ -17,7 +17,7 @@ export type Block =
   | { t: 'heading'; level: 1 | 2 | 3; c: Inline[] }
   | { t: 'paragraph'; c: Inline[] }
   | { t: 'code'; lang: string; v: string }
-  | { t: 'list'; ordered: boolean; items: Inline[][] }
+  | { t: 'list'; ordered: boolean; start: number; items: Inline[][] }
   | { t: 'quote'; c: Block[] }
   | { t: 'table'; head: Inline[][]; rows: Inline[][][] };
 
@@ -111,13 +111,18 @@ export function parseMarkdown(src: string): Block[] {
       continue;
     }
 
-    const fence = /^```(\w*)\s*$/.exec(line);
+    // Fences may be indented by up to 3 spaces (CommonMark), e.g. inside a list item.
+    const fence = /^( {0,3})```(\w*)\s*$/.exec(line);
     if (fence) {
+      const indent = ' '.repeat((fence[1] ?? '').length);
       const body: string[] = [];
       i++;
-      while (i < lines.length && !at(i).startsWith('```')) body.push(at(i++));
+      while (i < lines.length && !/^ {0,3}```/.test(at(i))) {
+        const l = at(i++);
+        body.push(l.startsWith(indent) ? l.slice(indent.length) : l.trimStart());
+      }
       i++; // closing fence (or end of input)
-      blocks.push({ t: 'code', lang: fence[1] ?? '', v: body.join('\n') });
+      blocks.push({ t: 'code', lang: fence[2] ?? '', v: body.join('\n') });
       continue;
     }
 
@@ -148,6 +153,8 @@ export function parseMarkdown(src: string): Block[] {
     const first = bullet.exec(line);
     if (first) {
       const ordered = first[2] !== '-';
+      // Keeps numbering when a list resumes after a code block ("2." after "1.").
+      const start = ordered ? Number.parseInt(first[2] ?? '1', 10) : 1;
       const items: string[] = [];
       while (i < lines.length && at(i).trim() !== '') {
         const m = bullet.exec(at(i));
@@ -155,12 +162,12 @@ export function parseMarkdown(src: string): Block[] {
         else if (items.length > 0) items.push(`${items.pop() ?? ''} ${at(i).trim()}`); // wrapped item
         i++;
       }
-      blocks.push({ t: 'list', ordered, items: items.map(parseInline) });
+      blocks.push({ t: 'list', ordered, start, items: items.map(parseInline) });
       continue;
     }
 
     const para: string[] = [];
-    while (i < lines.length && at(i).trim() !== '' && !/^(#{1,3}\s|```|>|\||(-|\d+\.)\s)/.test(at(i))) {
+    while (i < lines.length && at(i).trim() !== '' && !/^(#{1,3}\s| {0,3}```|>|\||(-|\d+\.)\s)/.test(at(i))) {
       para.push(at(i++).trim());
     }
     if (para.length === 0) {
