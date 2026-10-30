@@ -95,5 +95,11 @@ attack works **and** that the honest path does not reveal the flag.
   execution is the lesson. Containment therefore never relies on "no shell in the
   image"; it relies on what the runner enforces, and that lab asks the learner to
   verify it from inside (no route out, read-only root, `noexec` /tmp, zero capabilities).
+- The stored-XSS lab ships a headless Chromium as the victim, driven over the DevTools
+  protocol with Node's built-in WebSocket (no npm dependency). Chromium's own sandbox
+  needs privileges labs never get, so it runs with `--no-sandbox`: the container is the
+  sandbox. That lab gets larger, still bounded, limits from the catalog (512 MiB, 256
+  processes, 1 CPU; measured ~210 MiB and ~130 processes), under a hard ceiling checked
+  by a test. Its image is large (~1.4 GB uncompressed) and built once.
 - Containment relies on the container runtime. A kernel or runtime escape bypasses all
   of the above except gVisor; that residual risk is listed in the threat model.

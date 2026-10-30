@@ -35,7 +35,7 @@ from first principles up to the level expected by major industry certifications.
 |---|---|---|
 | **v3: foundations** | Learning paths → modules → lessons, progress tracking, web front-end, built on Bastion's auth core | ✅ API, web UI, levels 1 to 3 shipped; levels 4 to 6 to come |
 | **v4: challenges** | Per-user HMAC flags (unshareable), scoreboard, anti-cheat, TOTP MFA | ✅ Shipped: 11 challenges (levels 1 to 3), opt-in scoreboard, TOTP + recovery codes |
-| **v5: isolated labs** | One vulnerable container per learner: no egress, TTL, sandboxed runtime, quotas | ✅ Shipped: 7 labs (SQLi, IDOR, mass assignment, JWT `alg:none`, SSRF, path traversal, command injection), lab runner + gateway, optional gVisor |
+| **v5: isolated labs** | One vulnerable container per learner: no egress, TTL, sandboxed runtime, quotas | ✅ Shipped: 8 labs (SQLi, IDOR, mass assignment, JWT `alg:none`, SSRF, path traversal, command injection, stored XSS with a headless-browser victim), lab runner + gateway, optional gVisor |
 | **v6: advanced** | Blue-team labs (log analysis, detection), AI tutor, observability | Planned |
 
 The platform is designed to **run locally** (`git clone` + Docker). There is no public
@@ -77,7 +77,7 @@ Puzzles are generated per learner from an HMAC seed (nothing stored), decoys sha
 flag's format, and each generator has a test that solves it the way the brief says
 ([`challenge-generators.test.ts`](test/unit/challenge-generators.test.ts)).
 
-**7 live labs** ([ADR 0009](docs/adr/0009-isolated-labs.md)): a real, intentionally vulnerable
+**8 live labs** ([ADR 0009](docs/adr/0009-isolated-labs.md)): a real, intentionally vulnerable
 service started for one learner, holding that learner's flag, reachable only from their machine.
 
 | Lab | Level | Attack |
@@ -86,6 +86,7 @@ service started for one learner, holding that learner's flag, reachable only fro
 | Entrer sans mot de passe | 2 | SQL injection on a login form (verbose errors as the first clue) |
 | Promu administrateur | 2 | Mass assignment on sign-up (`"role": "admin"`) |
 | Un jeton sans signature | 2 | Forge a JWT with `"alg": "none"` |
+| Un modérateur trop confiant | 2 | Stored XSS against a **real headless Chromium** moderator; exfiltrate its cookie *through the app itself*, since labs have no route out |
 | Un aperçu trop curieux | 2 | SSRF: make the server fetch its own loopback admin service |
 | Le dossier d'à côté | 3 | Path traversal out of a download folder |
 | Un shell, mais dans une cage | 3 | Command injection → a real shell, then **try to escape and see why you can't** (no route out, read-only, `noexec`, no capabilities) |
@@ -245,7 +246,7 @@ generic errors with correlation ids · secret redaction in logs · secrets read 
 files rather than env vars · socket timeouts · privileged operations only via an
 operator CLI, never over HTTP.
 
-**241 tests, ~99 % line coverage** — most of them are *abuse cases*, not happy paths.
+**244 tests, ~99 % line coverage** — most of them are *abuse cases*, not happy paths.
 
 ### Supply chain & infrastructure
 

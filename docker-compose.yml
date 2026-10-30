@@ -120,6 +120,11 @@ services:
     build: { context: labs, dockerfile: command-injection/Dockerfile }
     image: bastion-lab-command-injection:local
     profiles: [labs]
+  # Ships a headless Chromium (the victim): a large image, built once.
+  lab-xss-stored:
+    build: { context: labs, dockerfile: xss-stored/Dockerfile }
+    image: bastion-lab-xss-stored:local
+    profiles: [labs]
 
 networks:
   # Platform ↔ runner only. No route out, nothing else joins it.

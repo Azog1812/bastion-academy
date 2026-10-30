@@ -149,10 +149,14 @@ jobs:
         with:
           dockerfile: labs/command-injection/Dockerfile
           failure-threshold: warning
+      - uses: hadolint/hadolint-action@06be81baf89a55ffd0e24b8f04a4185738dd3387 # v3.5.0
+        with:
+          dockerfile: labs/xss-stored/Dockerfile
+          failure-threshold: warning
       - name: Checkov (Kubernetes manifests + Dockerfiles)
         run: |
           pipx run --spec checkov==3.4.0 checkov \
-            --directory deploy/k8s --file Dockerfile --file labs/Dockerfile --file labs/command-injection/Dockerfile \
+            --directory deploy/k8s --file Dockerfile --file labs/Dockerfile --file labs/command-injection/Dockerfile --file labs/xss-stored/Dockerfile \
             --config-file .checkov.yaml \
             --output cli --output sarif --output-file-path console,checkov.sarif
       - uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1

@@ -12,6 +12,7 @@ import { dockerSocket, type DockerApi, type DockerResponse } from '../../src/lab
 import { httpLabRunner, LabRunnerError } from '../../src/services/lab-service.js';
 import { LabImageMissing, LabRunner } from '../../src/labs/runner/runner.js';
 import { containerSpec, networkSpec } from '../../src/labs/runner/spec.js';
+import { LAB_IDS, MAX_LIMITS } from '../../src/labs/catalog.js';
 
 const ID = 'a'.repeat(32);
 const FLAG = `BASTION{${'0'.repeat(32)}}`;
@@ -64,6 +65,19 @@ describe('lab container spec: the box around an intentionally vulnerable app', (
   it('carries the learner\'s flag and nothing else from the platform; the image comes from the catalog', () => {
     expect(spec.Env).toEqual([`FLAG=${FLAG}`]);
     expect(spec.Image).toBe('bastion-lab-sqli-login:local');
+  });
+
+  it('per-lab limits come from the catalog and never exceed the hard ceiling', () => {
+    for (const lab of LAB_IDS) {
+      const h = containerSpec(lab, ID, FLAG, 1).HostConfig;
+      expect(h.Memory).toBe(h.MemorySwap);
+      expect(h.Memory).toBeLessThanOrEqual(MAX_LIMITS.memoryMiB * 1024 * 1024);
+      expect(h.PidsLimit).toBeLessThanOrEqual(MAX_LIMITS.pids);
+      expect(h.NanoCpus).toBeLessThanOrEqual(MAX_LIMITS.cpus * 1e9);
+      // Whatever the limits, the rest of the box is identical for every lab.
+      expect(h).toMatchObject({ ReadonlyRootfs: true, CapDrop: ['ALL'], Privileged: false, PortBindings: {} });
+    }
+    expect(containerSpec('xss-stored', ID, FLAG, 1).HostConfig.Memory).toBe(512 * 1024 * 1024);
   });
 
   it('runs under a stronger sandbox when one is configured', () => {
