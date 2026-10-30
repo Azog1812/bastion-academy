@@ -1,0 +1,456 @@
+{
+  "id": "systemes-reseaux",
+  "title": "Systèmes et réseaux",
+  "summary": "Comment fonctionnent les réseaux, Linux, Windows et Active Directory, et comment on les attaque. Chaque module se termine par la configuration réelle de Bastion : conteneur durci, réseau en refus par défaut.",
+  "level": 3,
+  "modules": [
+    {
+      "id": "reseau-tcp-ip",
+      "title": "Les réseaux, du câble à l'application",
+      "summary": "TCP/IP, DNS, TLS et scan de ports : ce qui circule entre deux machines, et ce qu'un attaquant en déduit.",
+      "prerequisites": ["web-http"],
+      "lessons": [
+        {
+          "id": "modele-tcp-ip",
+          "title": "Le modèle TCP/IP, vu par un attaquant",
+          "minutes": 25,
+          "references": [
+            { "label": "Cloudflare Learning — Qu'est-ce que le modèle OSI ?", "url": "https://www.cloudflare.com/fr-fr/learning/ddos/glossary/open-systems-interconnection-model-osi/" },
+            { "label": "RFC 9293 — Transmission Control Protocol (TCP)", "url": "https://www.rfc-editor.org/rfc/rfc9293" }
+          ],
+          "quiz": [
+            {
+              "id": "ip-vs-port",
+              "prompt": "Que désigne un numéro de port ?",
+              "choices": [
+                "Une machine sur le réseau",
+                "Un programme sur une machine",
+                "Le protocole de chiffrement utilisé"
+              ],
+              "answer": [1]
+            },
+            {
+              "id": "ecoute-toutes-interfaces",
+              "prompt": "Un service écoute sur 0.0.0.0:5432. Qui peut s'y connecter ?",
+              "choices": [
+                "Uniquement la machine elle-même",
+                "Toute machine capable de joindre celle-ci par le réseau",
+                "Personne, 0.0.0.0 est une adresse invalide"
+              ],
+              "answer": [1]
+            },
+            {
+              "id": "port-filtre",
+              "prompt": "Un SYN envoyé vers un port ne reçoit aucune réponse. Que peut-on en déduire le plus probablement ?",
+              "choices": [
+                "Le port est ouvert",
+                "Le port est fermé",
+                "Un pare-feu filtre le port"
+              ],
+              "answer": [2]
+            }
+          ]
+        },
+        {
+          "id": "dns-et-tls",
+          "title": "DNS et TLS : à qui je parle vraiment ?",
+          "minutes": 30,
+          "references": [
+            { "label": "Cloudflare Learning — What is DNS?", "url": "https://www.cloudflare.com/learning/dns/what-is-dns/" },
+            { "label": "OWASP — Transport Layer Security Cheat Sheet", "url": "https://cheatsheetseries.owasp.org/cheatsheets/Transport_Layer_Security_Cheat_Sheet.html" },
+            { "label": "MDN — Strict-Transport-Security", "url": "https://developer.mozilla.org/fr/docs/Web/HTTP/Reference/Headers/Strict-Transport-Security" }
+          ],
+          "quiz": [
+            {
+              "id": "tls-certificat",
+              "prompt": "Sans vérification du certificat, que vaut une connexion TLS ?",
+              "choices": [
+                "Elle reste sûre, puisqu'elle est chiffrée",
+                "Elle peut être chiffrée de bout en bout… avec l'attaquant (homme du milieu)",
+                "Elle échoue toujours"
+              ],
+              "answer": [1]
+            },
+            {
+              "id": "subdomain-takeover",
+              "prompt": "Qu'est-ce qui rend possible un subdomain takeover ?",
+              "choices": [
+                "Un CNAME qui pointe vers une ressource cloud supprimée, que l'attaquant peut recréer",
+                "Un certificat TLS expiré",
+                "Un mot de passe faible sur le compte du registrar"
+              ],
+              "answer": [0]
+            },
+            {
+              "id": "hsts-role",
+              "prompt": "Contre quelle attaque l'en-tête HSTS protège-t-il ?",
+              "choices": [
+                "L'injection SQL",
+                "Le retour forcé de HTTPS vers HTTP (SSL stripping)",
+                "Le vol de cookies par XSS"
+              ],
+              "answer": [1]
+            }
+          ]
+        },
+        {
+          "id": "scan-de-ports",
+          "title": "Scanner des ports, légalement",
+          "minutes": 25,
+          "references": [
+            { "label": "Nmap Reference Guide — Port Scanning Basics", "url": "https://nmap.org/book/man-port-scanning-basics.html" },
+            { "label": "Légifrance — Code pénal, atteintes aux systèmes de traitement automatisé de données (art. 323-1 à 323-8)", "url": "https://www.legifrance.gouv.fr/codes/section_lc/LEGITEXT000006070719/LEGISCTA000006149839/" }
+          ],
+          "quiz": [
+            {
+              "id": "scan-legal",
+              "prompt": "Quelles cibles as-tu le droit de scanner ?",
+              "choices": [
+                "Ta propre machine",
+                "Une cible pour laquelle tu as une autorisation écrite",
+                "Le site de ton employeur, puisque tu y travailles",
+                "N'importe quelle adresse publique, un scan n'est pas une attaque"
+              ],
+              "answer": [0, 1]
+            },
+            {
+              "id": "version-exposee",
+              "prompt": "Pourquoi Bastion n'envoie-t-il ni en-tête Server ni X-Powered-By ?",
+              "choices": [
+                "Pour accélérer les réponses",
+                "Pour ne pas indiquer à un attaquant quelles failles connues (CVE) essayer",
+                "Parce que ces en-têtes sont interdits par HTTP/2"
+              ],
+              "answer": [1]
+            },
+            {
+              "id": "service-a-ne-pas-exposer",
+              "prompt": "Lequel de ces services ne devrait presque jamais être joignable depuis Internet ?",
+              "choices": [
+                "Un serveur web sur le port 443",
+                "Une base de données sur le port 5432",
+                "Un serveur de courrier entrant sur le port 25"
+              ],
+              "answer": [1]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "linux-securite",
+      "title": "Linux : droits, élévation de privilèges et conteneurs",
+      "summary": "Le modèle de permissions de Linux, les quatre chemins classiques vers root, puis le conteneur durci de Bastion vérifié commande par commande.",
+      "prerequisites": ["socle-securite"],
+      "lessons": [
+        {
+          "id": "linux-droits",
+          "title": "Linux : utilisateurs, groupes et permissions",
+          "minutes": 25,
+          "references": [
+            { "label": "ArchWiki — File permissions and attributes", "url": "https://wiki.archlinux.org/title/File_permissions_and_attributes" },
+            { "label": "ANSSI — Recommandations de configuration d'un système GNU/Linux", "url": "https://cyber.gouv.fr/publications/recommandations-de-securite-relatives-un-systeme-gnulinux" }
+          ],
+          "quiz": [
+            {
+              "id": "lire-permission",
+              "prompt": "Un fichier a les permissions -rw-r-----, propriétaire root, groupe shadow. Qui peut le lire ?",
+              "choices": [
+                "root et les membres du groupe shadow",
+                "Tout le monde",
+                "root uniquement"
+              ],
+              "answer": [0]
+            },
+            {
+              "id": "suid",
+              "prompt": "Que fait le bit SUID sur un exécutable ?",
+              "choices": [
+                "Il empêche la suppression du fichier",
+                "Le programme s'exécute avec les droits de son propriétaire, pas de celui qui le lance",
+                "Il chiffre le fichier sur le disque"
+              ],
+              "answer": [1]
+            },
+            {
+              "id": "code-non-modifiable",
+              "prompt": "Dans l'image de Bastion, le code appartient à root en 0555 et le processus tourne sous l'UID 65532. Quel est l'intérêt ?",
+              "choices": [
+                "Le processus démarre plus vite",
+                "Un attaquant qui prend le contrôle du processus ne peut pas modifier le code pour y laisser une porte dérobée",
+                "Cela permet au processus d'écrire ses journaux dans /dist"
+              ],
+              "answer": [1]
+            }
+          ]
+        },
+        {
+          "id": "linux-elevation",
+          "title": "Linux : l'élévation de privilèges",
+          "minutes": 30,
+          "references": [
+            { "label": "GTFOBins", "url": "https://gtfobins.github.io/" },
+            { "label": "MITRE ATT&CK — T1548 Abuse Elevation Control Mechanism", "url": "https://attack.mitre.org/techniques/T1548/" }
+          ],
+          "quiz": [
+            {
+              "id": "sudo-find",
+              "prompt": "sudo -l indique : (root) NOPASSWD: /usr/bin/find. Pourquoi est-ce grave ?",
+              "choices": [
+                "find peut exécuter des commandes (-exec), donc lancer un shell root",
+                "find peut lire tous les fichiers, mais rien de plus",
+                "Ce n'est pas grave, find est un outil de recherche"
+              ],
+              "answer": [0]
+            },
+            {
+              "id": "cron-modifiable",
+              "prompt": "Une tâche cron lance /opt/backup.sh en root, et ce script est en 777. Que peut faire un utilisateur ordinaire ?",
+              "choices": [
+                "Rien, la tâche s'exécute en root",
+                "Ajouter des commandes au script, qui s'exécuteront en root",
+                "Seulement lire le script"
+              ],
+              "answer": [1]
+            },
+            {
+              "id": "vecteurs-privesc",
+              "prompt": "Quels éléments un attaquant énumère-t-il pour élever ses privilèges ?",
+              "choices": [
+                "Les droits sudo",
+                "Les binaires SUID",
+                "Les tâches planifiées",
+                "La couleur du thème du terminal"
+              ],
+              "answer": [0, 1, 2]
+            }
+          ]
+        },
+        {
+          "id": "conteneur-durci",
+          "title": "Casse-le, répare-le : durcir un conteneur",
+          "minutes": 35,
+          "references": [
+            { "label": "OWASP — Docker Security Cheat Sheet", "url": "https://cheatsheetseries.owasp.org/cheatsheets/Docker_Security_Cheat_Sheet.html" },
+            { "label": "Kubernetes — Pod Security Standards", "url": "https://kubernetes.io/docs/concepts/security/pod-security-standards/" }
+          ],
+          "quiz": [
+            {
+              "id": "socket-docker",
+              "prompt": "Pourquoi monter /var/run/docker.sock dans un conteneur est-il dangereux ?",
+              "choices": [
+                "Cela ralentit Docker",
+                "Le conteneur peut piloter Docker, donc lancer un conteneur privilégié et devenir root sur l'hôte",
+                "Cela expose le conteneur sur Internet"
+              ],
+              "answer": [1]
+            },
+            {
+              "id": "options-durcissement",
+              "prompt": "Quelles options de docker-compose.yml de Bastion réduisent ce qu'un attaquant peut faire dans le conteneur ?",
+              "choices": [
+                "read_only: true",
+                "cap_drop: [ALL]",
+                "no-new-privileges:true",
+                "restart: unless-stopped"
+              ],
+              "answer": [0, 1, 2]
+            },
+            {
+              "id": "verifier-en-ci",
+              "prompt": "Pourquoi la CI de Bastion vérifie-t-elle qu'il n'y a pas de shell dans l'image ?",
+              "choices": [
+                "Pour qu'une modification future ne fasse pas disparaître cette garantie sans que personne ne le voie",
+                "Parce que Docker refuse les images avec un shell",
+                "Pour réduire le temps de build"
+              ],
+              "answer": [0]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "windows-active-directory",
+      "title": "Windows et Active Directory",
+      "summary": "Comptes, jetons et secrets sous Windows, puis Kerberos et les attaques qui reviennent dans tous les tests d'intrusion internes.",
+      "prerequisites": ["reseau-tcp-ip"],
+      "lessons": [
+        {
+          "id": "windows-comptes",
+          "title": "Windows : comptes, jetons et secrets",
+          "minutes": 30,
+          "references": [
+            { "label": "Microsoft Learn — Security identifiers", "url": "https://learn.microsoft.com/en-us/windows-server/identity/ad-ds/manage/understand-security-identifiers" },
+            { "label": "Microsoft Learn — Windows LAPS overview", "url": "https://learn.microsoft.com/en-us/windows-server/identity/laps/laps-overview" },
+            { "label": "MITRE ATT&CK — T1550.002 Pass the Hash", "url": "https://attack.mitre.org/techniques/T1550/002/" }
+          ],
+          "quiz": [
+            {
+              "id": "renommer-admin",
+              "prompt": "Renommer le compte « Administrateur » empêche-t-il un attaquant de le reconnaître ?",
+              "choices": [
+                "Oui, le nom est la seule façon de l'identifier",
+                "Non, son SID se termine toujours par -500",
+                "Oui, si on désactive aussi l'UAC"
+              ],
+              "answer": [1]
+            },
+            {
+              "id": "pass-the-hash",
+              "prompt": "Pourquoi le pass-the-hash fonctionne-t-il ?",
+              "choices": [
+                "Parce que NTLM accepte l'empreinte NT elle-même comme preuve d'identité",
+                "Parce que les empreintes NT sont faciles à inverser",
+                "Parce que Kerberos est désactivé par défaut"
+              ],
+              "answer": [0]
+            },
+            {
+              "id": "laps",
+              "prompt": "Quel problème LAPS résout-il ?",
+              "choices": [
+                "Le même mot de passe administrateur local sur toutes les machines, qui permet le mouvement latéral",
+                "Les mots de passe trop courts des utilisateurs",
+                "Le chiffrement des disques"
+              ],
+              "answer": [0]
+            }
+          ]
+        },
+        {
+          "id": "ad-kerberos",
+          "title": "Active Directory et Kerberos",
+          "minutes": 30,
+          "references": [
+            { "label": "Microsoft Learn — Kerberos authentication overview", "url": "https://learn.microsoft.com/en-us/windows-server/security/kerberos/kerberos-authentication-overview" },
+            { "label": "ANSSI — Recommandations de sécurité relatives à Active Directory", "url": "https://cyber.gouv.fr/publications/recommandations-de-securite-relatives-active-directory" }
+          ],
+          "quiz": [
+            {
+              "id": "lecture-annuaire",
+              "prompt": "Par défaut, qui peut lire l'essentiel de l'annuaire Active Directory (utilisateurs, groupes, membres) ?",
+              "choices": [
+                "Seulement les administrateurs du domaine",
+                "N'importe quel utilisateur authentifié du domaine",
+                "Personne, l'annuaire est chiffré"
+              ],
+              "answer": [1]
+            },
+            {
+              "id": "ticket-service",
+              "prompt": "Avec quelle clé un ticket de service Kerberos est-il chiffré ?",
+              "choices": [
+                "La clé de l'utilisateur qui le demande",
+                "La clé du compte de service visé, dérivée de son mot de passe",
+                "Une clé aléatoire jetée après usage, sans lien avec un compte"
+              ],
+              "answer": [1]
+            },
+            {
+              "id": "krbtgt-jwt",
+              "prompt": "À quoi correspond la clé du compte krbtgt dans Bastion ?",
+              "choices": [
+                "Au mot de passe de l'administrateur",
+                "À la clé qui signe les jetons d'accès (JWT_SECRET)",
+                "À la clé de la chaîne d'audit"
+              ],
+              "answer": [1]
+            }
+          ]
+        },
+        {
+          "id": "ad-attaques",
+          "title": "Les attaques classiques contre Active Directory",
+          "minutes": 35,
+          "references": [
+            { "label": "MITRE ATT&CK — T1558.003 Kerberoasting", "url": "https://attack.mitre.org/techniques/T1558/003/" },
+            { "label": "MITRE ATT&CK — T1558.004 AS-REP Roasting", "url": "https://attack.mitre.org/techniques/T1558/004/" },
+            { "label": "Microsoft Learn — Enterprise access model", "url": "https://learn.microsoft.com/en-us/security/privileged-access-workstations/privileged-access-access-model" }
+          ],
+          "quiz": [
+            {
+              "id": "kerberoasting-defense",
+              "prompt": "Quelle défense rend le Kerberoasting inutile ?",
+              "choices": [
+                "Des comptes de service gérés (gMSA) avec des mots de passe longs et aléatoires",
+                "Le renommage des comptes de service",
+                "Le blocage du port 88 sur les postes de travail"
+              ],
+              "answer": [0]
+            },
+            {
+              "id": "golden-ticket",
+              "prompt": "Après un Golden Ticket, que faut-il faire du mot de passe du compte krbtgt ?",
+              "choices": [
+                "Rien, il n'est pas concerné",
+                "Le changer une fois",
+                "Le changer deux fois, car l'ancienne clé reste acceptée une fois"
+              ],
+              "answer": [2]
+            },
+            {
+              "id": "tiers",
+              "prompt": "Pourquoi un administrateur du domaine (tier 0) ne doit-il jamais ouvrir de session sur un poste de travail ?",
+              "choices": [
+                "Parce que ses identifiants resteraient dans la mémoire d'une machine plus facile à compromettre",
+                "Parce que les postes de travail ne supportent pas Kerberos",
+                "Pour économiser des licences"
+              ],
+              "answer": [0]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "segmentation-reseau",
+      "title": "Casse-le, répare-le : segmenter le réseau",
+      "summary": "Refus par défaut, filtrage sortant et Zero Trust, appliqués avec un pare-feu hôte puis avec les NetworkPolicy de Bastion.",
+      "prerequisites": ["reseau-tcp-ip", "linux-securite"],
+      "lessons": [
+        {
+          "id": "pare-feu-segmentation",
+          "title": "Segmenter et filtrer le réseau",
+          "minutes": 30,
+          "references": [
+            { "label": "Kubernetes — Network Policies", "url": "https://kubernetes.io/docs/concepts/services-networking/network-policies/" },
+            { "label": "NIST SP 800-207 — Zero Trust Architecture", "url": "https://csrc.nist.gov/pubs/sp/800/207/final" }
+          ],
+          "quiz": [
+            {
+              "id": "default-deny",
+              "prompt": "Pourquoi préférer le refus par défaut ?",
+              "choices": [
+                "Parce que tout ce qui n'a pas été prévu est bloqué, au lieu d'être autorisé",
+                "Parce que c'est plus rapide à configurer",
+                "Parce que les pare-feu ne savent pas faire autrement"
+              ],
+              "answer": [0]
+            },
+            {
+              "id": "egress",
+              "prompt": "Que gagne-t-on à interdire toute connexion sortante à l'API Bastion ?",
+              "choices": [
+                "Un attaquant qui exécute du code ne peut ni télécharger d'outils ni exfiltrer de données",
+                "L'API répond plus vite",
+                "Rien, seules les connexions entrantes comptent"
+              ],
+              "answer": [0]
+            },
+            {
+              "id": "zero-trust",
+              "prompt": "Que signifie Zero Trust ?",
+              "choices": [
+                "On ne fait confiance à aucun employé",
+                "Être à l'intérieur du réseau ne donne aucun droit : chaque requête est authentifiée et autorisée",
+                "On désactive tous les comptes administrateurs"
+              ],
+              "answer": [1]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
