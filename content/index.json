@@ -7,5 +7,5 @@
     { "level": 5, "title": "Défensif", "goal": "Détection, réponse à incident et forensique : voir l'attaque depuis l'autre côté." },
     { "level": 6, "title": "Expert", "goal": "Exploitation avancée et préparation au niveau attendu par les grandes certifications du domaine." }
   ],
-  "paths": ["fondamentaux", "securite-web-api"]
+  "paths": ["fondamentaux", "securite-web-api", "systemes-reseaux"]
 }

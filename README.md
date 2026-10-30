@@ -33,8 +33,8 @@ from first principles up to the level expected by major industry certifications.
 
 | Milestone | Scope | Status |
 |---|---|---|
-| **v3: foundations** | Learning paths → modules → lessons, progress tracking, web front-end, built on Bastion's auth core | ✅ API, web UI, levels 1 and 2 shipped; levels 3 to 6 to come |
-| **v4: challenges** | Per-user HMAC flags (unshareable), scoreboard, anti-cheat, TOTP MFA | Planned |
+| **v3: foundations** | Learning paths → modules → lessons, progress tracking, web front-end, built on Bastion's auth core | ✅ API, web UI, levels 1 to 3 shipped; levels 4 to 6 to come |
+| **v4: challenges** | Per-user HMAC flags (unshareable), scoreboard, anti-cheat, TOTP MFA | ✅ Shipped: 4 challenges, opt-in scoreboard, TOTP + recovery codes |
 | **v5: isolated labs** | One vulnerable container per learner: no egress, TTL, sandboxed runtime, quotas | Planned |
 | **v6: advanced** | Blue-team labs (log analysis, detection), AI tutor, observability | Planned |
 
@@ -43,14 +43,17 @@ hosted instance yet.
 
 ### What's available today
 
-The curriculum spans six levels, from **Fundamentals** to **Expert**. Two paths are
-available (in French, 17 lessons, 43 quiz questions):
+The curriculum spans six levels, from **Fundamentals** to **Expert**. Three paths are
+available (in French, 27 lessons, 73 quiz questions):
 
 - **Level 1, Fundamentals**: security basics, HTTP, sessions and JWT, then a
   *break it, then fix it* IDOR module.
 - **Level 2, Web and API security**: SQL injection (with a self-contained local
   mini-lab), XSS, CSRF, JWT attacks, mass assignment and function-level access
   control.
+- **Level 3, Systems and networks**: TCP/IP, DNS and TLS, legal port scanning, Linux
+  permissions and privilege escalation, container hardening, Windows accounts and
+  tokens, Kerberos and Active Directory attacks, network segmentation.
 
 Every *break it, then fix it* module ends in Bastion's own code: the learner
 attacks Bastion, then reads the exact lines, lint rules, Semgrep rules and tests
@@ -121,8 +124,9 @@ curl -s $B/v1/lessons/cia-et-risque -H "authorization: Bearer $ALICE" | jq -r .b
 > on exploite une faille réelle dans un lab, puis on étudie le code et le test qui la
 > neutralisent. Progression des bases jusqu'au niveau des grandes certifications.
 > Déjà disponible : une interface web (http://localhost:3000 après installation),
-> l'API d'apprentissage (cursus, progression, quiz corrigés côté serveur) et deux
-> parcours en français, « Fondamentaux » et « Sécurité web et API » (17 leçons).
+> l'API d'apprentissage (cursus, progression, quiz corrigés côté serveur), trois
+> parcours en français, « Fondamentaux », « Sécurité web et API » et « Systèmes et
+> réseaux » (27 leçons), des défis à flag personnel, un classement et la MFA TOTP.
 > Les labs seront volontairement vulnérables : à lancer uniquement en local.
 
 ---
@@ -184,7 +188,7 @@ generic errors with correlation ids · secret redaction in logs · secrets read 
 files rather than env vars · socket timeouts · privileged operations only via an
 operator CLI, never over HTTP.
 
-**150 tests, ~98 % line coverage** — most of them are *abuse cases*, not happy paths.
+**184 tests, ~99 % line coverage** — most of them are *abuse cases*, not happy paths.
 
 ### Supply chain & infrastructure
 
