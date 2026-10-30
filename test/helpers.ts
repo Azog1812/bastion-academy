@@ -35,7 +35,13 @@ export interface TestContext {
 const realCurriculum = loadCurriculum();
 
 export function setup(
-  opts: { env?: Record<string, string>; rateLimits?: Partial<NonNullable<AppOptions['rateLimits']>>; curriculum?: Curriculum; web?: AppOptions['web'] } = {},
+  opts: {
+    env?: Record<string, string>;
+    rateLimits?: Partial<NonNullable<AppOptions['rateLimits']>>;
+    curriculum?: Curriculum;
+    web?: AppOptions['web'];
+    labRunner?: AppOptions['labRunner'];
+  } = {},
 ): TestContext {
   const config = loadConfig(testEnv(opts.env));
   const db = openDatabase(':memory:');
@@ -45,6 +51,7 @@ export function setup(
     logger: createLogger('silent'),
     curriculum: opts.curriculum ?? realCurriculum,
     ...(opts.web ? { web: opts.web } : {}),
+    ...(opts.labRunner ? { labRunner: opts.labRunner } : {}),
     rateLimits: { global: 10_000, auth: 10_000, refresh: 10_000, quiz: 10_000, ...opts.rateLimits },
   });
   return { config, db, app, services, http: request(app) };

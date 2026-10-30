@@ -18,6 +18,9 @@ changes (the PR template asks for it).
 | TOTP seeds, recovery codes | Bypass the second factor | `user_mfa.secret` (AES-256-GCM under the KEK ring, AAD-bound to the user); `mfa_recovery_codes.code_hash` (SHA-256) |
 | Scores and pseudonyms | Scoreboard integrity; pseudonyms are the only cross-user data shown | `challenge_solves`, `users.display_name` (opt-in) |
 | Audit trail | Detection, forensics, accountability | `audit_log` (append-only, HMAC chain) |
+| Docker socket | Root on the host: any container, any mount | Lab runner only (ADR 0009); never in the platform or the gateway |
+| Lab runner token | Start and stop lab containers (catalog labs only) | Platform and runner configuration, from a secret file or `.env` |
+| The host, the platform, other learners' labs | What an attacker inside a lab would go for next | Separated by the per-instance internal network, container hardening, the gateway's fixed routing |
 | Learning progress | Learners' record; future scoreboard and certificates depend on its integrity | `lesson_progress` (scoped by `user_id`) |
 | Learning content | What learners are taught; a tampered lesson could mislead or carry malicious links | `content/` in git, shipped read-only in the signed image |
 | Build pipeline | Ship a backdoored image to production | GitHub Actions, GHCR |
@@ -63,6 +66,13 @@ Trust boundaries crossed by data:
 3. **API → database**: the DB is treated as *potentially readable by an attacker* (backup leak, volume snapshot): it only ever holds ciphertext and hashes.
 4. **Operator → system**: privileged actions (grant admin, rotate keys) need host access; they are not reachable over HTTP at all.
 5. **CI → cluster**: an image only runs if its Sigstore signature matches this repository's workflow identity.
+6. **Platform → lab runner** (v5): internal network, shared token, closed lab catalog; the runner is the only holder of the Docker socket.
+7. **Lab → anything**: a lab container is assumed compromised (that is its purpose). It sits alone with the gateway on an `internal` network, unprivileged and read-only; the browser reaches it on its own origin (`l<id>.lab.localhost`), never the platform's.
+
+```
+browser ─► bastion :3000 ──(lab-control, internal, token)──► lab-runner ── Docker socket
+browser ─► lab-gateway :8088 ──(per-instance internal network)──► lab container
+```
 
 ## 3. STRIDE
 
@@ -100,6 +110,12 @@ Trust boundaries crossed by data:
 | **E**levation of privilege | Static files | Path traversal or dotfile read through the web server | `express.static` with a fixed root, `dotfiles: 'deny'`, no directory index for `/js`; pages served with their own CSP only on files actually served | `web.test.ts` |
 | **E**levation of privilege | Admin API | Regular user calls admin routes | Role check server-side, role read from DB on every request (instant demotion); attempts audited | `authorization.test.ts` › function-level |
 | **E**levation of privilege | Container | RCE → host / cluster takeover | Distroless (no shell), non-root, read-only rootfs, all capabilities dropped, seccomp, no SA token, no egress | `deployment.yaml`, smoke test in `container.yml` |
+| **E**levation of privilege | Lab container | Code execution in a lab → host, platform, other labs, Internet | Non-root, read-only rootfs, no capabilities, no-new-privileges, `noexec` tmpfs, memory/CPU/PID caps, no mount, no published port; per-instance `internal` network (no egress, no neighbour); optional gVisor runtime | `lab-runner.test.ts` › container spec; isolation checked live (no route to Internet, runner or platform) |
+| **E**levation of privilege | Lab runner | Abusing the runner to start an arbitrary container (privileged, host mounts) | Only the platform can reach it (internal network) with a 256-bit token compared in constant time; strict schema: catalog lab id, hex instance id, flag, bounded TTL; image, command, mounts and ports come from code | `lab-runner.test.ts` › runner API |
+| **I**nformation disclosure | Lab gateway | SSRF through the Host header (cloud metadata, runner, platform) | Upstream built from a 32-hex id only; any other Host gets 404 without a connection | `lab-runner.test.ts` › gateway |
+| **S**poofing / **I**nformation disclosure | Browser | A lab's XSS or cookies reaching the platform session | Each lab on its own origin (`l<id>.lab.localhost`), distinct from the platform's; platform cookies are `__Host-` on the platform origin | ADR 0009, checked in Chrome (`document.cookie` empty in the lab) |
+| **I**nformation disclosure | Labs | Reading or stopping another learner's lab; reusing their flag | Instance ids are 128 random bits; rows read and deleted with `user_id` in SQL; flags are per learner (ADR 0008) | `labs.test.ts` › IDOR |
+| **D**enial of service | Labs | Starting many labs to exhaust the host | One running lab per learner (`UNIQUE(user_id)`, race-proof), per-account start rate limit, TTL enforced by both platform and runner, per-container resource caps | `labs.test.ts` |
 | **E**levation of privilege | CI | Malicious dependency or action | `npm ci --ignore-scripts`, `npm audit signatures`, SHA-pinned actions, least-privilege tokens, harden-runner | `.github/workflows/` |
 
 ## 4. Abuse cases worth highlighting
@@ -122,6 +138,14 @@ The append-only triggers stop naive attempts; dropping the triggers is detected
 by the HMAC chain, and the attacker cannot recompute the chain without the
 audit key, which lives outside the database.
 
+**Lab escape chain.** A learner gets code execution in a lab (expected for some labs)
+and tries to go further. Downloading a tool or opening a reverse shell fails: the
+network has no route out. Reaching another learner's lab or the platform fails: the
+instance network contains only the lab and the gateway, and the names do not resolve.
+Writing to the image or escalating inside the container fails: read-only root,
+non-root user, no capabilities, `noexec` tmpfs. What is left is a kernel or runtime
+vulnerability, which is why the runner can run labs under gVisor.
+
 ## 5. Accepted risks
 
 | Risk | Why accepted | Revisit when |
@@ -133,7 +157,10 @@ audit key, which lives outside the database.
 | Failed quiz responses say which questions are wrong | Pedagogical feedback beats secrecy here; enumeration is slowed by the per-account rate limit. | Same as above |
 | JWT signed with a symmetric key (HS256) | One service both issues and verifies tokens; no third party needs to verify them. | Another service must verify tokens → EdDSA + JWKS |
 | MFA is optional, and TOTP is phishable in real time (a proxy relays a fresh code within 30 s) | Local learning platform; replay protection limits a relayed code to one use. | WebAuthn/passkeys (roadmap), or admins on a hosted instance |
-| A learner with a correct artifact can always score (challenges teach, they are not proctored) | Artifacts are deterministic per learner by design; the scoreboard is for motivation, not certification. | v5 labs: flags only obtainable by exploiting a running service |
+| A learner with a correct artifact can always score (challenges teach, they are not proctored) | Artifacts are deterministic per learner by design; the scoreboard is for motivation, not certification. Lab challenges (v5) close this: their flag only exists inside the learner's running lab. | Certificates are introduced |
+| The lab runner holds the Docker socket (root-equivalent) and runs as root in its container | Starting containers needs it. The runner is small, unreachable except from the platform, token-protected, read-only and cap-less, and never takes an image, mount or option from a request (ADR 0009). | Hosting: replace with Kubernetes Jobs created by a narrowly-scoped service account |
+| A kernel or container-runtime escape from a lab bypasses container isolation | Defense in depth already removes most escape prerequisites (no capabilities, no-new-privileges, non-root, read-only). gVisor (`LAB_RUNTIME=runsc`) adds a user-space kernel where installed; it is not the default because Docker Desktop does not ship it. | Hosting with untrusted learners: make gVisor or Kata mandatory |
+| Whoever administers the host can read lab flags (`docker inspect` shows the environment) | On a local install the learner is the host administrator anyway (and holds `FLAG_HMAC_KEY` in `.env`); anti-cheat cannot exist there. | Hosting: learners never get host access, flags can then be trusted |
 | Scoreboard computed over all users on each request | Fine at local-install scale; one indexed aggregate query. | Hosting with many learners → cache or materialised scores |
 | Unfixed OS CVEs in the base images (mostly glibc, libstdc++, zlib; medium/low) | No upstream patch exists. Distroless removes the shell and tools most exploits need, the container runs non-root on a read-only FS with no egress, and Trivy only raises alerts for fixable CVEs (full list in the SBOM). | A fix is published: the digest-pinned base image is bumped by Dependabot and Trivy flags it |
 | Single-maintainer project: PRs are not reviewed by a second person (Scorecard *Code-Review*) | Every change still goes through a PR with 11 required CI checks (ruleset `protect-main`). | A second maintainer joins |

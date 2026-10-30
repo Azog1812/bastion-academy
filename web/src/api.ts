@@ -157,9 +157,22 @@ export interface ChallengeSummary {
   solvedAt: string | null;
 }
 
+export interface LabInstance {
+  url: string;
+  expiresAt: string;
+}
+
+export interface LabState {
+  id: string;
+  enabled: boolean;
+  ttlSeconds: number;
+  instance: LabInstance | null;
+}
+
 export interface Challenge extends ChallengeSummary {
   brief: string;
   artifact: Record<string, string>;
+  lab: LabState | null;
 }
 
 export type Submission = { correct: true; points: number; alreadySolved: boolean } | { correct: false };

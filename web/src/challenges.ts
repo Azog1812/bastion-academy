@@ -1,9 +1,66 @@
-import { api, ApiError, type Challenge, type ChallengeSummary, type Scoreboard, type Submission } from './api.js';
+import { api, ApiError, type Challenge, type ChallengeSummary, type LabInstance, type LabState, type Scoreboard, type Submission } from './api.js';
 import { h, renderBlocks } from './dom.js';
 import { parseMarkdown } from './markdown.js';
-import { alert, onSubmit, show } from './ui.js';
+import { alert, errorMessage, onSubmit, show } from './ui.js';
 
 /** Challenges (#/defis, #/defi/<id>) and the scoreboard (#/classement). Flags are checked server-side only. */
+
+/** Only a gateway URL the platform could have built is ever turned into a link (never javascript:, never elsewhere). */
+const LAB_URL = /^http:\/\/l[0-9a-f]{32}\.lab\.localhost:\d{1,5}\/$/;
+
+/** Start / open / stop the learner's own lab instance (ADR 0009). */
+function labPanel(challengeId: string, lab: LabState): HTMLElement {
+  const box = h('section', { class: 'card lab', 'aria-live': 'polite' });
+  const path = `/v1/challenges/${encodeURIComponent(challengeId)}/lab`;
+
+  const button = (label: string, action: () => Promise<void>) => {
+    const b = h('button', { type: 'button' }, label);
+    b.addEventListener('click', () => {
+      b.disabled = true;
+      action().catch((err: unknown) => {
+        b.disabled = false;
+        box.append(alert(errorMessage(err)));
+      });
+    });
+    return b;
+  };
+
+  const render = (instance: LabInstance | null) => {
+    if (!lab.enabled) {
+      box.replaceChildren(
+        h('h2', {}, 'Ton lab'),
+        alert('Les labs ne sont pas activés sur cette installation : lance Bastion avec Docker Compose (voir le README) pour en profiter.', 'info'),
+      );
+      return;
+    }
+    if (instance && LAB_URL.test(instance.url)) {
+      const until = new Date(instance.expiresAt).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+      box.replaceChildren(
+        h('h2', {}, 'Ton lab est démarré'),
+        h('p', {}, 'Adresse : ', h('a', { href: instance.url, target: '_blank', rel: 'noopener noreferrer' }, instance.url)),
+        h('p', { class: 'meta' }, `Il s'arrête tout seul à ${until}. S'il ne répond pas tout de suite, patiente quelques secondes.`),
+        button('Arrêter le lab', async () => {
+          await api<undefined>('DELETE', path);
+          render(null);
+        }),
+      );
+      return;
+    }
+    box.replaceChildren(
+      h('h2', {}, 'Ton lab'),
+      h(
+        'p',
+        {},
+        `Une application vulnérable, rien que pour toi, isolée du réseau. Elle s'arrête toute seule après ${String(Math.round(lab.ttlSeconds / 60))} minutes.`,
+      ),
+      button('Démarrer mon lab', async () => {
+        render(await api<LabInstance>('POST', path, {}));
+      }),
+    );
+  };
+  render(lab.instance);
+  return box;
+}
 
 function challengeCard(c: ChallengeSummary): HTMLElement {
   const state = c.solved ? 'Terminé' : c.unlocked ? 'Disponible' : 'Verrouillé';
@@ -66,10 +123,15 @@ export async function challengeView(id: string): Promise<void> {
       h('h1', {}, c.title),
       h('p', { class: 'meta' }, `${c.points} points${c.solved ? ' · résolu ✓' : ''}`),
       ...renderBlocks(parseMarkdown(c.brief)),
-      h('h2', {}, 'Ce que tu as récupéré'),
-      // Artifact values are attacker-style data: shown as text in <pre>, never interpreted.
-      ...Object.entries(c.artifact).flatMap(([name, value]) => [h('h3', {}, name), h('pre', { class: 'artifact' }, value)]),
+      ...(c.lab === null
+        ? [
+            h('h2', {}, 'Ce que tu as récupéré'),
+            // Artifact values are attacker-style data: shown as text in <pre>, never interpreted.
+            ...Object.entries(c.artifact).flatMap(([name, value]) => [h('h3', {}, name), h('pre', { class: 'artifact' }, value)]),
+          ]
+        : []),
     ),
+    c.lab === null ? null : labPanel(c.id, c.lab),
     form,
   );
   flag.focus();

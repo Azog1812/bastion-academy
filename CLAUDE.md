@@ -19,7 +19,7 @@ cybersecurity learning platform. Pedagogy is "break it, then fix it": exploit a 
 vulnerability in a lab, capture a flag, then study the Bastion code and test that defeat
 it. Curriculum goes crescendo from basics to major-certification level. Milestones:
 v3 foundations (paths/modules/lessons, progress, web front-end) → v4 challenges (per-user
-HMAC flags, scoreboard, TOTP MFA) → v5 isolated per-learner lab containers → v6 blue-team
+HMAC flags, scoreboard, TOTP MFA) → v5 isolated per-learner lab containers (shipped, ADR 0009) → v6 blue-team
 labs, AI tutor, observability. Distribution is **local only** for now (clone + Docker);
 hosting comes later. Lab apps are intentionally vulnerable: they must bind to 127.0.0.1,
 stay out of `src/`, and never weaken the platform's own invariants below.
@@ -33,14 +33,15 @@ explain the *why* (threat, standard, trade-off), not only the *what*.
 npm ci --ignore-scripts      # never run install scripts
 npm run lint                 # ESLint strictTypeChecked + security plugin + custom SQL rules
 npm run typecheck            # tsc strict, noUncheckedIndexedAccess, exactOptionalPropertyTypes
-npm test                     # vitest (196 tests)
+npm test                     # vitest (232 tests)
 npm run test:coverage        # thresholds: lines/statements/functions 90 %, branches 80 %
 npm run check                # lint + typecheck + coverage
 npm run build && node dist/cli.js gen-secrets > .env   # local secrets (gitignored)
 set -a && . ./.env && set +a && NODE_ENV=development npm start
 ./scripts/smoke-test.sh http://127.0.0.1:3000          # end-to-end incl. IDOR check
 semgrep scan --config .semgrep/ --metrics=off --error src
-docker compose up --build    # same hardening as prod (read-only, cap_drop ALL)
+docker compose --profile labs build   # lab images (v5), once
+docker compose up --build    # platform + lab runner + lab gateway, same hardening as prod
 ```
 
 Requires Node ≥ 22.13 (CI: 22 and 24; image: Node 24 distroless).
@@ -67,6 +68,11 @@ src/
   services/challenge-service  per-learner flags HMAC(FLAG_HMAC_KEY), artifacts, submit
                          (shared-flag detection), opt-in scoreboard (ADR 0008)
   challenges/generators  closed set of artifact kinds (content picks one, never ships code)
+  labs/catalog.ts        closed set of labs (image, port); content picks one by id (ADR 0009)
+  labs/runner/           the ONLY Docker client: spec.ts (container hardening), runner.ts
+                         (start/stop/reap, re-attach gateway), app.ts (token, strict schema)
+  labs/gateway/          reverse proxy l<id>.lab.localhost → bastion-lab-<id>:8080, no secrets
+  services/lab-service   per-learner instances (UNIQUE user_id), flag injection, TTL reaper
   services/note-service  owner-scoped CRUD, optimistic concurrency (version), rotateKeys()
   services/learning-service  progress scoped by user_id, server-side prerequisites + quiz grading
   curriculum/catalog.ts  loads + validates content/ at boot (slug ids, no cycles, https links),
@@ -75,12 +81,14 @@ src/
   http/schemas.ts        all zod schemas are .strict() (mass-assignment protection)
   http/routes.ts         /v1/auth/*, /v1/session/*, /v1/me*, /v1/me/mfa/*, /v1/notes*,
                          /v1/curriculum, /v1/lessons/:id[/complete], /v1/challenges*,
-                         /v1/scoreboard, /v1/admin/audit*
+                         /v1/challenges/:id/lab (POST start, DELETE stop), /v1/scoreboard, /v1/admin/audit*
   http/session.ts        browser sessions: __Host- HttpOnly refresh cookie, Origin check (ADR 0007)
   http/web.ts            serves web/public + dist/web, page CSP with Trusted Types
   app.ts                 createApp(): helmet (CSP default-src 'none', HSTS, frameguard DENY),
                          rate limits, body limit 100 kB, trust proxy from config
   server.ts / cli.ts     entry point (timeouts, graceful shutdown) / operator CLI
+labs/                    intentionally vulnerable lab apps + one Dockerfile (ARG LAB); excluded
+                         from ESLint/Semgrep on purpose, tested in test/labs/
 web/                     front-end, zero deps: src/{main,api,ui,dom,markdown,challenges,account}.ts
                          (tsc → dist/web),
                          public/{index.html,style.css}. Hash routes, French UI.
@@ -90,7 +98,7 @@ content/                 curriculum as code: index.json (levels, path order), <p
 test/unit, test/security, test/helpers.ts (setup(), newUser(), auditActions())
 deploy/k8s (kustomize), deploy/policies (Kyverno signed-image policy)
 docs/  threat-model · security-controls (OWASP API Top 10 + ASVS 4.0.3) · security-pipeline ·
-       adr/0001-0008 · runbook · openapi.yaml (used by DAST)
+       adr/0001-0009 · runbook · openapi.yaml (used by DAST)
 ```
 
 ## Security invariants — never break these
@@ -129,6 +137,13 @@ docs/  threat-model · security-controls (OWASP API Top 10 + ASVS 4.0.3) · secu
     no token or refresh cookie is issued before the second factor; MFA challenges are
     single-use with an atomic attempt cap; disabling MFA needs password + code. The
     scoreboard is the only cross-user read and projects pseudonym + score only.
+15. **Labs stay boxed** (ADR 0009). Only the lab runner holds the Docker socket; the
+    platform and gateway never do. The runner takes a catalog lab id, a hex instance id,
+    a flag and a bounded TTL, nothing else: image, command, mounts, ports and limits come
+    from `src/labs/`. Lab containers keep the hardening of `spec.ts` (non-root, read-only,
+    cap_drop ALL, no-new-privileges, resource caps, no published port, own `internal`
+    network). The gateway builds its upstream from the instance id, never from the
+    request. Vulnerable code lives in `labs/` only, never in `src/`.
 
 ## Conventions
 

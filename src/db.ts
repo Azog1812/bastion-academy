@@ -119,6 +119,18 @@ const MIGRATIONS: readonly string[] = [
     attempts    INTEGER NOT NULL DEFAULT 0
   ) STRICT, WITHOUT ROWID;
   `,
+  // v4: lab instances (ADR 0009). UNIQUE(user_id): one running lab per learner,
+  // enforced by the database, so two concurrent starts cannot both win.
+  `
+  CREATE TABLE lab_instances (
+    id            TEXT PRIMARY KEY,
+    user_id       TEXT NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+    challenge_id  TEXT NOT NULL,
+    created_at    INTEGER NOT NULL,
+    expires_at    INTEGER NOT NULL
+  ) STRICT;
+  CREATE INDEX lab_instances_expiry ON lab_instances(expires_at);
+  `,
 ];
 
 export type Database = DatabaseSync;

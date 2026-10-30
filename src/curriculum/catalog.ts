@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import { CHALLENGE_KINDS } from '../challenges/generators.js';
+import { LAB_IDS } from '../labs/catalog.js';
 
 /**
  * Curriculum as code (ADR 0006).
@@ -82,11 +83,15 @@ const challengeSchema = z
     /** Available once this module is unlocked, like its lessons. */
     moduleId: slug,
     points: z.number().int().min(10).max(1000),
-    kind: z.enum(CHALLENGE_KINDS),
+    /** Either a generated artifact to analyse… */
+    kind: z.enum(CHALLENGE_KINDS).optional(),
+    /** …or a live, intentionally vulnerable service to attack (ADR 0009). Both are closed sets. */
+    lab: z.enum(LAB_IDS).optional(),
     /** Markdown, rendered by the client like a lesson body. */
     brief: z.string().min(1).max(4000),
   })
-  .strict();
+  .strict()
+  .refine((c) => (c.kind === undefined) !== (c.lab === undefined), 'a challenge needs exactly one of "kind" or "lab"');
 
 const challengesSchema = z.object({ challenges: z.array(challengeSchema).max(200) }).strict();
 

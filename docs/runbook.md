@@ -12,6 +12,27 @@ kubectl -n bastion create secret generic bastion-secrets \
 kubectl -n bastion exec deploy/bastion -- /nodejs/bin/node dist/cli.js promote you@example.com
 ```
 
+## Labs (v5)
+
+```bash
+node dist/cli.js gen-secrets > .env          # includes LAB_RUNNER_TOKEN
+docker compose --profile labs build          # lab images, once and after each lab change
+docker compose up --build                    # platform, lab runner, lab gateway
+```
+
+- **"This lab is not built yet"**: the image is missing, run the build command above.
+- **A lab answers 502**: it is starting (a second or two), stopped or expired. Stop it and
+  start it again from the challenge page. After `docker compose up`, the runner re-attaches
+  the gateway to every live lab by itself.
+- **List or clean lab containers** (they are not part of the compose project):
+  `docker ps --filter label=bastion.lab=1` · expired ones are removed within a minute;
+  to remove all of them: `docker rm -f $(docker ps -aq --filter label=bastion.lab=1)` then
+  `docker network prune --filter label=bastion.lab=1`.
+- **Stronger sandbox**: install gVisor on the host and set `LAB_RUNTIME: runsc` on the
+  `lab-runner` service.
+- **Rotating `LAB_RUNNER_TOKEN`**: generate a new value, update `.env`, then
+  `docker compose up -d` (platform and runner restart together; running labs survive).
+
 ## Rotating the encryption key (KEK)
 1. Generate a new key: `openssl rand -base64 32`.
 2. Add it to the ring and make it active: `ENCRYPTION_KEYS=k1:<old>,k2:<new>`, `ACTIVE_KEY_ID=k2`. Deploy.

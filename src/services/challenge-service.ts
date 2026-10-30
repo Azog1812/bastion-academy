@@ -93,7 +93,9 @@ export class ChallengeService {
       moduleId: c.moduleId,
       points: c.points,
       brief: c.brief,
-      artifact: buildArtifact(c.kind, this.flagFor(userId, c.id), this.mac('artifact', c.id, userId)),
+      // A lab challenge has no artifact: the flag lives inside the learner's own running lab.
+      artifact: c.kind === undefined ? {} : buildArtifact(c.kind, this.flagFor(userId, c.id), this.mac('artifact', c.id, userId)),
+      lab: c.lab ?? null,
       solved: at !== undefined,
       solvedAt: at === undefined ? null : new Date(at).toISOString(),
     };

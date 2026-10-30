@@ -1,6 +1,15 @@
 # Local run with the same hardening as production:
 #   npm ci && npm run build && node dist/cli.js gen-secrets > .env
+#   docker compose --profile labs build     # the lab images (v5), once
 #   docker compose up --build
+#
+# Labs (ADR 0009):
+#
+#   browser ──► bastion (127.0.0.1:3000)  ──lab-control (internal)──►  lab-runner ── Docker socket
+#   browser ──► lab-gateway (127.0.0.1:8088) ──per-instance network (internal)──► lab container
+#
+# Only the runner touches Docker. Each lab instance gets its own network with no
+# route out; the gateway is the only thing attached to it besides the lab.
 services:
   bastion:
     build: .
@@ -8,8 +17,10 @@ services:
     env_file: .env
     environment:
       NODE_ENV: production
+      LAB_RUNNER_URL: http://lab-runner:4000
     ports:
       - "127.0.0.1:3000:3000" # loopback only: not exposed to the LAN
+    networks: [default, lab-control]
     read_only: true
     tmpfs:
       - /tmp:size=16m,mode=1777
@@ -24,6 +35,81 @@ services:
     mem_limit: 768m
     cpus: 1.0
     restart: unless-stopped
+
+  # Holds the Docker socket: root-equivalent on the host. Reachable only from the
+  # platform (internal network, token), accepts only catalog lab ids, publishes nothing.
+  lab-runner:
+    image: bastion:local
+    command: ["--disable-warning=ExperimentalWarning", "dist/labs/runner/main.js"]
+    environment:
+      PORT: "4000" # the image defaults to the platform's 3000
+      # Only its own secret, not the platform's whole .env.
+      LAB_RUNNER_TOKEN: "${LAB_RUNNER_TOKEN:?LAB_RUNNER_TOKEN is missing from .env, run gen-secrets}"
+      LAB_GATEWAY_CONTAINER: bastion-lab-gateway
+      # LAB_RUNTIME: runsc   # gVisor, if installed on the host: a much stronger lab sandbox
+    # The socket is root:root 0660 on Docker Desktop and most engines. Root here adds
+    # nothing to what the socket already grants, and the container stays read-only and cap-less.
+    user: "0:0"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks: [lab-control]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 64
+    mem_limit: 128m
+    cpus: 0.5
+    healthcheck:
+      test: ["CMD", "/nodejs/bin/node", "-e", "fetch('http://127.0.0.1:4000/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 3s
+    restart: unless-stopped
+
+  # The only published entry to the labs. No secret, no Docker access.
+  lab-gateway:
+    image: bastion:local
+    container_name: bastion-lab-gateway # fixed: the runner attaches it to each instance network
+    command: ["--disable-warning=ExperimentalWarning", "dist/labs/gateway/main.js"]
+    environment:
+      PORT: "8088"
+    ports:
+      - "127.0.0.1:8088:8088"
+    networks: [lab-edge]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 64
+    mem_limit: 128m
+    cpus: 0.5
+    healthcheck:
+      test: ["CMD", "/nodejs/bin/node", "-e", "fetch('http://127.0.0.1:8088/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 3s
+    restart: unless-stopped
+
+  # Lab images, built only: `docker compose --profile labs build`. The runner starts
+  # them, one per learner, with the hardening of src/labs/runner/spec.ts.
+  lab-sqli-login:
+    build: { context: labs, args: { LAB: sqli-login } }
+    image: bastion-lab-sqli-login:local
+    profiles: [labs]
+  lab-idor-invoices:
+    build: { context: labs, args: { LAB: idor-invoices } }
+    image: bastion-lab-idor-invoices:local
+    profiles: [labs]
+  lab-mass-assignment:
+    build: { context: labs, args: { LAB: mass-assignment } }
+    image: bastion-lab-mass-assignment:local
+    profiles: [labs]
+
+networks:
+  # Platform ↔ runner only. No route out, nothing else joins it.
+  lab-control:
+    internal: true
+  # Lets the gateway publish 127.0.0.1:8088. Lab instances never join it.
+  lab-edge: {}
 
 volumes:
   bastion-data:

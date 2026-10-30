@@ -15,6 +15,7 @@ import { AuthService } from './services/auth-service.js';
 import { ChallengeService } from './services/challenge-service.js';
 import { LearningService } from './services/learning-service.js';
 import { MfaService } from './services/mfa-service.js';
+import { httpLabRunner, LabService, type LabRunnerClient } from './services/lab-service.js';
 import { NoteService } from './services/note-service.js';
 
 export interface AppOptions {
@@ -25,15 +26,25 @@ export interface AppOptions {
   /** Overridable so tests can serve a fixture front-end. */
   web?: { publicDir?: string; jsDir?: string };
   /** Overridable so tests can exercise the limiter without waiting 15 minutes. */
-  rateLimits?: { global: number; auth: number; refresh: number; quiz: number };
+  rateLimits?: { global: number; auth: number; refresh: number; quiz: number; lab?: number };
+  /** Overridable so tests run without Docker. Default: the configured runner, or labs off. */
+  labRunner?: LabRunnerClient;
 }
 
 export interface App {
   app: Express;
-  services: { auth: AuthService; notes: NoteService; learning: LearningService; challenges: ChallengeService; mfa: MfaService; audit: AuditLog };
+  services: {
+    auth: AuthService;
+    notes: NoteService;
+    learning: LearningService;
+    challenges: ChallengeService;
+    labs: LabService;
+    mfa: MfaService;
+    audit: AuditLog;
+  };
 }
 
-export function createApp({ config, db, logger, curriculum, rateLimits, web }: AppOptions): App {
+export function createApp({ config, db, logger, curriculum, rateLimits, web, labRunner }: AppOptions): App {
   const limits = rateLimits ?? {
     global: config.RATE_LIMIT_GLOBAL,
     auth: config.RATE_LIMIT_AUTH,
@@ -54,6 +65,9 @@ export function createApp({ config, db, logger, curriculum, rateLimits, web }: A
   const notes = new NoteService(db, ring, audit);
   const learning = new LearningService(db, curriculum, audit);
   const challenges = new ChallengeService(db, curriculum, learning, audit, config.FLAG_HMAC_KEY);
+  const runner =
+    labRunner ?? (config.LAB_RUNNER_URL && config.LAB_RUNNER_TOKEN ? httpLabRunner(config.LAB_RUNNER_URL, config.LAB_RUNNER_TOKEN) : undefined);
+  const labs = new LabService(db, curriculum, challenges, learning, audit, runner, config.LAB_TTL_SECONDS, config.LAB_GATEWAY_PORT);
 
   const app = express();
 
@@ -121,15 +135,16 @@ export function createApp({ config, db, logger, curriculum, rateLimits, web }: A
       notes,
       learning,
       challenges,
+      labs,
       mfa,
       audit,
       signer,
-      rateLimits: { auth: limits.auth, refresh: limits.refresh, quiz: limits.quiz },
+      rateLimits: { auth: limits.auth, refresh: limits.refresh, quiz: limits.quiz, lab: rateLimits?.lab ?? config.RATE_LIMIT_LAB },
       refreshTtlSeconds: config.REFRESH_TOKEN_TTL_SECONDS,
     }));
 
   app.use(notFoundHandler);
   app.use(errorHandler(logger));
 
-  return { app, services: { auth, notes, learning, challenges, mfa, audit } };
+  return { app, services: { auth, notes, learning, challenges, labs, mfa, audit } };
 }

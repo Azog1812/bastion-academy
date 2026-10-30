@@ -107,6 +107,17 @@ Standards: **OWASP API Security Top 10 (2023)** and **OWASP ASVS 4.0.3** (Level 
 | 14.4.7 | Anti-framing | CSP `frame-ancestors` + `X-Frame-Options: DENY` |
 | 14.5.2 | Origin header not used for access control | Access control relies on bearer tokens. Only the three browser-session routes read a cookie; there the `Origin` check is an extra CSRF barrier on top of `SameSite=Strict` and JSON-only bodies, never the sole control |
 
+## Labs (v5, ADR 0009) — container isolation
+
+| Control | Implementation | Evidence |
+|---|---|---|
+| Least privilege for the Docker API (CIS Docker 5.31: do not mount the socket into containers) | Only the lab runner mounts it; platform and gateway never do. The runner accepts closed lab ids only, behind an internal network and a token | `docker-compose.yml`, `lab-runner.test.ts` |
+| Non-root, read-only, no capabilities, no-new-privileges (CIS Docker 5.3, 5.12, 5.25, 4.1) | `src/labs/runner/spec.ts`, asserted field by field | `lab-runner.test.ts` › container spec |
+| Resource limits (CIS Docker 5.10, 5.11, 5.28) | 128 MiB without swap, 0.5 CPU, 64 PIDs, 1024 open files | same |
+| Network segmentation, no egress (NIST SP 800-190 §4.4) | One `internal` bridge per instance, gateway as the only peer, nothing published | same; checked live |
+| Ephemeral workloads | TTL enforced by the platform and independently by the runner (container labels) | `labs.test.ts` › reaper, `lab-runner.test.ts` › reaper |
+| Origin isolation for untrusted web content | Each lab served from `l<id>.lab.localhost`, never the platform origin | ADR 0009 |
+
 ## CIS / NSA Kubernetes hardening highlights
 
 Pod Security Standard **restricted** enforced on the namespace · `runAsNonRoot`,

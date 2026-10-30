@@ -4,7 +4,8 @@ import security from 'eslint-plugin-security';
 import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
-  { ignores: ['dist/', 'coverage/', 'node_modules/', 'src/security/common-passwords.ts', 'web/public/'] },
+  // labs/ holds intentionally vulnerable lab apps (ADR 0009): out of the platform's lint scope by design.
+  { ignores: ['dist/', 'coverage/', 'node_modules/', 'src/security/common-passwords.ts', 'web/public/', 'labs/'] },
   js.configs.recommended,
   ...tseslint.configs.strictTypeChecked,
   security.configs.recommended,

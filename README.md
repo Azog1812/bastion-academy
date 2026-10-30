@@ -35,7 +35,7 @@ from first principles up to the level expected by major industry certifications.
 |---|---|---|
 | **v3: foundations** | Learning paths → modules → lessons, progress tracking, web front-end, built on Bastion's auth core | ✅ API, web UI, levels 1 to 3 shipped; levels 4 to 6 to come |
 | **v4: challenges** | Per-user HMAC flags (unshareable), scoreboard, anti-cheat, TOTP MFA | ✅ Shipped: 11 challenges (levels 1 to 3), opt-in scoreboard, TOTP + recovery codes |
-| **v5: isolated labs** | One vulnerable container per learner: no egress, TTL, sandboxed runtime, quotas | Planned |
+| **v5: isolated labs** | One vulnerable container per learner: no egress, TTL, sandboxed runtime, quotas | ✅ Shipped: 3 labs (SQL injection, IDOR, mass assignment), lab runner + gateway, optional gVisor |
 | **v6: advanced** | Blue-team labs (log analysis, detection), AI tutor, observability | Planned |
 
 The platform is designed to **run locally** (`git clone` + Docker). There is no public
@@ -77,6 +77,33 @@ Puzzles are generated per learner from an HMAC seed (nothing stored), decoys sha
 flag's format, and each generator has a test that solves it the way the brief says
 ([`challenge-generators.test.ts`](test/unit/challenge-generators.test.ts)).
 
+**3 live labs** ([ADR 0009](docs/adr/0009-isolated-labs.md)): a real, intentionally vulnerable
+service started for one learner, holding that learner's flag, reachable only from their machine.
+
+| Lab | Level | Attack |
+|---|---|---|
+| Les factures des autres | 1 | IDOR / BOLA on an invoicing API |
+| Entrer sans mot de passe | 2 | SQL injection on a login form (verbose errors as the first clue) |
+| Promu administrateur | 2 | Mass assignment on sign-up (`"role": "admin"`) |
+
+The lab is vulnerable, the box around it is not:
+
+```
+browser ─► bastion :3000 ──(internal network, token)──► lab-runner ── Docker socket
+browser ─► lab-gateway :8088 ──(one internal network per lab)──► lab container
+```
+
+- **Only the lab runner touches Docker** (root-equivalent): unreachable except from the
+  platform, token-protected, and it never takes an image, mount or option from a request.
+- **Each lab** runs non-root, read-only, with no capabilities, capped memory/CPU/PIDs,
+  no published port, on its **own network with no route out**: no tool download, no
+  reverse shell, no neighbour. Optional **gVisor** (`LAB_RUNTIME=runsc`).
+- **Each lab has its own origin** (`l<id>.lab.localhost`): a lab's XSS cannot touch the
+  platform session.
+- One lab per learner, a TTL enforced by both the platform and the runner, starts
+  rate-limited. Isolation was checked live: from a lab, the Internet, the runner and the
+  platform are all unreachable.
+
 **Start learning** (Node ≥ 22.13):
 
 ```bash
@@ -86,8 +113,14 @@ node dist/cli.js gen-secrets > .env
 set -a && . ./.env && set +a && NODE_ENV=development npm start
 ```
 
-Then open **http://localhost:3000**, create an account and follow the path. With Docker, generate
-`.env` as above, then run `docker compose up --build`.
+Then open **http://localhost:3000**, create an account and follow the path.
+
+**With the labs** (Docker required), generate `.env` as above, then:
+
+```bash
+docker compose --profile labs build   # lab images, once
+docker compose up --build             # platform + lab runner + lab gateway, all on 127.0.0.1
+```
 
 | Endpoint | Purpose |
 |---|---|
@@ -192,6 +225,8 @@ flowchart LR
 | JWT attacks (`alg:none`, alg confusion, tampering, replay) | Algorithm allow-list, `iss`/`aud`/`typ`/`exp` enforced, claims re-validated | [`tokens.test.ts`](test/unit/tokens.test.ts) |
 | Phished or reused password | Optional **TOTP MFA**: replay-proof codes (compare-and-set on the time step), single-use 5-attempt login challenge, encrypted seeds, hashed one-time recovery codes | [`mfa.test.ts`](test/security/mfa.test.ts), [`totp.test.ts`](test/unit/totp.test.ts) |
 | Flag sharing, scoreboard cheating | **Per-learner HMAC flags**, constant-time check, per-account rate limit, shared flags attributed in the audit log | [`challenges.test.ts`](test/security/challenges.test.ts) |
+| Escaping a lab (to the host, the platform, other labs, the Internet) | Hardened container, **per-instance internal network**, gateway as the only peer, Docker socket held by the runner only, closed lab catalog | [`lab-runner.test.ts`](test/unit/lab-runner.test.ts), [`labs.test.ts`](test/security/labs.test.ts) |
+| SSRF through the lab gateway | Upstream **built** from a 32-hex instance id, never read from the request | [`lab-runner.test.ts`](test/unit/lab-runner.test.ts) |
 | Stolen refresh token | Single-use **rotation with reuse detection**: replay kills the whole session family (RFC 9700) | [`authentication.test.ts`](test/security/authentication.test.ts) |
 | Race conditions (TOCTOU) on refresh & lockout | Token claimed atomically before any `await`; `UPDATE … RETURNING` counters | parallel-request tests |
 | "Stateless" JWT that can't be revoked | `token_version` + role checked on every request → instant logout-everywhere and demotion | [`authorization.test.ts`](test/security/authorization.test.ts) |
@@ -206,7 +241,7 @@ generic errors with correlation ids · secret redaction in logs · secrets read 
 files rather than env vars · socket timeouts · privileged operations only via an
 operator CLI, never over HTTP.
 
-**196 tests, ~99 % line coverage** — most of them are *abuse cases*, not happy paths.
+**232 tests, ~99 % line coverage** — most of them are *abuse cases*, not happy paths.
 
 ### Supply chain & infrastructure
 
@@ -270,6 +305,7 @@ src/
                        learning (progress, server-side gating) · mfa ·
                        challenges (per-learner flags, scoreboard)
   challenges/          closed set of challenge artifact generators
+  labs/                lab catalog · runner (the only Docker client) · gateway (per-lab origin)
   curriculum/          loads and validates content/ at boot (fail closed)
   http/                middleware (authn, RBAC, errors) · strict schemas · routes
   audit.ts             HMAC-chained, append-only audit trail
@@ -277,7 +313,9 @@ src/
 test/
   unit/                crypto, tokens, config, audit chain
   security/            authentication, authorization/IDOR, injection & transport, learning,
-                       MFA, challenges & scoreboard
+                       MFA, challenges & scoreboard, labs
+  labs/                each lab is exploitable as intended, and only that way
+labs/                  intentionally vulnerable lab apps (excluded from lint/SAST on purpose)
 content/               curriculum as code: levels, paths, quizzes, challenges (JSON), lessons (Markdown)
 web/                   front-end: plain TypeScript, no dependency, Markdown → DOM, Trusted Types
 deploy/k8s/            hardened manifests (PSS restricted, NetworkPolicy, secrets as files)

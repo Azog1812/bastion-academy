@@ -10,7 +10,7 @@ import { z } from 'zod';
 
 const PLACEHOLDER = /change[-_ ]?me|example|secret|password|xxxx/i;
 
-const base64Key = (minBytes: number) =>
+export const base64Key = (minBytes: number) =>
   z
     .string()
     .refine((v) => !PLACEHOLDER.test(v), 'looks like a placeholder value')
@@ -80,11 +80,27 @@ const schema = z
     /** Issuer shown in authenticator apps next to the account name. */
     MFA_ISSUER: z.string().min(1).max(40).default('Bastion Academy'),
     MAX_FAILED_LOGINS: z.coerce.number().int().min(3).max(20).default(5),
+
+    /**
+     * Labs (ADR 0009). Off unless a runner is configured: the platform itself never
+     * talks to Docker, it asks the lab runner, the only component with that power.
+     */
+    LAB_RUNNER_URL: z.url({ protocol: /^https?$/ }).optional(),
+    LAB_RUNNER_TOKEN: base64Key(32).optional(),
+    /** A lab instance is destroyed after this, whatever happens (also enforced by the runner). */
+    LAB_TTL_SECONDS: z.coerce.number().int().min(300).max(14_400).default(7200),
+    /** Port of the lab gateway on 127.0.0.1, used to build each lab's URL. */
+    LAB_GATEWAY_PORT: z.coerce.number().int().min(1).max(65535).default(8088),
+    /** Lab starts per account per 15 minutes: each start creates containers and networks. */
+    RATE_LIMIT_LAB: z.coerce.number().int().min(1).default(10),
     LOCKOUT_SECONDS: z.coerce.number().int().min(60).max(86_400).default(900),
   })
   .superRefine((cfg, ctx) => {
     if (!cfg.ENCRYPTION_KEYS.has(cfg.ACTIVE_KEY_ID)) {
       ctx.addIssue({ code: 'custom', path: ['ACTIVE_KEY_ID'], message: 'must reference a key in ENCRYPTION_KEYS' });
+    }
+    if (cfg.LAB_RUNNER_URL !== undefined && !cfg.LAB_RUNNER_TOKEN) {
+      ctx.addIssue({ code: 'custom', path: ['LAB_RUNNER_TOKEN'], message: 'is required when LAB_RUNNER_URL is set' });
     }
     if (cfg.NODE_ENV === 'production' && cfg.SCRYPT_LOG_N < 17) {
       ctx.addIssue({ code: 'custom', path: ['SCRYPT_LOG_N'], message: 'must be >= 17 in production' });
@@ -93,7 +109,7 @@ const schema = z
 
 export type Config = Readonly<z.output<typeof schema>>;
 
-const FILE_SECRETS = ['JWT_SECRET', 'AUDIT_HMAC_KEY', 'FLAG_HMAC_KEY', 'ENCRYPTION_KEYS'] as const;
+const FILE_SECRETS = ['JWT_SECRET', 'AUDIT_HMAC_KEY', 'FLAG_HMAC_KEY', 'ENCRYPTION_KEYS', 'LAB_RUNNER_TOKEN'] as const;
 
 /**
  * Secrets can be provided as files (`JWT_SECRET_FILE=/run/secrets/jwt`), the
@@ -101,9 +117,13 @@ const FILE_SECRETS = ['JWT_SECRET', 'AUDIT_HMAC_KEY', 'FLAG_HMAC_KEY', 'ENCRYPTI
  * variables, which leak through /proc/<pid>/environ, crash dumps, child
  * processes and debug endpoints.
  */
-function resolveFileSecrets(env: NodeJS.ProcessEnv, read: (path: string) => string): NodeJS.ProcessEnv {
+export function resolveFileSecrets(
+  env: NodeJS.ProcessEnv,
+  read: (path: string) => string,
+  names: readonly string[] = FILE_SECRETS,
+): NodeJS.ProcessEnv {
   const out = { ...env };
-  for (const name of FILE_SECRETS) {
+  for (const name of names) {
     const path = env[`${name}_FILE`];
     if (!path) continue;
     if (env[name]) throw new Error(`Invalid configuration, refusing to start:\n  - ${name}: set either ${name} or ${name}_FILE, not both`);
