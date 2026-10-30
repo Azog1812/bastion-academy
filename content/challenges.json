@@ -183,6 +183,14 @@
       "points": 250,
       "detection": "ssh-bruteforce",
       "brief": "Voici une journée de journaux `sshd` d'un serveur exposé à Internet. Des attaquants essaient des mots de passe : certains très vite, et un plus patient, qui espace ses essais pour passer sous les seuils.\n\nPièges : le serveur de rebond se connecte sans cesse (avec succès), la supervision sonde le port sans jamais essayer de mot de passe, et une utilisatrice a oublié son mot de passe et s'y est reprise plusieurs fois.\n\nUnité de détection : l'**adresse source** (`src_ip`). Le choix de la fenêtre et du seuil de `threshold` est toute la difficulté.\n\nÉcris ta règle dans l'éditeur ci-dessous (format JSON, voir la leçon « Écrire une règle de détection »), puis évalue-la. Le serveur te dit combien d'attaques elle détecte, combien elle en **manque**, et combien de **fausses alertes** elle lève, avec quelques exemples. Le défi est réussi avec **toutes** les attaques et **zéro** fausse alerte."
+    },
+    {
+      "id": "lab-chaine-portail-rh",
+      "title": "Lab : trois failles, une chaîne",
+      "moduleId": "exploitation-enchainee",
+      "points": 400,
+      "lab": "chained-intranet",
+      "brief": "Démarre ton lab : le **portail RH** d'une entreprise. Un compte invité (`invite` / `invite`) donne un jeton de lecteur ; le rapport `/api/admin/rapport` exige le rôle `admin`. Le flag est dans ce rapport.\n\nIci, **aucune faille ne suffit seule**. La vérification des jetons est correcte : l'algorithme est imposé (`alg: none` est refusé), et modifier le contenu d'un jeton casse sa signature. Il faut une **chaîne**, comme dans un vrai test d'intrusion :\n\n1. **Reconnaissance** : demande un document qui n'existe pas. Que t'apprend le message d'erreur sur l'arborescence du serveur ?\n2. **Traversée de répertoires** : le paramètre `nom` accepte `../`. La configuration de l'application est rangée à côté des documents, dans un dossier `config`. (Un filtre bloque `/proc` : il ne ferme qu'un raccourci, pas la faille.)\n3. **Secret de signature** : la configuration contient `JWT_SECRET`. Avec lui, tu peux signer un jeton toi-même, avec `\"role\": \"admin\"`.\n\n```bash\nb64url() { printf '%s' \"$1\" | base64 | tr -d '=' | tr '/+' '_-'; }\nH=$(b64url '{\"alg\":\"HS256\",\"typ\":\"JWT\"}'); P=$(b64url '{\"sub\":\"moi\",\"role\":\"admin\"}')\nS=$(printf '%s' \"$H.$P\" | openssl dgst -sha256 -hmac 'LE-SECRET' -binary | base64 | tr -d '=' | tr '/+' '_-')\ncurl -s http://ADRESSE-DU-LAB/api/admin/rapport -H \"authorization: Bearer $H.$P.$S\"\n```\n\nQuand c'est fait, écris le **constat** comme dans la leçon sur le rapport : la chaîne, chaque maillon, son impact, et le maillon le moins coûteux à casser. Dans Bastion, au moins trois maillons sont cassés : erreurs génériques, fichiers servis depuis une racine fixe, et secrets lus depuis des fichiers montés hors de toute arborescence servie."
     }
   ]
 }

