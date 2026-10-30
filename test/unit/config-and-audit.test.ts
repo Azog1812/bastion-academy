@@ -15,7 +15,9 @@ describe('configuration fails closed', () => {
   it.each([
     ['missing JWT secret', { JWT_SECRET: '' }, 'JWT_SECRET'],
     ['short JWT secret', { JWT_SECRET: randomBytes(16).toString('base64') }, 'at least 32 bytes'],
-    ['placeholder secret', { JWT_SECRET: 'change-me-change-me-change-me-change-me-12345' }, 'placeholder'],
+    ['typed placeholder', { JWT_SECRET: 'change-me-change-me-change-me-change-me-12345' }, 'standard base64'],
+    ['base64 of a repeated word', { JWT_SECRET: Buffer.from('secret'.repeat(8)).toString('base64') }, 'placeholder'],
+    ['all-zero key', { AUDIT_HMAC_KEY: Buffer.alloc(32).toString('base64') }, 'low-entropy'],
     ['16-byte AES key', { ENCRYPTION_KEYS: `k1:${randomBytes(16).toString('base64')}` }, 'exactly 32 bytes'],
     ['malformed key ring', { ENCRYPTION_KEYS: 'nokey' }, 'invalid key entry'],
     ['empty key ring', { ENCRYPTION_KEYS: ' , ' }, 'at least one'],
@@ -23,6 +25,18 @@ describe('configuration fails closed', () => {
     ['weak scrypt in production', { NODE_ENV: 'production' }, 'SCRYPT_LOG_N'],
   ])('refuses to start with a %s', (_name, override, message) => {
     expect(() => loadConfig(testEnv(override))).toThrow(message);
+  });
+
+  it('accepts any random key, even one whose base64 happens to spell a word (regression: CI failure)', () => {
+    const spell = (word: string) => {
+      const b64 = randomBytes(32).toString('base64');
+      return b64.slice(0, 4) + word + b64.slice(4 + word.length);
+    };
+    for (const word of ['xxxx', 'XxXx', 'secret', 'example', 'password', 'changeme']) {
+      expect(() => loadConfig(testEnv({ AUDIT_HMAC_KEY: spell(word), JWT_SECRET: spell(word) }))).not.toThrow();
+    }
+    // And the generator never produces a key the configuration refuses.
+    for (let i = 0; i < 2000; i++) expect(() => loadConfig(testEnv())).not.toThrow();
   });
 
   it('reads secrets from files (Docker / Kubernetes secrets convention)', () => {
