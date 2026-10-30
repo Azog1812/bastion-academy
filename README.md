@@ -43,14 +43,17 @@ hosted instance yet.
 
 ### What's available today
 
-The curriculum spans six levels, from **Fundamentals** to **Expert**. Two paths are
-available (in French, 17 lessons, 43 quiz questions):
+The curriculum spans six levels, from **Fundamentals** to **Expert**. Three paths are
+available (in French, 27 lessons, 73 quiz questions):
 
 - **Level 1, Fundamentals**: security basics, HTTP, sessions and JWT, then a
   *break it, then fix it* IDOR module.
 - **Level 2, Web and API security**: SQL injection (with a self-contained local
   mini-lab), XSS, CSRF, JWT attacks, mass assignment and function-level access
   control.
+- **Level 3, Systems and networks**: TCP/IP, DNS and TLS, legal port scanning, Linux
+  permissions and privilege escalation, container hardening, Windows accounts and
+  tokens, Kerberos and Active Directory attacks, network segmentation.
 
 Every *break it, then fix it* module ends in Bastion's own code: the learner
 attacks Bastion, then reads the exact lines, lint rules, Semgrep rules and tests
