@@ -12,7 +12,7 @@ Standards: **OWASP API Security Top 10 (2023)** and **OWASP ASVS 4.0.3** (Level 
 | API3 Broken Object Property Level Authorization | ✅ | Strict schemas reject unknown fields (no mass assignment); responses built explicitly, never from DB rows. Lessons are projected field by field so quiz answers never leave the server ([`learning.test.ts`](../test/security/learning.test.ts)) | [`schemas.ts`](../src/http/schemas.ts) |
 | API4 Unrestricted Resource Consumption | ✅ | Rate limits, 100 kB body cap, field size caps, pagination cap (100), password length capped before hashing, socket timeouts, container memory/PID limits | [`app.ts`](../src/app.ts), [`input-and-transport.test.ts`](../test/security/input-and-transport.test.ts) |
 | API5 Broken Function Level Authorization | ✅ | `requireRole('admin')` with role fetched from DB per request; no HTTP route grants privileges | [`middleware.ts`](../src/http/middleware.ts) |
-| API6 Unrestricted Access to Sensitive Business Flows | ✅ | Registration and login rate-limited per IP; quiz submissions rate-limited per account; lesson completion gated by server-side prerequisites | [`routes.ts`](../src/http/routes.ts) |
+| API6 Unrestricted Access to Sensitive Business Flows | ✅ | Registration and login rate-limited per IP; quiz and flag submissions rate-limited per account; lessons and challenges gated by server-side prerequisites; per-learner flags make sharing useless and visible | [`routes.ts`](../src/http/routes.ts) |
 | API7 Server Side Request Forgery | ✅ n/a | The API makes no outbound request; NetworkPolicy denies all egress | [`networkpolicy.yaml`](../deploy/k8s/networkpolicy.yaml) |
 | API8 Security Misconfiguration | ✅ | Fail-closed config, strict headers, no `x-powered-by`, generic errors, hardened container and pod. Web pages: CSP without inline code plus Trusted Types, no CORS at all ([`web.ts`](../src/http/web.ts)) | [`config.ts`](../src/config.ts), [`deployment.yaml`](../deploy/k8s/deployment.yaml) |
 | API9 Improper Inventory Management | ✅ | Versioned API (`/v1`), OpenAPI spec kept in repo and exercised by DAST | [`openapi.yaml`](openapi.yaml) |
@@ -32,6 +32,14 @@ Standards: **OWASP API Security Top 10 (2023)** and **OWASP ASVS 4.0.3** (Level 
 | 2.4.1 | Passwords stored with an approved, salted, memory-hard KDF | scrypt N=2¹⁷ r=8 p=1, 16-byte salt |
 | 2.4.2 | Unique salt ≥ 32 bits | 128-bit random salt per hash |
 | 2.5.2 | No password hints / knowledge questions | None exist |
+| 2.5.6 | Re-authentication before sensitive changes | Password required to set up or remove MFA; removal also needs a valid code |
+| 2.7.x | Out-of-band verifiers | Not used (no SMS/e-mail codes): TOTP only, see ADR 0008 |
+| 2.8.1 | Time-based OTPs have a defined lifetime | 30-s step, ±1 step drift accepted |
+| 2.8.3 | Approved algorithms for OTP | HOTP/TOTP RFC 4226/6238, HMAC-SHA1 (keyed; SHA-1 collisions do not apply), checked against RFC test vectors |
+| 2.8.4 | A time-based OTP can be used only once in its validity period | Last accepted step stored, compare-and-set update |
+| 2.8.5 | Reuse of an OTP is logged and refused | Refused; failures audited as `auth.mfa:failure` and fed to the lockout |
+| 2.8.7 | OTP seeds protected | Sealed with AES-256-GCM under the KEK ring, AAD-bound to the user; re-sealed on key rotation |
+| 2.5.x / 2.6.x | Recovery codes | 10 × 80-bit, shown once, stored hashed, single use, each use audited |
 
 ### V3 Session management
 | ID | Requirement (summary) | How |
@@ -72,7 +80,8 @@ Standards: **OWASP API Security Top 10 (2023)** and **OWASP ASVS 4.0.3** (Level 
 | 6.2.6 | Nonces unique | 96-bit random IV per encryption, fresh DEK per record |
 | 6.3.1 | CSPRNG for random values | `crypto.randomBytes` / `randomUUID`; Semgrep bans `Math.random` |
 | 6.4.1 | Key management, keys isolated from data | KEKs in secret store, never in DB |
-| 6.4.2 | Key rotation without re-encrypting data | `rotate-keys` re-wraps DEKs |
+| 6.4.2 | Key rotation without re-encrypting data | `rotate-keys` re-wraps DEKs and re-seals TOTP seeds |
+| 6.4.x | Key separation | One key per purpose: JWT, audit chain, flags, KEK ring; HMAC inputs domain-separated (`bastion:<purpose>:v1:`) |
 
 ### V7 Errors and logging
 | ID | Requirement (summary) | How |

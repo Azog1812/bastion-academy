@@ -67,14 +67,29 @@ export async function api<T>(method: string, path: string, body?: unknown): Prom
   }
 }
 
-export async function login(email: string, password: string): Promise<void> {
-  const r = await call<{ accessToken: string }>('POST', '/v1/session/login', { email, password }, false);
+/** Either logged in, or the password was right and a second factor is needed. */
+export type LoginStep = { done: true } | { done: false; mfaToken: string };
+
+export async function login(email: string, password: string): Promise<LoginStep> {
+  const r = await call<{ accessToken?: string; mfaRequired?: boolean; mfaToken?: string }>(
+    'POST',
+    '/v1/session/login',
+    { email, password },
+    false,
+  );
+  if (r.mfaRequired && r.mfaToken) return { done: false, mfaToken: r.mfaToken };
+  accessToken = r.accessToken ?? null;
+  return { done: true };
+}
+
+export async function completeMfa(mfaToken: string, code: string): Promise<void> {
+  const r = await call<{ accessToken: string }>('POST', '/v1/session/mfa', { mfaToken, code }, false);
   accessToken = r.accessToken;
 }
 
-export async function register(email: string, password: string): Promise<void> {
+export async function register(email: string, password: string): Promise<LoginStep> {
   await call('POST', '/v1/auth/register', { email, password }, false);
-  await login(email, password);
+  return login(email, password);
 }
 
 export async function logout(): Promise<void> {
@@ -124,3 +139,32 @@ export interface Lesson {
 }
 
 export type Completion = { passed: true; completedAt: string; alreadyCompleted: boolean } | { passed: false; incorrect: string[] };
+
+export interface Me {
+  id: string;
+  role: 'user' | 'admin';
+  displayName: string | null;
+  mfaEnabled: boolean;
+}
+
+export interface ChallengeSummary {
+  id: string;
+  title: string;
+  moduleId: string;
+  points: number;
+  unlocked: boolean;
+  solved: boolean;
+  solvedAt: string | null;
+}
+
+export interface Challenge extends ChallengeSummary {
+  brief: string;
+  artifact: Record<string, string>;
+}
+
+export type Submission = { correct: true; points: number; alreadySolved: boolean } | { correct: false };
+
+export interface Scoreboard {
+  entries: { rank: number; displayName: string; score: number }[];
+  me: { score: number; rank: number | null; displayName: string | null };
+}
