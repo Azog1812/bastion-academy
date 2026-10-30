@@ -185,7 +185,7 @@ generic errors with correlation ids · secret redaction in logs · secrets read 
 files rather than env vars · socket timeouts · privileged operations only via an
 operator CLI, never over HTTP.
 
-**184 tests, ~94 % line coverage** — most of them are *abuse cases*, not happy paths.
+**184 tests, ~99 % line coverage** — most of them are *abuse cases*, not happy paths.
 
 ### Supply chain & infrastructure
 
