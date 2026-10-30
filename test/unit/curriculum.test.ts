@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -96,5 +96,13 @@ describe('curriculum validation (fail closed at startup)', () => {
     const c = loadCurriculum();
     expect(c.lessons.size).toBeGreaterThan(0);
     expect(c.paths[0]?.level).toBe(1);
+  });
+
+  it('every shipped path directory is listed in index.json (a path left out would be silently invisible)', () => {
+    const dirs = readdirSync('content', { withFileTypes: true })
+      .filter((d) => d.isDirectory() && existsSync(join('content', d.name, 'path.json')))
+      .map((d) => d.name);
+    expect(dirs.length).toBeGreaterThan(0);
+    expect(new Set(loadCurriculum().paths.map((p) => p.id))).toEqual(new Set(dirs));
   });
 });
