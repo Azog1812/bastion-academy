@@ -1,0 +1,28 @@
+<!--
+  The SSH challenge leaves out Wazuh's stock correlation rules: writing one is the
+  exercise. For the replay, they keep their place in the tree but can never fire.
+-->
+<group name="syslog,sshd,">
+  <rule id="5712" level="10" frequency="9999" timeframe="1" overwrite="yes">
+    <if_matched_sid>5710</if_matched_sid>
+    <same_source_ip />
+    <description>sshd: brute force (disabled for the replay)</description>
+  </rule>
+  <rule id="5720" level="10" frequency="9999" timeframe="1" overwrite="yes">
+    <if_matched_sid>5716</if_matched_sid>
+    <same_source_ip />
+    <description>sshd: Multiple authentication failures (disabled for the replay)</description>
+  </rule>
+  <rule id="5763" level="10" frequency="9999" timeframe="1" overwrite="yes">
+    <if_matched_sid>5760</if_matched_sid>
+    <same_source_ip />
+    <description>sshd: brute force (disabled for the replay)</description>
+  </rule>
+</group>
+<group name="authentication_failures,">
+  <rule id="40111" level="10" frequency="9999" timeframe="1" overwrite="yes">
+    <if_matched_group>authentication_failed</if_matched_group>
+    <same_source_ip />
+    <description>Multiple authentication failures (disabled for the replay)</description>
+  </rule>
+</group>

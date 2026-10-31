@@ -10,9 +10,9 @@ import type { Dataset, DetectionEvent, FieldValue } from './engine.js';
 export const DATASET_KINDS = ['web-sqli', 'auth-spray', 'process-lolbins', 'ssh-bruteforce', 'kerberoasting'] as const;
 export type DatasetKind = (typeof DATASET_KINDS)[number];
 
-const T0 = 1_768_200_000; // 2026-01-12, 06:40 UTC
+export const T0 = 1_768_200_000; // 2026-01-12, 06:40 UTC
 
-function rng(seed: Buffer, label: string) {
+export function rng(seed: Buffer, label: string) {
   let i = 0;
   const int = (n: number) => createHmac('sha256', seed).update(`${label}:${String(i++)}`).digest().readUInt32BE(0) % n;
   return {

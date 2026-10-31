@@ -472,7 +472,9 @@ paths:
       description: |
         Scores a rule against the learner's own labelled dataset (ADR 0010). Solved at 100 % recall
         and 100 % precision. Rule keys must be dataset fields, optionally with |contains, |startswith,
-        |endswith, |gte or |lte; no regular expressions. Rate-limited per account.
+        |endswith, |gte or |lte; no regular expressions. Wazuh challenges (ADR 0014) take instead the
+        XML text of local rules (a subset of Wazuh's syntax, no DTD or entities, OS_Match only); each
+        challenge accepts only its own format. Rate-limited per account.
       requestBody:
         required: true
         content:
@@ -483,18 +485,25 @@ paths:
               required: [rule]
               properties:
                 rule:
-                  type: object
-                  properties:
-                    match: { description: "A block {field|modifier: value | [values]} or a list of blocks (OR)" }
-                    exclude: { description: Same shape as match }
-                    threshold:
-                      type: object
-                      additionalProperties: false
+                  oneOf:
+                    - type: object
+                      description: JSON detection challenges (ADR 0010)
                       properties:
-                        groupBy: { type: string }
-                        distinct: { type: string }
-                        min: { type: integer, minimum: 2, maximum: 1000 }
-                        windowSeconds: { type: integer, minimum: 1, maximum: 86400 }
+                        match: { description: "A block {field|modifier: value | [values]} or a list of blocks (OR)" }
+                        exclude: { description: Same shape as match }
+                        threshold:
+                          type: object
+                          additionalProperties: false
+                          properties:
+                            groupBy: { type: string }
+                            distinct: { type: string }
+                            min: { type: integer, minimum: 2, maximum: 1000 }
+                            windowSeconds: { type: integer, minimum: 1, maximum: 86400 }
+                    - type: string
+                      minLength: 1
+                      maxLength: 8000
+                      description: Wazuh challenges (ADR 0014), the XML of local rules
+                      example: '<group name="local,"><rule id="100100" level="10"><if_sid>5716</if_sid><description>x</description></rule></group>'
       responses:
         "200":
           description: Scored

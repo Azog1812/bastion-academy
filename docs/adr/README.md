@@ -18,3 +18,4 @@ Format: context → decision → consequences.
 | [0011](0011-observability.md) | Observability: Prometheus metrics on a separate authenticated listener, closed-set labels, unit-tested alerts |
 | [0012](0012-optional-modules.md) | Optional modules chosen per learner, enforced server-side, never blocking the mandatory path |
 | [0013](0013-shared-environments.md) | Shared environments: a real Wazuh installed once, started and stopped from the UI through the lab runner |
+| [0014](0014-wazuh-rule-challenges.md) | Wazuh rule challenges: learner XML read by a closed parser (no DTD, no entities), OS_Match only, Wazuh's rule tree |

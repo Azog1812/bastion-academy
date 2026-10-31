@@ -2,10 +2,12 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 import type { AuditLog } from '../audit.js';
 import { buildArtifact } from '../challenges/generators.js';
 import { buildDataset, toJsonLines, type DatasetKind } from '../detection/datasets.js';
-import { ruleSchema, score, type Dataset } from '../detection/engine.js';
+import { ruleSchema, score, type Dataset, type Score } from '../detection/engine.js';
+import { scoreWazuh, WazuhRuleError, type WazuhDataset } from '../detection/wazuh.js';
+import { BASTION_BASE_RULE, buildWazuhDataset, toAlertLines, type WazuhDatasetKind } from '../detection/wazuh-datasets.js';
 import type { Challenge, Curriculum } from '../curriculum/catalog.js';
 import type { Database } from '../db.js';
-import { forbidden, notFound } from '../errors.js';
+import { badRequest, forbidden, notFound } from '../errors.js';
 import type { LearningService } from './learning-service.js';
 
 /** Points per validated lesson, so learners who only read still show up on the scoreboard. */
@@ -102,9 +104,16 @@ export class ChallengeService {
           ? buildArtifact(c.kind, this.flagFor(userId, c.id), this.mac('artifact', c.id, userId))
           : c.detection !== undefined
             ? { events: toJsonLines(this.dataset(userId, c.id, c.detection)) }
-            : {},
+            : c.wazuh !== undefined
+              ? this.wazuhArtifact(this.wazuhDataset(userId, c.id, c.wazuh))
+              : {},
       lab: c.lab ?? null,
-      detection: c.detection === undefined ? null : this.detectionInfo(this.dataset(userId, c.id, c.detection)),
+      detection:
+        c.detection !== undefined
+          ? this.detectionInfo(this.dataset(userId, c.id, c.detection))
+          : c.wazuh !== undefined
+            ? this.wazuhInfo(this.wazuhDataset(userId, c.id, c.wazuh))
+            : null,
       solved: at !== undefined,
       solvedAt: at === undefined ? null : new Date(at).toISOString(),
     };
@@ -139,7 +148,27 @@ export class ChallengeService {
   }
 
   private detectionInfo(d: Dataset) {
-    return { fields: d.fields, unit: d.unit, entityField: d.entityField ?? null, events: d.events.length };
+    return { format: 'json' as const, fields: d.fields, unit: d.unit, entityField: d.entityField ?? null, events: d.events.length, minLevel: null };
+  }
+
+  private wazuhDataset(userId: string, challengeId: string, kind: WazuhDatasetKind): WazuhDataset {
+    return buildWazuhDataset(kind, this.mac('dataset', challengeId, userId));
+  }
+
+  private wazuhInfo(d: WazuhDataset) {
+    return { format: 'wazuh' as const, fields: d.fields, unit: d.unit, entityField: d.entityField ?? null, events: d.events.length, minLevel: d.minLevel };
+  }
+
+  /** The alerts, the stock rules they reached (a learner rule must refine one), and the brief's base rule if any. */
+  private wazuhArtifact(d: WazuhDataset): Record<string, string> {
+    const stock = d.stock
+      .map((r) => `${String(r.id)} (niveau ${String(r.level)}${r.parent === undefined ? '' : `, enfant de ${String(r.parent)}`}) ${r.description} · groupes : ${r.groups.join(', ')}`)
+      .join('\n');
+    return {
+      'alerts.json': toAlertLines(d),
+      'Règles déjà en place': stock,
+      ...(d.decoder === 'json' ? { 'Règle de base (fournie)': BASTION_BASE_RULE } : {}),
+    };
   }
 
   /**
@@ -150,10 +179,23 @@ export class ChallengeService {
    */
   detect(userId: string, challengeId: string, rawRule: unknown, ip: string | null) {
     const c = this.challenge(challengeId);
-    if (c.detection === undefined) throw notFound('This challenge takes a flag, not a detection rule');
+    if (c.detection === undefined && c.wazuh === undefined) throw notFound('This challenge takes a flag, not a detection rule');
     this.assertUnlocked(userId, c, ip);
-    const dataset = this.dataset(userId, c.id, c.detection);
-    const result = score(ruleSchema(dataset.fields).parse(rawRule), dataset);
+    let result: Score;
+    if (c.wazuh !== undefined) {
+      // Wazuh challenges take the XML text of local rules (ADR 0014), parsed by a closed reader.
+      if (typeof rawRule !== 'string') throw badRequest('This challenge takes Wazuh XML rules, as text');
+      try {
+        result = scoreWazuh(rawRule, this.wazuhDataset(userId, c.id, c.wazuh));
+      } catch (err) {
+        if (err instanceof WazuhRuleError) throw badRequest(err.message);
+        throw err;
+      }
+    } else {
+      if (typeof rawRule !== 'object' || rawRule === null || Array.isArray(rawRule)) throw badRequest('This challenge takes a JSON detection rule');
+      const dataset = this.dataset(userId, c.id, c.detection ?? 'web-sqli');
+      result = score(ruleSchema(dataset.fields).parse(rawRule), dataset);
+    }
 
     if (!result.perfect) {
       this.audit.record({ action: 'challenge.submit', outcome: 'failure', actorId: userId, target: c.id, ip, details: { detected: result.detected, falsePositives: result.falsePositives } });

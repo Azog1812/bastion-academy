@@ -127,6 +127,8 @@ Standards: **OWASP API Security Top 10 (2023)** and **OWASP ASVS 4.0.3** (Level 
 | Input validation with an allow-list (ASVS 5.1.3, 5.1.4) | Rule keys must be fields of the dataset plus a known modifier; strict schema, bounded sizes | same |
 | Prototype pollution (ASVS 5.5.x) | Field allow-list, `Object.hasOwn` reads, no merge of learner objects | same |
 | Anti-automation (ASVS 11.1.4) | Per-account evaluation rate limit | `detection.test.ts` › rate limit |
+| XML parser restricted against XXE (ASVS 5.5.2, OWASP XXE Prevention Cheat Sheet) | Wazuh rules are read by a closed reader: no DTD, no external or declared entity, no CDATA or processing instruction, size and depth caps (ADR 0014) | `src/detection/wazuh.ts`, `wazuh.test.ts` |
+| ReDoS in a vendor rule language | Wazuh's OS_Regex/PCRE2 refused; OS_Match evaluated with linear string tests | same |
 
 ## Labs (v5, ADR 0009) — container isolation
 

@@ -193,7 +193,11 @@ export interface LabState {
 }
 
 export interface DetectionInfo {
+  /** JSON rules (ADR 0010) or Wazuh XML rules (ADR 0014). */
+  format: 'json' | 'wazuh';
   fields: string[];
+  /** Wazuh challenges: an alert counts from this level. */
+  minLevel: number | null;
   unit: 'event' | 'entity';
   entityField: string | null;
   events: number;
