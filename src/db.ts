@@ -141,6 +141,33 @@ const MIGRATIONS: readonly string[] = [
     PRIMARY KEY (user_id, module_id)
   ) STRICT, WITHOUT ROWID;
   `,
+  // v6: passkeys (WebAuthn, ADR 0016). credential_id is UNIQUE across users: one
+  // authenticator key cannot be enrolled twice, nor claimed by a second account.
+  // Public keys only (SPKI DER): nothing here lets anyone sign.
+  `
+  CREATE TABLE passkeys (
+    id             TEXT PRIMARY KEY,
+    user_id        TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    credential_id  BLOB NOT NULL UNIQUE,
+    public_key     BLOB NOT NULL,
+    alg            INTEGER NOT NULL,
+    sign_count     INTEGER NOT NULL,
+    name           TEXT NOT NULL,
+    created_at     INTEGER NOT NULL,
+    last_used_at   INTEGER
+  ) STRICT;
+  CREATE INDEX passkeys_user ON passkeys(user_id);
+
+  -- Single-use, short-lived challenges; only their SHA-256 is stored. A login challenge
+  -- is bound to the MFA step it was issued for.
+  CREATE TABLE webauthn_challenges (
+    challenge_hash  TEXT PRIMARY KEY,
+    user_id         TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    purpose         TEXT NOT NULL CHECK (purpose IN ('register', 'login')),
+    mfa_token_hash  TEXT,
+    expires_at      INTEGER NOT NULL
+  ) STRICT, WITHOUT ROWID;
+  `,
 ];
 
 export type Database = DatabaseSync;

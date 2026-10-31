@@ -334,6 +334,99 @@
       ]
     },
     {
+      "id": "second-facteur",
+      "title": "Casse-le, répare-le : le second facteur",
+      "summary": "Relayer un code TOTP avec un proxy d'hameçonnage, puis comprendre pourquoi une passkey ne se relaie pas, ligne par ligne dans le code de Bastion.",
+      "prerequisites": ["jwt"],
+      "lessons": [
+        {
+          "id": "mfa-hameconnage",
+          "title": "Hameçonner un second facteur",
+          "minutes": 25,
+          "references": [
+            { "label": "NIST SP 800-63B — Résistance à l'hameçonnage (§ 5.2.5)", "url": "https://pages.nist.gov/800-63-4/sp800-63b.html" },
+            { "label": "CISA — Implementing Phishing-Resistant MFA", "url": "https://www.cisa.gov/sites/default/files/publications/fact-sheet-implementing-phishing-resistant-mfa-508c.pdf" },
+            { "label": "FIDO Alliance — Passkeys", "url": "https://fidoalliance.org/passkeys/" }
+          ],
+          "quiz": [
+            {
+              "id": "aitm-totp",
+              "prompt": "Un proxy d'hameçonnage (Evilginx) se place entre la victime et le vrai site. Pourquoi le code TOTP ne l'arrête-t-il pas ?",
+              "choices": [
+                "Le proxy relaie le code au vrai site pendant ses 30 secondes de validité, puis garde le cookie de session",
+                "Le proxy devine le code par force brute",
+                "Le proxy lit la graine TOTP dans le navigateur"
+              ],
+              "answer": [0]
+            },
+            {
+              "id": "passkey-origine",
+              "prompt": "Pourquoi une signature de passkey obtenue sur le site piégé ne sert-elle à rien sur le vrai site ?",
+              "choices": [
+                "Elle porte l'origine du site piégé et le hachage du RP ID, que le vrai serveur vérifie",
+                "Elle expire au bout d'une seconde",
+                "Le navigateur la chiffre avec le mot de passe"
+              ],
+              "answer": [0]
+            },
+            {
+              "id": "compteur",
+              "prompt": "Le compteur de signatures présenté par une clé de sécurité est inférieur à celui que le serveur a déjà vu. Que faut-il en conclure ?",
+              "choices": [
+                "Une copie de la clé existe : la connexion est refusée et l'événement est journalisé",
+                "La clé a été réinitialisée : on accepte",
+                "Rien, le compteur n'a pas de sens"
+              ],
+              "answer": [0]
+            }
+          ]
+        },
+        {
+          "id": "mfa-passkeys-bastion",
+          "title": "Les passkeys dans le code de Bastion",
+          "minutes": 30,
+          "references": [
+            { "label": "W3C — Web Authentication Level 3 (§ 7, vérifications du serveur)", "url": "https://www.w3.org/TR/webauthn-3/#sctn-rp-operations" },
+            { "label": "RFC 8949 — CBOR", "url": "https://www.rfc-editor.org/rfc/rfc8949" },
+            { "label": "OWASP — Multifactor Authentication Cheat Sheet", "url": "https://cheatsheetseries.owasp.org/cheatsheets/Multifactor_Authentication_Cheat_Sheet.html" }
+          ],
+          "quiz": [
+            {
+              "id": "defi",
+              "prompt": "Quelles propriétés du défi WebAuthn empêchent de rejouer une ancienne réponse ?",
+              "choices": [
+                "Aléatoire et supprimé dès qu'il est présenté",
+                "Valable quelques minutes seulement",
+                "Lié à l'étape de connexion qui l'a demandé",
+                "Écrit dans un cookie"
+              ],
+              "answer": [0, 1, 2]
+            },
+            {
+              "id": "cbor-avant",
+              "prompt": "Pourquoi le décodeur CBOR de Bastion vérifie-t-il chaque longueur annoncée avant d'allouer de la mémoire ?",
+              "choices": [
+                "Le CBOR est lu avant la vérification de la signature : c'est une entrée d'attaquant, qui pourrait annoncer 2⁶⁴ octets",
+                "Pour aller plus vite",
+                "Parce que le CBOR est chiffré"
+              ],
+              "answer": [0]
+            },
+            {
+              "id": "ip-rpid",
+              "prompt": "Pourquoi faut-il ouvrir Bastion à l'adresse http://localhost:3000 et non http://127.0.0.1:3000 pour utiliser une passkey ?",
+              "choices": [
+                "Une adresse IP ne peut pas être un RP ID WebAuthn",
+                "127.0.0.1 est plus lent",
+                "Le port est différent"
+              ],
+              "answer": [0]
+            }
+          ]
+        }
+      ]
+    },
+    {
       "id": "controle-acces-api",
       "title": "Casse-le, répare-le : propriétés et fonctions d'une API",
       "summary": "L'assignation de masse (OWASP API3) et l'accès aux fonctions d'administration (OWASP API5) : devenir admin en ajoutant un champ, ou en appelant la bonne URL.",

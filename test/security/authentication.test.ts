@@ -6,7 +6,7 @@ describe('authentication', () => {
     const t = setup();
     const s = await newUser(t, 'alice@example.test');
     const me = await t.http.get('/v1/me').set(s.auth).expect(200);
-    expect(me.body).toEqual({ id: s.id, role: 'user', displayName: null, mfaEnabled: false });
+    expect(me.body).toEqual({ id: s.id, role: 'user', displayName: null, mfaEnabled: false, totpEnabled: false, passkeys: 0 });
   });
 
   it('normalises e-mails so "Alice@X" and "alice@x" are one account', async () => {

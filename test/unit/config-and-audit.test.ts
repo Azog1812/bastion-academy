@@ -26,6 +26,12 @@ describe('configuration fails closed', () => {
     ['metrics port without a token', { METRICS_PORT: '9464' }, 'METRICS_TOKEN'],
     ['metrics on the API port', { METRICS_PORT: '3000', METRICS_TOKEN: randomBytes(32).toString('base64') }, 'must differ from PORT'],
     ['placeholder metrics token', { METRICS_PORT: '9464', METRICS_TOKEN: 'prometheus-scrape-token-please-change' }, 'standard base64'],
+    // Passkeys (ADR 0016): WebAuthn itself refuses these; better to fail at boot than at every login.
+    ['WebAuthn RP ID that is an IP address', { WEBAUTHN_RP_ID: '127.0.0.1', WEBAUTHN_ORIGINS: 'http://127.0.0.1:3000' }, 'RP ID'],
+    ['WebAuthn RP ID with a scheme', { WEBAUTHN_RP_ID: 'https://bastion.example' }, 'host name'],
+    ['WebAuthn origin over plain HTTP off localhost', { WEBAUTHN_RP_ID: 'bastion.example', WEBAUTHN_ORIGINS: 'http://bastion.example' }, 'https except on localhost'],
+    ['WebAuthn origin outside the RP ID', { WEBAUTHN_RP_ID: 'bastion.example', WEBAUTHN_ORIGINS: 'https://bastion.example.evil.example' }, 'inside the RP ID'],
+    ['WebAuthn origin with a path', { WEBAUTHN_ORIGINS: 'http://localhost:3000/login' }, 'exact origin'],
   ])('refuses to start with a %s', (_name, override, message) => {
     expect(() => loadConfig(testEnv(override))).toThrow(message);
   });

@@ -33,7 +33,10 @@ Standards: **OWASP API Security Top 10 (2023)** and **OWASP ASVS 4.0.3** (Level 
 | 2.4.2 | Unique salt ≥ 32 bits | 128-bit random salt per hash |
 | 2.5.2 | No password hints / knowledge questions | None exist |
 | 2.5.6 | Re-authentication before sensitive changes | Password required to set up or remove MFA; removal also needs a valid code |
-| 2.7.x | Out-of-band verifiers | Not used (no SMS/e-mail codes): TOTP only, see ADR 0008 |
+| 2.7.x | Out-of-band verifiers | Not used (no SMS/e-mail codes): TOTP and passkeys, see ADR 0008 and 0016 |
+| 2.9.1 / 2.9.3 | Cryptographic verifiers: keys protected, approved algorithms | Passkeys: public keys only on the server (SPKI DER); Ed25519, ES256 or RS256 ≥ 2048 bits, chosen by the server |
+| 2.9.2 | Challenge nonce at least 64 bits | 256-bit random challenge, single use, 5 minutes, bound to its MFA step |
+| NIST 800-63B §5.2.5 | Phishing (verifier impersonation) resistance | WebAuthn origin and RP ID checks: a signature obtained by a look-alike site is refused (ADR 0016) |
 | 2.8.1 | Time-based OTPs have a defined lifetime | 30-s step, ±1 step drift accepted |
 | 2.8.3 | Approved algorithms for OTP | HOTP/TOTP RFC 4226/6238, HMAC-SHA1 (keyed; SHA-1 collisions do not apply), checked against RFC test vectors |
 | 2.8.4 | A time-based OTP can be used only once in its validity period | Last accepted step stored, compare-and-set update |

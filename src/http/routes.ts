@@ -9,7 +9,8 @@ import type { EnvironmentService } from '../services/environment-service.js';
 import type { LearningService } from '../services/learning-service.js';
 import type { MfaService } from '../services/mfa-service.js';
 import type { NoteService } from '../services/note-service.js';
-import { unauthorized } from '../errors.js';
+import type { PasskeyService } from '../services/passkey-service.js';
+import { notFound, unauthorized } from '../errors.js';
 import { authenticate, handler, parse, requireRole } from './middleware.js';
 import { browserView, clearRefreshCookie, refreshTokenFrom, sameOriginOnly, setRefreshCookie } from './session.js';
 import {
@@ -26,6 +27,10 @@ import {
   mfaCodeSchema,
   mfaDisableSchema,
   mfaLoginSchema,
+  passkeyDeleteSchema,
+  passkeyIdSchema,
+  passkeyOptionsLoginSchema,
+  passkeyRegisterSchema,
   noteIdSchema,
   paginationSchema,
   profileSchema,
@@ -44,6 +49,7 @@ export interface RouteDeps {
   labs: LabService;
   environments: EnvironmentService;
   mfa: MfaService;
+  passkeys: PasskeyService;
   audit: AuditLog;
   signer: TokenSigner;
   rateLimits: { auth: number; refresh: number; quiz: number; lab: number };
@@ -109,8 +115,18 @@ export function buildRouter(d: RouteDeps): Router {
     '/auth/mfa',
     authLimiter,
     handler(async (req, res) => {
-      const { mfaToken, code } = parse(mfaLoginSchema, req.body);
-      res.json(await d.auth.completeMfa(mfaToken, code, ctx(req)));
+      const body = parse(mfaLoginSchema, req.body);
+      res.json(await d.auth.completeMfa(body.mfaToken, 'code' in body ? body.code : { passkey: body.passkey }, ctx(req)));
+    }),
+  );
+
+  // Passkey challenge for a pending MFA step (ADR 0016). Same limiter: it is part of logging in.
+  r.post(
+    '/auth/mfa/passkey/options',
+    authLimiter,
+    handler((req, res) => {
+      const { mfaToken } = parse(passkeyOptionsLoginSchema, req.body);
+      res.json(d.auth.passkeyOptions(mfaToken));
     }),
   );
 
@@ -150,8 +166,8 @@ export function buildRouter(d: RouteDeps): Router {
     sameOriginOnly,
     authLimiter,
     handler(async (req, res) => {
-      const { mfaToken, code } = parse(mfaLoginSchema, req.body);
-      sendBrowserLogin(res, await d.auth.completeMfa(mfaToken, code, ctx(req)), d.refreshTtlSeconds);
+      const body = parse(mfaLoginSchema, req.body);
+      sendBrowserLogin(res, await d.auth.completeMfa(body.mfaToken, 'code' in body ? body.code : { passkey: body.passkey }, ctx(req)), d.refreshTtlSeconds);
     }),
   );
 
@@ -242,6 +258,60 @@ export function buildRouter(d: RouteDeps): Router {
         throw unauthorized('Invalid verification code');
       }
       d.mfa.disable(uid(req), ctx(req).ip);
+      res.status(204).end();
+    }),
+  );
+
+  /* ---------- passkeys (WebAuthn, ADR 0016) ---------- */
+
+  r.get(
+    '/me/passkeys',
+    requireAuth,
+    handler((req, res) => {
+      res.json({ items: d.passkeys.list(uid(req)) });
+    }),
+  );
+
+  r.post(
+    '/me/passkeys/options',
+    requireAuth,
+    authLimiter,
+    handler(async (req, res) => {
+      const { password } = parse(reauthSchema, req.body);
+      const { email } = await d.auth.confirmPassword(uid(req), password, ctx(req));
+      res.json(d.passkeys.registrationOptions(uid(req), email));
+    }),
+  );
+
+  r.post(
+    '/me/passkeys',
+    requireAuth,
+    authLimiter,
+    handler((req, res) => {
+      const { name, credential } = parse(passkeyRegisterSchema, req.body);
+      const created = d.passkeys.register(uid(req), name, credential, ctx(req).ip);
+      // First second factor of the account: recovery codes, shown once.
+      res.status(201).json({ ...created, recoveryCodes: d.mfa.issueRecoveryCodesIfNone(uid(req)) });
+    }),
+  );
+
+  r.delete(
+    '/me/passkeys/:id',
+    requireAuth,
+    authLimiter,
+    handler(async (req, res) => {
+      const { id } = parse(passkeyIdSchema, req.params);
+      const { password, code } = parse(passkeyDeleteSchema, req.body);
+      await d.auth.confirmPassword(uid(req), password, ctx(req));
+      if (!d.passkeys.isOwn(uid(req), id)) throw notFound('Passkey not found');
+      // Removing the last second factor is disabling MFA: password AND a code, as for TOTP.
+      const last = !d.mfa.isEnabled(uid(req)) && d.passkeys.count(uid(req)) === 1;
+      if (last && (code === undefined || !d.mfa.verify(uid(req), code, ctx(req).ip))) {
+        d.audit.record({ action: 'passkey.delete', outcome: 'failure', actorId: uid(req), target: id, ip: ctx(req).ip, details: { reason: 'last_factor' } });
+        throw unauthorized('This is your last second factor: enter a recovery code to remove it');
+      }
+      d.passkeys.remove(uid(req), id, ctx(req).ip);
+      d.mfa.dropIfNoFactor(uid(req));
       res.status(204).end();
     }),
   );
