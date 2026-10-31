@@ -73,14 +73,24 @@ function labPanel(challengeId: string, lab: LabState): HTMLElement {
   return box;
 }
 
-/** Blue-team challenges: a rule editor instead of a flag field; the server evaluates the rule (ADR 0010). */
+/** A starting point in the format of local_rules.xml: the learner completes it, the server parses it (ADR 0014). */
+const WAZUH_STARTER = `<group name="local,">
+  <rule id="100100" level="10">
+    <if_sid>à compléter</if_sid>
+    <description>à compléter</description>
+  </rule>
+</group>`;
+
+/** Blue-team challenges: a rule editor instead of a flag field; the server evaluates the rule (ADR 0010, 0014). */
 function detectionForm(challengeId: string, info: DetectionInfo): HTMLElement {
+  const wazuh = info.format === 'wazuh';
   const starter =
     info.unit === 'entity'
       ? { match: { [info.fields[1] ?? 'ts']: 'à compléter' }, threshold: { groupBy: info.entityField ?? '', min: 10, windowSeconds: 600 } }
       : { match: [{ [`${info.fields[info.fields.length - 1] ?? 'ts'}|contains`]: ['à compléter'] }] };
-  const rule = h('textarea', { name: 'rule', rows: '12', spellcheck: 'false', autocomplete: 'off', class: 'code' });
-  rule.value = JSON.stringify(starter, null, 2);
+  const rule = h('textarea', { name: 'rule', rows: wazuh ? '16' : '12', spellcheck: 'false', autocomplete: 'off', class: 'code' });
+  rule.value = wazuh ? WAZUH_STARTER : JSON.stringify(starter, null, 2);
+  const unit = info.unit === 'entity' ? `l'entité « ${info.entityField ?? ''} »` : "l'événement";
   const status = h('div', { 'aria-live': 'polite' });
   const form = h(
     'form',
@@ -88,19 +98,23 @@ function detectionForm(challengeId: string, info: DetectionInfo): HTMLElement {
     h(
       'p',
       { class: 'meta' },
-      `Champs disponibles : ${info.fields.join(', ')}. Unité de détection : ${info.unit === 'entity' ? `l'entité « ${info.entityField ?? ''} »` : "l'événement"}.`,
+      wazuh
+        ? `Champs décodés pour <field> : ${info.fields.join(', ') || 'aucun (utilise <match>, <user>, <srcip>)'}. Unité de détection : ${unit}. Une alerte compte à partir du niveau ${String(info.minLevel ?? 10)}.`
+        : `Champs disponibles : ${info.fields.join(', ')}. Unité de détection : ${unit}.`,
     ),
-    h('label', {}, 'Ta règle (JSON)', rule),
+    h('label', {}, wazuh ? 'Tes règles (XML Wazuh, comme dans local_rules.xml)' : 'Ta règle (JSON)', rule),
     status,
-    h('button', { type: 'submit' }, 'Évaluer ma règle'),
+    h('button', { type: 'submit' }, wazuh ? 'Évaluer mes règles' : 'Évaluer ma règle'),
   );
   onSubmit(form, status, async () => {
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(rule.value);
-    } catch {
-      status.replaceChildren(alert("Ce n'est pas du JSON valide : vérifie les guillemets et les virgules."));
-      return;
+    let parsed: unknown = rule.value;
+    if (!wazuh) {
+      try {
+        parsed = JSON.parse(rule.value);
+      } catch {
+        status.replaceChildren(alert("Ce n'est pas du JSON valide : vérifie les guillemets et les virgules."));
+        return;
+      }
     }
     const r = await api<DetectionResult>('POST', `/v1/challenges/${encodeURIComponent(challengeId)}/detect`, { rule: parsed });
     const examples = (label: string, list: string[]) => (list.length ? h('p', { class: 'meta' }, `${label} : ${list.join(', ')}`) : null);

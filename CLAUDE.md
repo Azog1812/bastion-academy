@@ -37,7 +37,7 @@ explain the *why* (threat, standard, trade-off), not only the *what*.
 npm ci --ignore-scripts      # never run install scripts
 npm run lint                 # ESLint strictTypeChecked + security plugin + custom SQL rules
 npm run typecheck            # tsc strict, noUncheckedIndexedAccess, exactOptionalPropertyTypes
-npm test                     # vitest (314 tests)
+npm test                     # vitest (335 tests)
 npm run test:coverage        # thresholds: lines/statements/functions 90 %, branches 80 %
 npm run check                # lint + typecheck + coverage
 npm run build && node dist/cli.js gen-secrets > .env   # local secrets (gitignored)
@@ -88,6 +88,8 @@ src/
   services/environment-service  shared environments gated by the optional module, audited
   detection/engine.ts    rule language (Sigma subset: match/exclude/threshold, NO regex), score()
   detection/datasets.ts  labelled per-learner log datasets with traps for naive rules (ADR 0010)
+  detection/wazuh.ts     closed XML reader (no DTD/entities) + Wazuh rule subset, OS_Match only,
+                         Wazuh's rule tree and correlation (ADR 0014); wazuh-datasets.ts: alerts.json-shaped data
   services/note-service  owner-scoped CRUD, optimistic concurrency (version), rotateKeys()
   services/learning-service  progress scoped by user_id, server-side prerequisites + quiz grading,
                          optional modules added per learner (module_choices, ADR 0012)
@@ -118,7 +120,7 @@ deploy/k8s (kustomize), deploy/policies (Kyverno signed-image policy),
 deploy/prometheus (scrape config, alerts.yml, alerts.test.yml for promtool),
 deploy/wazuh (offline certs.sh, users.sh without demo accounts, indexer/manager/dashboard config)
 docs/  threat-model · security-controls (OWASP API Top 10 + ASVS 4.0.3) · security-pipeline ·
-       adr/0001-0013 · runbook · openapi.yaml (used by DAST)
+       adr/0001-0014 · runbook · openapi.yaml (used by DAST)
 ```
 
 ## Security invariants — never break these
@@ -170,6 +172,10 @@ docs/  threat-model · security-controls (OWASP API Top 10 + ASVS 4.0.3) · secu
     no regular expressions (ReDoS), keys validated against the dataset's fields, values
     read with `Object.hasOwn`, every dimension capped, evaluations rate-limited. Labels
     (which events are malicious) never leave the server beyond counts and three examples.
+    Learner XML (Wazuh challenges, ADR 0014) goes through the closed reader of
+    `detection/wazuh.ts` only: DOCTYPE, entity declarations, CDATA and processing
+    instructions refused, five predefined entities, size/depth/node caps, OS_Match only,
+    parents defined above (no cycle). Never feed learner XML to a general-purpose parser.
 17. **Metrics never widen the attack surface** (ADR 0011). Served only by the separate
     listener on `METRICS_PORT` with the bearer `METRICS_TOKEN`, never by the API app;
     label values come from closed sets (route patterns, `AUDIT_ACTIONS`, status codes),
@@ -251,8 +257,9 @@ If a CI job is renamed, update the ruleset's required checks in the same change 
 4. **PostgreSQL + Redis** (rate-limit store, multiple replicas) behind the same service layer;
    use row-level security as a second IDOR barrier.
 5. ~~**Observability**: Prometheus metrics, alerting rules matching `docs/runbook.md`~~
-   (done 31 Oct 2026, ADR 0011). Real Wazuh from the UI done (ADR 0013). Next: Wazuh rule
-   challenges, a decoder for Bastion's audit log, Alertmanager routing, Grafana dashboard.
+   (done 31 Oct 2026, ADR 0011). Real Wazuh from the UI done (ADR 0013), Wazuh rule challenges
+   done (ADR 0014). Next: ship Bastion's audit log to the real Wazuh (decoder + rules),
+   Alertmanager routing, Grafana dashboard.
 6. **Signed commits** (SSH/GPG) and a release workflow with semantic versioning.
 7. **Fuzzing** of the HTTP layer (e.g. schemathesis against `docs/openapi.yaml`) in CI.
 8. Interview prep: a mock technical interview on this repo (threat model, ADRs, auth-service).

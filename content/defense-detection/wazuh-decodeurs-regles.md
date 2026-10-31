@@ -85,6 +85,29 @@ angle mort que l'attaquant apprendra vite à utiliser.
 Une règle non testée ne sait que deux choses : se taire pendant l'attaque, ou
 réveiller le SOC pour rien.
 
+## Ce que les défis Wazuh évaluent
+
+Dans les défis de ce module, tu écris de vraies règles Wazuh, et Bastion les évalue
+lui-même sur un jeu d'alertes : il ne les envoie à aucun Wazuh. Il lit un
+**sous-ensemble** de la syntaxe, et refuse le reste avec un message précis.
+
+- **Pas d'expression régulière.** `<regex>`, `<pcre2>` et `<field>` sans
+  `type="osmatch"` sont refusés. Une expression régulière écrite par un élève et
+  exécutée sur le serveur peut le bloquer pour tout le monde (ReDoS). OS_Match suffit :
+  sous-chaîne, `^` pour le début, `$` pour la fin, `|` pour « ou ».
+- **Pas de DTD ni d'entité.** Un analyseur XML qui accepte `<!DOCTYPE>` lit des
+  fichiers du serveur (XXE) ou explose en mémoire (*billion laughs*). Le lecteur de
+  Bastion ne connaît que les éléments, les attributs, les commentaires et les cinq
+  entités `&lt; &gt; &amp; &quot; &apos;`.
+- **Une règle précise toujours une règle existante**, définie plus haut : l'arbre
+  des règles ne peut pas boucler.
+- **`frequency="N"` compte N événements, celui-ci compris**, dans les `timeframe`
+  dernières secondes. Sur ce point, Wazuh et OSSEC ont varié d'une version à l'autre :
+  garde de la marge, et vérifie avec `wazuh-logtest`.
+
+Les règles qui réussissent un défi se collent telles quelles dans
+`local_rules.xml` : c'est le but.
+
 ## À retenir
 
 - Décodeurs (extraire les champs) puis règles (décider) ; le JSON se décode tout seul.

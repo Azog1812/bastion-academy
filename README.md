@@ -37,7 +37,7 @@ from first principles up to the level expected by major industry certifications.
 | **v3: foundations** | Learning paths → modules → lessons, progress tracking, web front-end, built on Bastion's auth core | ✅ API, web UI, all six levels shipped |
 | **v4: challenges** | Per-user HMAC flags (unshareable), scoreboard, anti-cheat, TOTP MFA | ✅ Shipped: 11 challenges (levels 1 to 3), opt-in scoreboard, TOTP + recovery codes |
 | **v5: isolated labs** | One vulnerable container per learner: no egress, TTL, sandboxed runtime, quotas | ✅ Shipped: 10 labs (SQLi, IDOR, mass assignment, JWT `alg:none`, SSRF, path traversal, command injection, stored XSS with a headless-browser victim, a three-flaw chain, a race condition), lab runner + gateway, optional gVisor |
-| **v6: blue team** | Level 5 path (logging, SIEM, detection engineering, incident response, forensics) and detection challenges | ✅ Shipped: 6 lessons, 5 detection challenges graded on precision **and** recall · Observability shipped (Prometheus, tested alerts, [ADR 0011](docs/adr/0011-observability.md)) · AI tutor: planned |
+| **v6: blue team** | Level 5 path (logging, SIEM, detection engineering, incident response, forensics) and detection challenges | ✅ Shipped: 6 lessons, 5 detection challenges graded on precision **and** recall · real Wazuh from the UI and 2 Wazuh XML rule challenges ([ADR 0013](docs/adr/0013-shared-environments.md), [0014](docs/adr/0014-wazuh-rule-challenges.md)) · Observability shipped (Prometheus, tested alerts, [ADR 0011](docs/adr/0011-observability.md)) · AI tutor: planned |
 
 The platform is designed to **run locally** (`git clone` + Docker). There is no public
 hosted instance yet.
@@ -87,6 +87,17 @@ positives, the SOC's daily trade-off.
 
 The rule language has **no regular expressions on purpose** (a learner regex would run
 on the server's event loop: ReDoS), and fields are checked against each dataset.
+
+**2 Wazuh rule challenges** ([ADR 0014](docs/adr/0014-wazuh-rule-challenges.md)), in the
+optional Wazuh module: the learner writes **real Wazuh XML rules**, as in
+`local_rules.xml`, against alerts shaped like Wazuh's `alerts.json`. Learner XML never
+reaches a general-purpose parser: a closed reader refuses DTDs and entities (**XXE**,
+*billion laughs*), patterns are OS_Match only (no ReDoS), and the rule tree cannot loop.
+
+| Challenge | What the naive rule gets wrong |
+|---|---|
+| SSH brute force, in XML | `if_matched_sid 5716` misses the attacker who only tries non-existent users (5710); excluding the backup server's whole subnet hides a compromised neighbour |
+| Monitoring Bastion itself (its JSON audit log) | `<match>refresh</match>` flags every normal token refresh; without a level 0 child, the CI's nightly DAST scan pages the SOC |
 
 Every *break it, then fix it* module ends in Bastion's own code: the learner
 attacks Bastion, then reads the exact lines, lint rules, Semgrep rules and tests
