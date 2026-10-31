@@ -93,10 +93,11 @@ export class PasskeyService {
 
   /** Consumes a challenge: found or not, valid or not, it can never be presented again. */
   private takeChallenge(userId: string, challenge: Buffer, purpose: 'register' | 'login', mfaTokenHash: string | null): boolean {
+    // The MFA-step binding is compared by SQLite (IS: equal, or both NULL), never in JS with ===.
     const row = this.db
-      .prepare('DELETE FROM webauthn_challenges WHERE challenge_hash = ? AND user_id = ? RETURNING purpose, mfa_token_hash, expires_at')
-      .get(sha256(challenge), userId) as { purpose: string; mfa_token_hash: string | null; expires_at: number } | undefined;
-    return row !== undefined && row.purpose === purpose && row.mfa_token_hash === mfaTokenHash && row.expires_at > this.now();
+      .prepare('DELETE FROM webauthn_challenges WHERE challenge_hash = ? AND user_id = ? RETURNING purpose, (mfa_token_hash IS ?) AS same_step, expires_at')
+      .get(sha256(challenge), userId, mfaTokenHash) as { purpose: string; same_step: number; expires_at: number } | undefined;
+    return row !== undefined && row.purpose === purpose && row.same_step === 1 && row.expires_at > this.now();
   }
 
   private credentialIds(userId: string): string[] {
