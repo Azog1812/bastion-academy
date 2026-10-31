@@ -5,6 +5,7 @@ import type { TokenSigner } from '../crypto/tokens.js';
 import { isMfaChallenge, type AuthService, type LoginResult, type RequestContext } from '../services/auth-service.js';
 import type { ChallengeService } from '../services/challenge-service.js';
 import type { LabService } from '../services/lab-service.js';
+import type { EnvironmentService } from '../services/environment-service.js';
 import type { LearningService } from '../services/learning-service.js';
 import type { MfaService } from '../services/mfa-service.js';
 import type { NoteService } from '../services/note-service.js';
@@ -21,6 +22,7 @@ import {
   lessonIdSchema,
   moduleChoiceSchema,
   moduleIdSchema,
+  environmentIdSchema,
   mfaCodeSchema,
   mfaDisableSchema,
   mfaLoginSchema,
@@ -40,6 +42,7 @@ export interface RouteDeps {
   learning: LearningService;
   challenges: ChallengeService;
   labs: LabService;
+  environments: EnvironmentService;
   mfa: MfaService;
   audit: AuditLog;
   signer: TokenSigner;
@@ -422,6 +425,38 @@ export function buildRouter(d: RouteDeps): Router {
     handler(async (req, res) => {
       const { id } = parse(challengeIdSchema, req.params);
       await d.labs.stop(uid(req), id, ctx(req).ip);
+      res.status(204).end();
+    }),
+  );
+
+  /* ---------- shared environments (ADR 0013) ---------- */
+
+  r.get(
+    '/environments',
+    requireAuth,
+    handler(async (req, res) => {
+      res.json({ items: await d.environments.list(uid(req)) });
+    }),
+  );
+
+  // Same per-account limiter as labs: starting a SIEM is the most expensive thing a learner can ask for.
+  r.post(
+    '/environments/:id/start',
+    requireAuth,
+    labLimiter,
+    handler(async (req, res) => {
+      const { id } = parse(environmentIdSchema, req.params);
+      res.status(202).json(await d.environments.start(uid(req), id, ctx(req).ip));
+    }),
+  );
+
+  r.post(
+    '/environments/:id/stop',
+    requireAuth,
+    labLimiter,
+    handler(async (req, res) => {
+      const { id } = parse(environmentIdSchema, req.params);
+      await d.environments.stop(uid(req), id, ctx(req).ip);
       res.status(204).end();
     }),
   );

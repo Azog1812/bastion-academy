@@ -10,11 +10,13 @@ import {
   restoreSession,
   type Completion,
   type Curriculum,
+  type EnvironmentView,
   type Lesson,
   type LoginStep,
   type ModuleView,
 } from './api.js';
 import { challengesView, challengeView, scoreboardView } from './challenges.js';
+import { environmentPanel } from './environments.js';
 import { h, renderBlocks } from './dom.js';
 import { parseMarkdown } from './markdown.js';
 import { alert, errorMessage, onSubmit, show } from './ui.js';
@@ -163,7 +165,7 @@ function choiceButton(m: ModuleView): HTMLElement {
   return h('div', { class: 'module-choice' }, button, status);
 }
 
-function moduleCard(m: ModuleView, titles: ReadonlyMap<string, string>): HTMLElement {
+function moduleCard(m: ModuleView, titles: ReadonlyMap<string, string>, envs: readonly EnvironmentView[]): HTMLElement {
   const state = !m.added ? 'Non ajouté' : m.completed ? 'Terminé' : m.unlocked ? 'Disponible' : 'Verrouillé';
   const needs = requirementsText(m.requirements);
   const lessons = !m.added
@@ -195,12 +197,20 @@ function moduleCard(m: ModuleView, titles: ReadonlyMap<string, string>): HTMLEle
     h('p', {}, m.summary),
     ...(needs ? [h('p', { class: 'meta' }, needs)] : []),
     lessons,
+    // A real tool attached to this module, once the learner may use it.
+    ...envs.filter((e) => e.moduleId === m.id && e.available).map(environmentPanel),
     ...(m.optional ? [choiceButton(m)] : []),
   );
 }
 
 async function catalogView(): Promise<void> {
-  const cur = await api<Curriculum>('GET', '/v1/curriculum');
+  const [cur, envs] = await Promise.all([
+    api<Curriculum>('GET', '/v1/curriculum'),
+    api<{ items: EnvironmentView[] }>('GET', '/v1/environments').then(
+      (r) => r.items,
+      () => [] as EnvironmentView[],
+    ),
+  ]);
   const titles = new Map(cur.paths.flatMap((p) => p.modules.map((m) => [m.id, m.title] as const)));
 
   const levels = cur.levels.map((lvl) => {
@@ -213,7 +223,7 @@ async function catalogView(): Promise<void> {
       ...(paths.length === 0
         ? [h('p', { class: 'hint' }, 'Bientôt disponible.')]
         : paths.map((p) =>
-            h('div', { class: 'path' }, h('h3', {}, p.title), h('p', {}, p.summary), ...p.modules.map((m) => moduleCard(m, titles))),
+            h('div', { class: 'path' }, h('h3', {}, p.title), h('p', {}, p.summary), ...p.modules.map((m) => moduleCard(m, titles, envs))),
           )),
     );
   });

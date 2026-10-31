@@ -166,6 +166,11 @@ docker compose up --build             # platform + lab runner + lab gateway, all
 **http://127.0.0.1:9090**. Replay a refresh token and watch `BastionRefreshTokenReuse`
 fire in the *Alerts* tab ([ADR 0011](docs/adr/0011-observability.md)).
 
+**With a real Wazuh** (optional module, ~4 GiB of RAM): `docker compose --profile wazuh up -d`
+once, then learners start and stop it from the module card; dashboard on
+**https://localhost:8443**. Setup makes its own CA offline and drops Wazuh's demo accounts
+([ADR 0013](docs/adr/0013-shared-environments.md)).
+
 | Endpoint | Purpose |
 |---|---|
 | `GET /v1/curriculum` | Levels, paths, modules and lessons, with your progress and which modules are unlocked |

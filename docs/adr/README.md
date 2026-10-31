@@ -17,3 +17,4 @@ Format: context → decision → consequences.
 | [0010](0010-detection-challenges.md) | Blue-team detection challenges: learner rules (Sigma subset, no regex) scored on labelled datasets |
 | [0011](0011-observability.md) | Observability: Prometheus metrics on a separate authenticated listener, closed-set labels, unit-tested alerts |
 | [0012](0012-optional-modules.md) | Optional modules chosen per learner, enforced server-side, never blocking the mandatory path |
+| [0013](0013-shared-environments.md) | Shared environments: a real Wazuh installed once, started and stopped from the UI through the lab runner |

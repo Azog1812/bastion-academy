@@ -100,3 +100,5 @@ pre.artifact {
 tr.me td { color: var(--accent); font-weight: 600; }
 details { margin: 0.75rem 0; }
 textarea.code { width: 100%; font-family: ui-monospace, 'Cascadia Code', Consolas, monospace; font-size: 0.9em; background: #0a0e12; color: inherit; border: 1px solid var(--border); border-radius: 6px; padding: 0.6rem; }
+.environment { margin-top: 0.75rem; padding: 0.75rem 1rem; border: 1px solid var(--border); border-radius: 6px; }
+.environment h4 { margin: 0 0 0.5rem; }

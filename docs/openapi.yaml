@@ -517,6 +517,44 @@ paths:
         "403": { description: Module not unlocked yet, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "404": { description: Unknown challenge, or not a detection challenge, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "429": { $ref: "#/components/responses/RateLimited" }
+  /v1/environments:
+    get:
+      tags: [learning]
+      summary: Shared real environments (such as Wazuh), my access and their live state
+      description: >-
+        A learner without the environment's module added and unlocked gets "available": false and no live
+        state. The login field is a hint naming the .env variable, never a password (ADR 0013).
+      responses:
+        "200": { description: Environments, content: { application/json: { schema: { type: object, properties: { items: { type: array, items: { $ref: "#/components/schemas/Environment" } } } } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /v1/environments/{id}/start:
+    parameters:
+      - { name: id, in: path, required: true, schema: { $ref: "#/components/schemas/Slug" } }
+    post:
+      tags: [learning]
+      summary: Start a shared environment (idempotent)
+      requestBody: { required: false, content: { application/json: { schema: { type: object, additionalProperties: false } } } }
+      responses:
+        "202": { description: Starting or running, content: { application/json: { schema: { $ref: "#/components/schemas/Environment" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { description: Module not added or not unlocked, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "404": { $ref: "#/components/responses/Error" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { description: Not installed, or runner unavailable, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+  /v1/environments/{id}/stop:
+    parameters:
+      - { name: id, in: path, required: true, schema: { $ref: "#/components/schemas/Slug" } }
+    post:
+      tags: [learning]
+      summary: Stop a shared environment (idempotent)
+      requestBody: { required: false, content: { application/json: { schema: { type: object, additionalProperties: false } } } }
+      responses:
+        "204": { description: Stopped }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { description: Module not added or not unlocked, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "404": { $ref: "#/components/responses/Error" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { description: Runner unavailable, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
   /v1/scoreboard:
     get:
       tags: [challenges]
@@ -731,6 +769,17 @@ components:
         unit: { enum: [event, entity] }
         entityField: { type: ["string", "null"] }
         events: { type: integer }
+    Environment:
+      type: object
+      properties:
+        id: { type: string, example: wazuh }
+        title: { type: string }
+        moduleId: { type: string }
+        available: { type: boolean, description: Module added and unlocked for me }
+        state: { type: string, enum: [unavailable, missing, stopped, starting, running] }
+        url: { type: string, nullable: true, description: "Only while running, always https://localhost:<port>" }
+        login: { type: string, nullable: true, description: A hint naming the .env variable, never the password }
+        stopsAt: { type: string, format: date-time, nullable: true }
     LabInstance:
       type: object
       properties:

@@ -4,6 +4,7 @@ import { base64Key, resolveFileSecrets } from '../../config.js';
 import { createLogger } from '../../logger.js';
 import { createRunnerApp } from './app.js';
 import { dockerSocket } from './docker.js';
+import { EnvironmentController } from './environments.js';
 import { LabRunner } from './runner.js';
 
 /**
@@ -35,8 +36,10 @@ if (!parsed.success) {
 }
 const config = parsed.data;
 const logger = createLogger(config.LOG_LEVEL, 'lab-runner');
-const runner = new LabRunner(dockerSocket(config.DOCKER_SOCKET), config.LAB_GATEWAY_CONTAINER, logger, config.LAB_RUNTIME);
-const server = createRunnerApp(runner, config.LAB_RUNNER_TOKEN, logger).listen(config.PORT, config.HOST, () => {
+const docker = dockerSocket(config.DOCKER_SOCKET);
+const runner = new LabRunner(docker, config.LAB_GATEWAY_CONTAINER, logger, config.LAB_RUNTIME);
+const environments = new EnvironmentController(docker, logger);
+const server = createRunnerApp(runner, config.LAB_RUNNER_TOKEN, logger, environments).listen(config.PORT, config.HOST, () => {
   logger.info({ port: config.PORT, runtime: config.LAB_RUNTIME ?? 'default' }, 'lab runner listening');
 });
 server.headersTimeout = 15_000;
@@ -51,6 +54,9 @@ const reap = () => {
       logger.warn({ err }, 'reaper failed');
     },
   );
+  void environments.reap().then((n) => {
+    if (n > 0) logger.info({ stopped: n }, 'environments stopped after their maximum run time');
+  });
 };
 // At start-up too: clean what expired while the stack was down, re-attach the gateway to the rest.
 reap();

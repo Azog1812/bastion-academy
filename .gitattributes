@@ -1,0 +1,4 @@
+# Mounted as-is into Linux containers (deploy/wazuh, scripts): a CRLF checkout on Windows
+# would make bash fail on the first line. Keep these LF everywhere.
+*.sh text eol=lf
+deploy/** text eol=lf

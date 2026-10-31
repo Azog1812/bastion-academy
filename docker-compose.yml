@@ -169,6 +169,164 @@ services:
     cpus: 0.5
     restart: unless-stopped
 
+  # ---------------------------------------------------------------------------
+  # Wazuh (ADR 0013), optional, about 4 GiB of RAM while running.
+  #   docker compose --profile wazuh up -d     # once: certificates, users, then the stack
+  # Afterwards, learners start and stop it from the web UI (Wazuh module) through the
+  # lab runner, which may start and stop these three containers and nothing else.
+  # Dashboard: https://localhost:8443, user admin, password WAZUH_ADMIN_PASSWORD (.env).
+
+  # Setup, step 1: TLS certificates, generated offline (no network at all).
+  wazuh-certs:
+    image: wazuh/wazuh-certs-generator:0.0.4@sha256:369b4d58509aab074b188596870c81584f7120e653d9ef83c591f0f785dcf325
+    profiles: [wazuh]
+    entrypoint: ["bash", "/setup/certs.sh"]
+    user: "0:0" # chown of each component's directory
+    network_mode: none
+    volumes:
+      - ./deploy/wazuh/certs.sh:/setup/certs.sh:ro
+      - wazuh-certs:/out
+
+  # Setup, step 2: indexer users, without the demo accounts and their public passwords.
+  wazuh-users:
+    image: wazuh/wazuh-indexer:4.14.9@sha256:615465315b560d974100ea55bbe67efa72afc6490ef563d4d1bef127df0e98f6
+    profiles: [wazuh]
+    entrypoint: ["bash", "/setup/users.sh"]
+    user: "0:0"
+    network_mode: none
+    environment:
+      WAZUH_ADMIN_PASSWORD: ${WAZUH_ADMIN_PASSWORD:-}
+      WAZUH_DASHBOARD_PASSWORD: ${WAZUH_DASHBOARD_PASSWORD:-}
+    volumes:
+      - ./deploy/wazuh/users.sh:/setup/users.sh:ro
+      - wazuh-certs:/out
+
+  wazuh-indexer:
+    image: wazuh/wazuh-indexer:4.14.9@sha256:615465315b560d974100ea55bbe67efa72afc6490ef563d4d1bef127df0e98f6
+    container_name: bastion-wazuh-indexer # fixed: the lab runner starts/stops it by name
+    profiles: [wazuh]
+    restart: "no" # stays stopped until a learner starts it
+    depends_on:
+      wazuh-certs: { condition: service_completed_successfully }
+      wazuh-users: { condition: service_completed_successfully }
+    environment:
+      OPENSEARCH_JAVA_OPTS: -Xms1g -Xmx1g
+    ulimits:
+      memlock: { soft: -1, hard: -1 }
+      nofile: { soft: 65536, hard: 65536 }
+    volumes:
+      - wazuh-indexer-data:/var/lib/wazuh-indexer
+      - ./deploy/wazuh/wazuh.indexer.yml:/usr/share/wazuh-indexer/config/opensearch.yml:ro
+      - type: volume
+        source: wazuh-certs
+        target: /usr/share/wazuh-indexer/config/certs
+        read_only: true
+        volume: { subpath: indexer }
+      - type: volume
+        source: wazuh-certs
+        target: /usr/share/wazuh-indexer/config/opensearch-security/internal_users.yml
+        read_only: true
+        volume: { subpath: security/internal_users.yml }
+    networks:
+      wazuh: { aliases: [wazuh.indexer] }
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 2g
+    healthcheck:
+      test: ["CMD", "curl", "-sk", "-o", "/dev/null", "https://localhost:9200"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+
+  wazuh-manager:
+    image: wazuh/wazuh-manager:4.14.9@sha256:dbb337727a6b6b17e24b1ccfe4c6e95fd983286ba0ccbf29d568144aa9527c6b
+    container_name: bastion-wazuh-manager
+    hostname: wazuh.manager
+    profiles: [wazuh]
+    restart: "no"
+    depends_on:
+      wazuh-certs: { condition: service_completed_successfully }
+    environment:
+      INDEXER_URL: https://wazuh.indexer:9200
+      INDEXER_USERNAME: admin
+      INDEXER_PASSWORD: ${WAZUH_ADMIN_PASSWORD:-}
+      FILEBEAT_SSL_VERIFICATION_MODE: full
+      SSL_CERTIFICATE_AUTHORITIES: /etc/ssl/wazuh/root-ca.pem
+      SSL_CERTIFICATE: /etc/ssl/wazuh/wazuh.manager.pem
+      SSL_KEY: /etc/ssl/wazuh/wazuh.manager.key
+      API_USERNAME: wazuh-wui
+      API_PASSWORD: ${WAZUH_API_PASSWORD:-}
+    ulimits:
+      memlock: { soft: -1, hard: -1 }
+      nofile: { soft: 655360, hard: 655360 }
+    volumes:
+      - wazuh-api-configuration:/var/ossec/api/configuration
+      - wazuh-etc:/var/ossec/etc
+      - wazuh-logs:/var/ossec/logs
+      - wazuh-queue:/var/ossec/queue
+      - wazuh-var-multigroups:/var/ossec/var/multigroups
+      - wazuh-integrations:/var/ossec/integrations
+      - wazuh-active-response:/var/ossec/active-response/bin
+      - wazuh-agentless:/var/ossec/agentless
+      - wazuh-wodles:/var/ossec/wodles
+      - wazuh-filebeat-etc:/etc/filebeat
+      - wazuh-filebeat-var:/var/lib/filebeat
+      - ./deploy/wazuh/wazuh_manager.conf:/wazuh-config-mount/etc/ossec.conf:ro
+      - type: volume
+        source: wazuh-certs
+        target: /etc/ssl/wazuh
+        read_only: true
+        volume: { subpath: manager }
+    networks:
+      wazuh: { aliases: [wazuh.manager] }
+    # Runs as root under s6 and drops to the wazuh user itself: capabilities kept, no new privileges.
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 1g
+    healthcheck:
+      test: ["CMD", "curl", "-sk", "-o", "/dev/null", "https://localhost:55000"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+
+  wazuh-dashboard:
+    image: wazuh/wazuh-dashboard:4.14.9@sha256:e8e2340265feb6f61711d2ba460d04d2dea875ee46de26cd1832da2a3558a341
+    container_name: bastion-wazuh-dashboard
+    hostname: wazuh.dashboard
+    profiles: [wazuh]
+    restart: "no"
+    depends_on:
+      wazuh-certs: { condition: service_completed_successfully }
+    environment:
+      WAZUH_API_URL: https://wazuh.manager
+      DASHBOARD_USERNAME: kibanaserver
+      DASHBOARD_PASSWORD: ${WAZUH_DASHBOARD_PASSWORD:-}
+      API_USERNAME: wazuh-wui
+      API_PASSWORD: ${WAZUH_API_PASSWORD:-}
+    volumes:
+      - ./deploy/wazuh/opensearch_dashboards.yml:/usr/share/wazuh-dashboard/config/opensearch_dashboards.yml:ro
+      - wazuh-dashboard-config:/usr/share/wazuh-dashboard/data/wazuh/config
+      - type: volume
+        source: wazuh-certs
+        target: /usr/share/wazuh-dashboard/certs
+        read_only: true
+        volume: { subpath: dashboard }
+    ports:
+      - "127.0.0.1:8443:5601" # loopback only
+    networks:
+      wazuh: { aliases: [wazuh.dashboard] }
+      wazuh-edge: {}
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 1g
+    healthcheck:
+      test: ["CMD", "curl", "-sk", "-o", "/dev/null", "-f", "https://localhost:5601/app/login"]
+      interval: 15s
+      timeout: 5s
+      retries: 30
+
 secrets:
   metrics_token:
     environment: METRICS_TOKEN
@@ -184,7 +342,26 @@ networks:
     internal: true
   # Lets Prometheus publish its UI on 127.0.0.1:9090.
   observability-edge: {}
+  # Wazuh components among themselves. No route out (no feed downloads, no telemetry).
+  wazuh:
+    internal: true
+  # Lets the Wazuh dashboard publish 127.0.0.1:8443.
+  wazuh-edge: {}
 
 volumes:
   bastion-data:
   prometheus-data:
+  wazuh-certs:
+  wazuh-indexer-data:
+  wazuh-api-configuration:
+  wazuh-etc:
+  wazuh-logs:
+  wazuh-queue:
+  wazuh-var-multigroups:
+  wazuh-integrations:
+  wazuh-active-response:
+  wazuh-agentless:
+  wazuh-wodles:
+  wazuh-filebeat-etc:
+  wazuh-filebeat-var:
+  wazuh-dashboard-config:

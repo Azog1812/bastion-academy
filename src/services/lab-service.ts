@@ -5,6 +5,7 @@ import type { Database } from '../db.js';
 import { conflict, forbidden, notFound, unavailable } from '../errors.js';
 import { labHostname, type LabId } from '../labs/catalog.js';
 import type { ChallengeService } from './challenge-service.js';
+import type { EnvironmentRunnerClient, EnvironmentStatus } from './environment-service.js';
 import type { LearningService } from './learning-service.js';
 
 export interface LabStart {
@@ -30,7 +31,7 @@ export class LabRunnerError extends Error {
 }
 
 /** HTTP client for the runner's internal API. The token never leaves this module. */
-export function httpLabRunner(baseUrl: string, token: Buffer, timeoutMs = 60_000): LabRunnerClient {
+export function httpLabRunner(baseUrl: string, token: Buffer, timeoutMs = 60_000): LabRunnerClient & EnvironmentRunnerClient {
   const auth = `Bearer ${token.toString('base64')}`;
   const call = async (method: string, path: string, body?: unknown) => {
     const res = await fetch(new URL(path, baseUrl), {
@@ -44,10 +45,26 @@ export function httpLabRunner(baseUrl: string, token: Buffer, timeoutMs = 60_000
       const code = ((await res.json().catch(() => ({}))) as { error?: unknown }).error;
       throw new LabRunnerError(res.status, typeof code === 'string' ? code : 'unknown');
     }
+    return res.status === 204 ? undefined : await res.json();
+  };
+  // Only the two expected fields are kept from the runner's answer.
+  const status = (body: unknown): EnvironmentStatus => {
+    const b = (body ?? {}) as { state?: unknown; startedAt?: unknown };
+    const state = b.state === 'missing' || b.state === 'stopped' || b.state === 'starting' || b.state === 'running' ? b.state : 'missing';
+    return { state, startedAt: typeof b.startedAt === 'number' ? b.startedAt : null };
   };
   return {
-    start: (req) => call('POST', '/instances', req),
-    stop: (id) => call('DELETE', `/instances/${id}`),
+    start: async (req) => {
+      await call('POST', '/instances', req);
+    },
+    stop: async (id) => {
+      await call('DELETE', `/instances/${id}`);
+    },
+    environmentStatus: async (id) => status(await call('GET', `/environments/${id}`)),
+    startEnvironment: async (id) => status(await call('POST', `/environments/${id}/start`)),
+    stopEnvironment: async (id) => {
+      await call('POST', `/environments/${id}/stop`);
+    },
   };
 }
 

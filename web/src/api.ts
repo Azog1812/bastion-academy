@@ -168,6 +168,18 @@ export interface ChallengeSummary {
   solvedAt: string | null;
 }
 
+/** A shared real tool (ADR 0013), started and stopped from its module. */
+export interface EnvironmentView {
+  id: string;
+  title: string;
+  moduleId: string;
+  available: boolean;
+  state: 'unavailable' | 'missing' | 'stopped' | 'starting' | 'running';
+  url: string | null;
+  login: string | null;
+  stopsAt: string | null;
+}
+
 export interface LabInstance {
   url: string;
   expiresAt: string;
