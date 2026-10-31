@@ -205,6 +205,8 @@ Validate workflows locally with `actionlint` before pushing.
   `typescript` (typescript-eslint supports < 6.1 only).
 - SQLite → single replica; in-memory rate limiting; HS256 (single issuer/verifier).
 - Registration reveals whether an e-mail exists (409); lockout can be abused for targeted DoS.
+- `package.json` `overrides` pins `minimatch` 11 (GHSA-g3hv-75wg-m249, dev-only, via ESLint and
+  typescript-eslint which still ask for 10): remove it once they depend on a fixed version.
 - `node:sqlite` is flagged experimental by Node (warning silenced with `--disable-warning`).
 - The Docker image was never built locally (registry access blocked during authoring);
   it is built and verified in `container.yml`.
