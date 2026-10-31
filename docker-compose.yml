@@ -10,6 +10,9 @@
 #
 # Only the runner touches Docker. Each lab instance gets its own network with no
 # route out; the gateway is the only thing attached to it besides the lab.
+#
+# Observability (ADR 0011), optional: docker compose --profile observability up -d
+#   Prometheus (127.0.0.1:9090) ──metrics (internal)──► bastion:9464, bearer token
 services:
   bastion:
     build: .
@@ -18,9 +21,14 @@ services:
     environment:
       NODE_ENV: production
       LAB_RUNNER_URL: http://lab-runner:4000
+      # Metrics on their own port, reachable only on the internal `metrics` network
+      # (not published). The token is in .env; checked here so an old .env fails clearly.
+      METRICS_PORT: "9464"
+      METRICS_HOST: 0.0.0.0
+      METRICS_TOKEN: "${METRICS_TOKEN:?METRICS_TOKEN is missing from .env, run gen-secrets}"
     ports:
       - "127.0.0.1:3000:3000" # loopback only: not exposed to the LAN
-    networks: [default, lab-control]
+    networks: [default, lab-control, metrics]
     read_only: true
     tmpfs:
       - /tmp:size=16m,mode=1777
@@ -134,12 +142,49 @@ services:
     image: bastion-lab-xss-stored:local
     profiles: [labs]
 
+  # Scrapes the platform and evaluates deploy/prometheus/alerts.yml (Alerts tab).
+  prometheus:
+    image: prom/prometheus:v3.15.1@sha256:fa3302279710be2f21a8301ec17a8b4f2301fd829bd113839b3b6b02b6f191a2
+    profiles: [observability]
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=7d
+    volumes:
+      - ./deploy/prometheus:/etc/prometheus:ro
+      - prometheus-data:/prometheus
+    # A file, not an environment variable: Prometheus reads credentials_file.
+    secrets: [metrics_token]
+    ports:
+      - "127.0.0.1:9090:9090"
+    networks: [metrics, observability-edge]
+    # Not read_only: Compose copies an environment-sourced secret into the container,
+    # which a read-only root refuses. Little is lost: the image runs as nobody, its
+    # files belong to root, and it has no capability; only /prometheus is writable.
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    mem_limit: 512m
+    cpus: 0.5
+    restart: unless-stopped
+
+secrets:
+  metrics_token:
+    environment: METRICS_TOKEN
+
 networks:
   # Platform ↔ runner only. No route out, nothing else joins it.
   lab-control:
     internal: true
   # Lets the gateway publish 127.0.0.1:8088. Lab instances never join it.
   lab-edge: {}
+  # Prometheus → platform metrics port. No route out.
+  metrics:
+    internal: true
+  # Lets Prometheus publish its UI on 127.0.0.1:9090.
+  observability-edge: {}
 
 volumes:
   bastion-data:
+  prometheus-data:

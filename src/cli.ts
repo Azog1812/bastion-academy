@@ -27,6 +27,7 @@ function main(): number {
         `AUDIT_HMAC_KEY=${b64(32)}`,
         `FLAG_HMAC_KEY=${b64(32)}`,
         `LAB_RUNNER_TOKEN=${b64(32)}`,
+        `METRICS_TOKEN=${b64(32)}`,
         `ENCRYPTION_KEYS=k1:${b64(32)}`,
         'ACTIVE_KEY_ID=k1',
         '',

@@ -20,8 +20,8 @@ vulnerability in a lab, capture a flag, then study the Bastion code and test tha
 it. Curriculum goes crescendo from basics to major-certification level. Milestones:
 v3 foundations (paths/modules/lessons, progress, web front-end) → v4 challenges (per-user
 HMAC flags, scoreboard, TOTP MFA) → v5 isolated per-learner lab containers (shipped, ADR 0009)
-→ v6 blue team (detection challenges + level 5 path shipped, ADR 0010; AI tutor and
-observability to come). All six levels have a path (level 6 "Expert": race conditions,
+→ v6 blue team (detection challenges + level 5 path shipped, ADR 0010; observability
+shipped, ADR 0011; AI tutor to come). All six levels have a path (level 6 "Expert": race conditions,
 deserialization, advanced AD and its detection, certification prep). Distribution is **local only** for now (clone + Docker);
 hosting comes later. Lab apps are intentionally vulnerable: they must bind to 127.0.0.1,
 stay out of `src/`, and never weaken the platform's own invariants below.
@@ -35,7 +35,7 @@ explain the *why* (threat, standard, trade-off), not only the *what*.
 npm ci --ignore-scripts      # never run install scripts
 npm run lint                 # ESLint strictTypeChecked + security plugin + custom SQL rules
 npm run typecheck            # tsc strict, noUncheckedIndexedAccess, exactOptionalPropertyTypes
-npm test                     # vitest (272 tests)
+npm test                     # vitest (291 tests)
 npm run test:coverage        # thresholds: lines/statements/functions 90 %, branches 80 %
 npm run check                # lint + typecheck + coverage
 npm run build && node dist/cli.js gen-secrets > .env   # local secrets (gitignored)
@@ -44,6 +44,8 @@ set -a && . ./.env && set +a && NODE_ENV=development npm start
 semgrep scan --config .semgrep/ --metrics=off --error src
 docker compose --profile labs build   # lab images (v5), once
 docker compose up --build    # platform + lab runner + lab gateway, same hardening as prod
+docker compose --profile observability up -d   # + Prometheus on 127.0.0.1:9090 (ADR 0011)
+docker run --rm -v "$PWD/deploy/prometheus:/rules:ro" -w /rules --entrypoint promtool prom/prometheus:v3.15.1 test rules alerts.test.yml   # alert unit tests (also in CI)
 ```
 
 Requires Node ≥ 22.13 (CI: 22 and 24; image: Node 24 distroless).
@@ -55,7 +57,10 @@ src/
   config.ts              zod schema, fail-closed; secrets via VAR or VAR_FILE (*_FILE preferred)
   db.ts                  node:sqlite (built-in, zero native deps), STRICT tables, migrations via
                          PRAGMA user_version, append-only triggers on audit_log
-  audit.ts               HMAC-SHA256 chained audit log; verify() returns firstInvalidSeq
+  audit.ts               HMAC-SHA256 chained audit log; verify() returns firstInvalidSeq;
+                         AUDIT_ACTIONS is the closed list (also the metrics label set)
+  metrics.ts             Prometheus text format on node: built-ins (counter, histogram, scrape-time
+                         gauges), series cap, counters exported at 0 (ADR 0011)
   crypto/envelope.ts     AES-256-GCM, per-note DEK wrapped by KEK from key ring; AAD binds
                          content→(noteId, ownerId) and DEK→(noteId, keyId); rewrap() for rotation
   crypto/password.ts     scrypt N=2^17 r=8 p=1, self-describing format, needsRehash, dummy hash
@@ -88,6 +93,7 @@ src/
                          /v1/challenges/:id/lab (POST start, DELETE stop), /v1/scoreboard, /v1/admin/audit*
   http/session.ts        browser sessions: __Host- HttpOnly refresh cookie, Origin check (ADR 0007)
   http/web.ts            serves web/public + dist/web, page CSP with Trusted Types
+  http/metrics.ts        request metrics by route *pattern*; metricsListener (own port, bearer token)
   app.ts                 createApp(): helmet (CSP default-src 'none', HSTS, frameguard DENY),
                          rate limits, body limit 100 kB, trust proxy from config
   server.ts / cli.ts     entry point (timeouts, graceful shutdown) / operator CLI
@@ -100,9 +106,10 @@ content/                 curriculum as code: index.json (levels, path order), <p
                          (modules, lessons, quizzes), <path>/<lesson>.md (French lesson bodies),
                          challenges.json (challenge → module, points, kind, brief)
 test/unit, test/security, test/helpers.ts (setup(), newUser(), auditActions())
-deploy/k8s (kustomize), deploy/policies (Kyverno signed-image policy)
+deploy/k8s (kustomize), deploy/policies (Kyverno signed-image policy),
+deploy/prometheus (scrape config, alerts.yml, alerts.test.yml for promtool)
 docs/  threat-model · security-controls (OWASP API Top 10 + ASVS 4.0.3) · security-pipeline ·
-       adr/0001-0010 · runbook · openapi.yaml (used by DAST)
+       adr/0001-0011 · runbook · openapi.yaml (used by DAST)
 ```
 
 ## Security invariants — never break these
@@ -152,6 +159,10 @@ docs/  threat-model · security-controls (OWASP API Top 10 + ASVS 4.0.3) · secu
     no regular expressions (ReDoS), keys validated against the dataset's fields, values
     read with `Object.hasOwn`, every dimension capped, evaluations rate-limited. Labels
     (which events are malicious) never leave the server beyond counts and three examples.
+17. **Metrics never widen the attack surface** (ADR 0011). Served only by the separate
+    listener on `METRICS_PORT` with the bearer `METRICS_TOKEN`, never by the API app;
+    label values come from closed sets (route patterns, `AUDIT_ACTIONS`, status codes),
+    never from request data (no ids, e-mails, IPs). A new alert gets a `promtool` test.
 
 ## Conventions
 
@@ -172,7 +183,7 @@ docs/  threat-model · security-controls (OWASP API Top 10 + ASVS 4.0.3) · secu
 
 | Workflow | Content |
 |---|---|
-| `ci.yml` | lint, typecheck, coverage tests on Node 22/24, build |
+| `ci.yml` | lint, typecheck, coverage tests on Node 22/24, build; `promtool` check + alert unit tests (not a required check) |
 | `security.yml` | gitleaks (full history), Semgrep (registry packs + `.semgrep/`, findings emitted as annotations), npm audit + signatures, OSV-Scanner (reusable workflow), dependency review (PR), hadolint, Checkov |
 | `codeql.yml` | security-extended + security-and-quality |
 | `container.yml` | build → non-root / no-shell checks → restricted smoke test → Trivy (SARIF + gate) → SBOM; on main: push GHCR, cosign keyless sign, SBOM attestation, SLSA provenance, self-verify |
@@ -220,8 +231,8 @@ If a CI job is renamed, update the ruleset's required checks in the same change 
    add a local Vault in docker-compose for demos.
 4. **PostgreSQL + Redis** (rate-limit store, multiple replicas) behind the same service layer;
    use row-level security as a second IDOR barrier.
-5. **Observability**: Prometheus metrics (auth failures, lockouts, reuse detections),
-   alerting rules matching `docs/runbook.md`.
+5. ~~**Observability**: Prometheus metrics, alerting rules matching `docs/runbook.md`~~
+   (done 31 Oct 2026, ADR 0011). Next: Alertmanager routing, Grafana dashboard, Wazuh.
 6. **Signed commits** (SSH/GPG) and a release workflow with semantic versioning.
 7. **Fuzzing** of the HTTP layer (e.g. schemathesis against `docs/openapi.yaml`) in CI.
 8. Interview prep: a mock technical interview on this repo (threat model, ADRs, auth-service).

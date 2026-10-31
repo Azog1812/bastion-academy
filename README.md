@@ -20,7 +20,8 @@
 > enveloppe AES-256-GCM, authentification résistante au brute force et à l'énumération,
 > anti-IDOR, journal d'audit infalsifiable, conteneur distroless non-root, et une chaîne
 > CI/CD DevSecOps complète (SAST, SCA, secrets, IaC, DAST, SBOM, signature Sigstore,
-> provenance SLSA). Chaque contrôle est relié à une menace et prouvé par un test.
+> provenance SLSA), plus une supervision Prometheus dont les alertes de sécurité sont
+> elles-mêmes testées. Chaque contrôle est relié à une menace et prouvé par un test.
 
 ## Where this is going: Bastion Academy
 
@@ -36,7 +37,7 @@ from first principles up to the level expected by major industry certifications.
 | **v3: foundations** | Learning paths → modules → lessons, progress tracking, web front-end, built on Bastion's auth core | ✅ API, web UI, all six levels shipped |
 | **v4: challenges** | Per-user HMAC flags (unshareable), scoreboard, anti-cheat, TOTP MFA | ✅ Shipped: 11 challenges (levels 1 to 3), opt-in scoreboard, TOTP + recovery codes |
 | **v5: isolated labs** | One vulnerable container per learner: no egress, TTL, sandboxed runtime, quotas | ✅ Shipped: 10 labs (SQLi, IDOR, mass assignment, JWT `alg:none`, SSRF, path traversal, command injection, stored XSS with a headless-browser victim, a three-flaw chain, a race condition), lab runner + gateway, optional gVisor |
-| **v6: blue team** | Level 5 path (logging, SIEM, detection engineering, incident response, forensics) and detection challenges | ✅ Shipped: 6 lessons, 5 detection challenges graded on precision **and** recall · AI tutor, observability: planned |
+| **v6: blue team** | Level 5 path (logging, SIEM, detection engineering, incident response, forensics) and detection challenges | ✅ Shipped: 6 lessons, 5 detection challenges graded on precision **and** recall · Observability shipped (Prometheus, tested alerts, [ADR 0011](docs/adr/0011-observability.md)) · AI tutor: planned |
 
 The platform is designed to **run locally** (`git clone` + Docker). There is no public
 hosted instance yet.
@@ -158,6 +159,10 @@ docker compose --profile labs build   # lab images, once
 docker compose up --build             # platform + lab runner + lab gateway, all on 127.0.0.1
 ```
 
+**With monitoring**: `docker compose --profile observability up -d` adds Prometheus on
+**http://127.0.0.1:9090**. Replay a refresh token and watch `BastionRefreshTokenReuse`
+fire in the *Alerts* tab ([ADR 0011](docs/adr/0011-observability.md)).
+
 | Endpoint | Purpose |
 |---|---|
 | `GET /v1/curriculum` | Levels, paths, modules and lessons, with your progress and which modules are unlocked |
@@ -277,7 +282,7 @@ generic errors with correlation ids · secret redaction in logs · secrets read 
 files rather than env vars · socket timeouts · privileged operations only via an
 operator CLI, never over HTTP.
 
-**272 tests, ~99 % line coverage** — most of them are *abuse cases*, not happy paths.
+**291 tests, ~99 % line coverage** — most of them are *abuse cases*, not happy paths.
 
 ### Supply chain & infrastructure
 
@@ -291,6 +296,7 @@ operator CLI, never over HTTP.
 | Container | Distroless, UID 65532, no shell (asserted in CI), smoke-tested with `--read-only --cap-drop ALL`, Trivy gate |
 | DAST | OWASP ZAP API scan **authenticated with a real token**, driven by the OpenAPI spec |
 | Release | Push of the exact scanned image → **cosign keyless signature** → signed **CycloneDX SBOM** → **SLSA provenance** → self-verification |
+| Monitoring | Prometheus metrics on a **separate, token-protected listener**, labels from closed sets only (no personal data, no cardinality DoS), **11 alerts unit-tested with `promtool`** in CI and linked to the [runbook](docs/runbook.md) |
 | Runtime | Kubernetes PSS *restricted*, default-deny NetworkPolicy with **no egress**, no SA token, secrets as 0400 files, **Kyverno rejects unsigned images** |
 | Pipeline itself | `permissions: {}`, every action **SHA-pinned**, `--ignore-scripts`, `persist-credentials: false`, harden-runner, OpenSSF Scorecard |
 

@@ -91,6 +91,7 @@ Standards: **OWASP API Security Top 10 (2023)** and **OWASP ASVS 4.0.3** (Level 
 | 7.1.4 | Logs contain enough to investigate | Actor, action, target, IP, outcome, timestamp, request id |
 | 7.3.3 | Logs protected from modification | Append-only triggers + HMAC chain |
 | 7.4.1 | Generic error messages with a correlation id | Central error handler, `requestId` |
+| (beyond ASVS) | Security events acted upon, not only stored | Audit events exported as Prometheus counters; tested alerts for token replay, credential stuffing, lockouts, MFA guessing, authorization probing, ciphertext tampering (ADR 0011) |
 
 ### V8 Data protection · V14 Configuration
 | ID | Requirement (summary) | How |
@@ -106,6 +107,16 @@ Standards: **OWASP API Security Top 10 (2023)** and **OWASP ASVS 4.0.3** (Level 
 | 14.4.6 | Referrer-Policy | `no-referrer` |
 | 14.4.7 | Anti-framing | CSP `frame-ancestors` + `X-Frame-Options: DENY` |
 | 14.5.2 | Origin header not used for access control | Access control relies on bearer tokens. Only the three browser-session routes read a cookie; there the `Origin` check is an extra CSRF barrier on top of `SameSite=Strict` and JSON-only bodies, never the sole control |
+
+## Observability (v6, ADR 0011) — metrics without a new attack surface
+
+| Control | Implementation | Evidence |
+|---|---|---|
+| Monitoring endpoint not exposed (ASVS 14.3.x, CIS: separate admin interfaces) | Own listener on `METRICS_PORT`, not the API's; not published, not in the Service; NetworkPolicy to Prometheus only | `observability.test.ts`, `deploy/k8s/networkpolicy.yaml` |
+| Authenticated scrape (ASVS 4.1.x) | Bearer `METRICS_TOKEN`, SHA-256 + `timingSafeEqual`; Prometheus reads it from a file; fail-closed config | `observability.test.ts`, `config-and-audit.test.ts` |
+| No personal data in telemetry (GDPR data minimisation, ASVS 8.3.x) | Labels from closed sets: route patterns, audit actions, status codes; no user id, e-mail or IP | `observability.test.ts` › route pattern, personal data |
+| Resource exhaustion (OWASP API4:2023) | Per-metric series cap, drops counted and alerted | `metrics.test.ts` › cardinality |
+| Alerts that work | `promtool test rules` in CI: each alert fires on its attack and not on normal traffic; counters exported at 0 so the first event alerts | `deploy/prometheus/alerts.test.yml`, `observability.test.ts` › regression |
 
 ## Detection challenges (v6, ADR 0010) — evaluating learner input safely
 

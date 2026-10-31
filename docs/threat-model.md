@@ -68,6 +68,7 @@ Trust boundaries crossed by data:
 5. **CI → cluster**: an image only runs if its Sigstore signature matches this repository's workflow identity.
 6. **Platform → lab runner** (v5): internal network, shared token, closed lab catalog; the runner is the only holder of the Docker socket.
 7. **Lab → anything**: a lab container is assumed compromised (that is its purpose). It sits alone with the gateway on an `internal` network, unprivileged and read-only; the browser reaches it on its own origin (`l<id>.lab.localhost`), never the platform's.
+8. **Monitoring → API** (ADR 0011): Prometheus scrapes a separate metrics port that neither the ingress nor the published ports reach, with a bearer token; it learns counts, never identities.
 
 ```
 browser ─► bastion :3000 ──(lab-control, internal, token)──► lab-runner ── Docker socket
@@ -119,6 +120,9 @@ browser ─► lab-gateway :8088 ──(per-instance internal network)──► 
 | **E**levation of privilege | Detection rules (v6) | Field names used to reach object internals (`__proto__`, `constructor`) | Rule keys validated against the dataset's field list before evaluation; values read with `Object.hasOwn` | `detection.test.ts` › rule language |
 | **I**nformation disclosure | Detection challenges | Recovering the answer key (which events are malicious) | Labels stay in the evaluator; responses carry counts and at most three examples; ids follow time order | `detection.test.ts` › datasets |
 | **D**enial of service | Labs | Starting many labs to exhaust the host | One running lab per learner (`UNIQUE(user_id)`, race-proof), per-account start rate limit, TTL enforced by both platform and runner, per-container resource caps | `labs.test.ts` |
+| **I**nformation disclosure | Metrics (ADR 0011) | Reading `/metrics` to count accounts or to see whether a brute force is noticed; personal data copied into the monitoring system | Separate listener and port (never on the API, absent from the Service and ingress, `internal` network / NetworkPolicy), 256-bit bearer token compared in constant time, configuration refuses a port without a token; labels from closed sets only (route patterns, audit actions), never ids, e-mails or IPs | `observability.test.ts` |
+| **D**enial of service | Metrics | Cardinality explosion: crafted URLs or values creating one series each until memory runs out | Route patterns instead of URLs, fixed method list, per-metric series cap with a counted (and alerted) drop | `metrics.test.ts`, `observability.test.ts` |
+| **R**epudiation / detection | Security events | An attack in progress that nobody notices (stolen refresh token, password spray, database tampering) | Audit events counted by action and outcome; eleven Prometheus alerts linked to runbook sections, unit-tested with `promtool test rules` in CI | `deploy/prometheus/alerts.test.yml` |
 | **E**levation of privilege | CI | Malicious dependency or action | `npm ci --ignore-scripts`, `npm audit signatures`, SHA-pinned actions, least-privilege tokens, harden-runner | `.github/workflows/` |
 
 ## 4. Abuse cases worth highlighting

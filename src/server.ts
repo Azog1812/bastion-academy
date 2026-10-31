@@ -1,15 +1,17 @@
+import { createServer } from 'node:http';
 import { createApp } from './app.js';
 import { loadConfig } from './config.js';
 import { openDatabase } from './db.js';
 import { loadCurriculum } from './curriculum/catalog.js';
 import { createLogger } from './logger.js';
+import { metricsListener } from './http/metrics.js';
 
 const config = loadConfig();
 const logger = createLogger(config.LOG_LEVEL);
 const db = openDatabase(config.DATABASE_PATH);
 // Invalid content stops the boot, like invalid config: fail closed.
 const curriculum = loadCurriculum();
-const { app, services } = createApp({ config, db, logger, curriculum });
+const { app, services, metrics } = createApp({ config, db, logger, curriculum });
 
 // Expired labs are destroyed even if nobody comes back to stop them (the runner reaps on its own too).
 const labReaper = setInterval(() => {
@@ -31,6 +33,18 @@ const server = app.listen(config.PORT, config.HOST, () => {
   );
 });
 
+// Metrics on their own listener (ADR 0011): the API port never serves them.
+const metricsServer =
+  config.METRICS_PORT !== undefined && config.METRICS_TOKEN
+    ? createServer(metricsListener(metrics.registry, config.METRICS_TOKEN, logger)).listen(config.METRICS_PORT, config.METRICS_HOST, () => {
+        logger.info({ port: config.METRICS_PORT, host: config.METRICS_HOST }, 'metrics listening');
+      })
+    : undefined;
+if (metricsServer) {
+  metricsServer.headersTimeout = 5_000;
+  metricsServer.requestTimeout = 10_000;
+}
+
 // Defensive socket timeouts against slow-loris style resource exhaustion.
 server.headersTimeout = 15_000;
 server.requestTimeout = 30_000;
@@ -44,6 +58,7 @@ function shutdown(signal: string): void {
   logger.info({ signal }, 'shutting down');
   const force = setTimeout(() => process.exit(1), 10_000);
   force.unref();
+  metricsServer?.close();
   server.close(() => {
     db.close();
     logger.info('bye');

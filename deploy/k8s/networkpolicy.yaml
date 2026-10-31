@@ -26,5 +26,28 @@ spec:
       ports:
         - protocol: TCP
           port: 3000
+---
+# Prometheus scrapes the metrics port; nothing else may reach it.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: bastion-allow-prometheus
+  namespace: bastion
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: bastion
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - protocol: TCP
+          port: 9464
 # No egress rule at all: the API needs no outbound traffic (not even DNS).
 # A compromised pod cannot exfiltrate data or reach a C2 server.

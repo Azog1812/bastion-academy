@@ -28,6 +28,7 @@ export interface TestContext {
   db: Database;
   app: ReturnType<typeof createApp>['app'];
   services: ReturnType<typeof createApp>['services'];
+  metrics: ReturnType<typeof createApp>['metrics'];
   http: ReturnType<typeof request>;
 }
 
@@ -45,7 +46,7 @@ export function setup(
 ): TestContext {
   const config = loadConfig(testEnv(opts.env));
   const db = openDatabase(':memory:');
-  const { app, services } = createApp({
+  const { app, services, metrics } = createApp({
     config,
     db,
     logger: createLogger('silent'),
@@ -54,7 +55,7 @@ export function setup(
     ...(opts.labRunner ? { labRunner: opts.labRunner } : {}),
     rateLimits: { global: 10_000, auth: 10_000, refresh: 10_000, quiz: 10_000, ...opts.rateLimits },
   });
-  return { config, db, app, services, http: request(app) };
+  return { config, db, app, services, metrics, http: request(app) };
 }
 
 export interface Session {

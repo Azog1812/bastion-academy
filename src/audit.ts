@@ -12,41 +12,46 @@ import type { Database } from './db.js';
  * by SQLite triggers.
  */
 
-export type AuditAction =
-  | 'auth.register'
-  | 'auth.login'
-  | 'auth.logout'
-  | 'auth.logout_all'
-  | 'auth.refresh'
-  | 'auth.refresh_reuse_detected'
-  | 'auth.lockout'
-  | 'auth.password_change'
-  | 'auth.mfa'
-  | 'auth.reauth'
-  | 'mfa.setup'
-  | 'mfa.enable'
-  | 'mfa.disable'
-  | 'mfa.recovery_code_used'
-  | 'profile.update'
-  | 'challenge.submit'
-  | 'challenge.flag_shared'
-  | 'lab.start'
-  | 'lab.stop'
-  | 'lab.expire'
-  | 'note.create'
-  | 'note.read'
-  | 'note.update'
-  | 'note.delete'
-  | 'lesson.complete'
-  | 'authz.denied'
-  | 'admin.audit_read'
-  | 'admin.audit_verify'
-  | 'admin.promote'
-  | 'admin.key_rotation';
+export const AUDIT_ACTIONS = [
+  'auth.register',
+  'auth.login',
+  'auth.logout',
+  'auth.logout_all',
+  'auth.refresh',
+  'auth.refresh_reuse_detected',
+  'auth.lockout',
+  'auth.password_change',
+  'auth.mfa',
+  'auth.reauth',
+  'mfa.setup',
+  'mfa.enable',
+  'mfa.disable',
+  'mfa.recovery_code_used',
+  'profile.update',
+  'challenge.submit',
+  'challenge.flag_shared',
+  'lab.start',
+  'lab.stop',
+  'lab.expire',
+  'note.create',
+  'note.read',
+  'note.update',
+  'note.delete',
+  'lesson.complete',
+  'authz.denied',
+  'admin.audit_read',
+  'admin.audit_verify',
+  'admin.promote',
+  'admin.key_rotation',
+] as const;
+
+export type AuditAction = (typeof AUDIT_ACTIONS)[number];
+
+export const AUDIT_OUTCOMES = ['success', 'failure', 'denied'] as const;
 
 export interface AuditEvent {
   action: AuditAction;
-  outcome: 'success' | 'failure' | 'denied';
+  outcome: (typeof AUDIT_OUTCOMES)[number];
   actorId?: string | null;
   target?: string | null;
   ip?: string | null;
@@ -72,6 +77,8 @@ export class AuditLog {
   constructor(
     private readonly db: Database,
     private readonly key: Buffer,
+    /** Called after each entry is written: metrics count security events from the one place that sees them all. */
+    private readonly onRecord?: (event: AuditEvent) => void,
   ) {}
 
   private digest(prev: string, e: Omit<AuditRow, 'seq' | 'prev_hash' | 'hash'>): string {
@@ -100,6 +107,7 @@ export class AuditLog {
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(entry.ts, entry.actor_id, entry.action, entry.target, entry.ip, entry.outcome, entry.details, prev, this.digest(prev, entry));
+    this.onRecord?.(event);
   }
 
   list(limit: number, beforeSeq?: number): AuditRow[] {
