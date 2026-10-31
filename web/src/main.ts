@@ -3,6 +3,7 @@ import {
   api,
   ApiError,
   completeMfa,
+  passkeyLoginOptions,
   isLoggedIn,
   login,
   logout,
@@ -20,6 +21,7 @@ import { environmentPanel } from './environments.js';
 import { h, renderBlocks } from './dom.js';
 import { parseMarkdown } from './markdown.js';
 import { alert, errorMessage, onSubmit, show } from './ui.js';
+import { getAssertion, passkeysSupported, webauthnMessage, type RequestOptions } from './passkeys.js';
 
 /**
  * Single-page app with hash routes (#/, #/connexion, #/lecon/<id>): the
@@ -52,7 +54,7 @@ function renderNav(): void {
 
 /* ---------- authentication ---------- */
 
-/** Second login step: the password was right, the account has TOTP enabled. */
+/** Second login step: the password was right, the account has a second factor (TOTP or passkey). */
 function mfaView(mfaToken: string): void {
   const code = h('input', { type: 'text', name: 'code', required: true, inputmode: 'numeric', autocomplete: 'one-time-code', maxlength: '19' });
   const status = h('div', { 'aria-live': 'polite' });
@@ -64,11 +66,12 @@ function mfaView(mfaToken: string): void {
     h('label', {}, 'Code', code),
     status,
     h('button', { type: 'submit' }, 'Vérifier'),
+    ...(passkeysSupported() ? [passkeyButton(mfaToken, status)] : []),
     h('p', { class: 'hint' }, h('a', { href: '#/connexion' }, 'Recommencer la connexion')),
   );
   onSubmit(form, status, async () => {
     try {
-      await completeMfa(mfaToken, code.value.replaceAll(' ', ''));
+      await completeMfa(mfaToken, { code: code.value.replaceAll(' ', '') });
       location.hash = '#/';
     } finally {
       code.value = '';
@@ -76,6 +79,26 @@ function mfaView(mfaToken: string): void {
   });
   show(form);
   code.focus();
+}
+
+/** The phishing-resistant way through the MFA step: the authenticator signs for this origin only. */
+function passkeyButton(mfaToken: string, status: HTMLElement): HTMLElement {
+  const b = h('button', { type: 'button', class: 'secondary' }, 'Utiliser une passkey');
+  b.addEventListener('click', () => {
+    b.disabled = true;
+    void (async () => {
+      try {
+        const assertion = await getAssertion(await passkeyLoginOptions<RequestOptions>(mfaToken));
+        await completeMfa(mfaToken, { passkey: assertion });
+        location.hash = '#/';
+      } catch (err) {
+        status.replaceChildren(alert(webauthnMessage(err) ?? errorMessage(err)));
+      } finally {
+        b.disabled = false;
+      }
+    })();
+  });
+  return b;
 }
 
 const afterLogin = (step: LoginStep): void => {

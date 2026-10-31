@@ -6,7 +6,8 @@ import { generateRefreshToken, hashRefreshToken, type Role, type TokenSigner } f
 import { transaction, type Database } from '../db.js';
 import { badRequest, conflict, unauthorized } from '../errors.js';
 import { passwordProblem } from '../security/password-policy.js';
-import type { MfaService } from './mfa-service.js';
+import type { MfaService, SecondFactor } from './mfa-service.js';
+import type { AssertionResponse, PasskeyService } from './passkey-service.js';
 
 interface UserRow {
   id: string;
@@ -67,6 +68,7 @@ export class AuthService {
     private readonly signer: TokenSigner,
     private readonly audit: AuditLog,
     private readonly mfa: MfaService,
+    private readonly passkeys: PasskeyService,
   ) {
     this.dummyHash = createDummyHash(cfg.SCRYPT_LOG_N);
   }
@@ -124,7 +126,7 @@ export class AuthService {
       this.db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(upgraded, user.id);
     }
 
-    if (this.mfa.isEnabled(user.id)) {
+    if (this.mfa.hasAnyFactor(user.id)) {
       // The failed-login counter is only reset once the second factor passes:
       // a stolen password must not buy unlimited code guesses.
       this.audit.record({ action: 'auth.login', outcome: 'success', actorId: user.id, ip: ctx.ip, details: { mfa: 'pending' } });
@@ -146,8 +148,17 @@ export class AuthService {
     return { mfaRequired: true, mfaToken: token, expiresIn: MFA_CHALLENGE_TTL_MS / 1000 };
   }
 
-  /** Second login step: a TOTP code or a recovery code against a pending challenge. */
-  async completeMfa(mfaToken: string, code: string, ctx: RequestContext): Promise<TokenPair> {
+  /** Passkey options for a pending MFA step. Does not spend an attempt: it proves nothing yet. */
+  passkeyOptions(mfaToken: string) {
+    const row = this.db
+      .prepare('SELECT user_id FROM mfa_challenges WHERE token_hash = ? AND expires_at > ? AND attempts < ?')
+      .get(sha256(mfaToken), Date.now(), MFA_MAX_ATTEMPTS) as { user_id: string } | undefined;
+    if (!row) throw unauthorized(INVALID_MFA);
+    return this.passkeys.loginOptions(row.user_id, sha256(mfaToken));
+  }
+
+  /** Second login step: a TOTP code, a recovery code or a passkey assertion against a pending challenge. */
+  async completeMfa(mfaToken: string, proof: string | { passkey: AssertionResponse }, ctx: RequestContext): Promise<TokenPair> {
     const hash = sha256(mfaToken);
     // Atomic attempt counter (invariant 5): concurrent guesses cannot exceed the cap.
     const row = this.db
@@ -170,7 +181,8 @@ export class AuthService {
       throw unauthorized(INVALID_MFA);
     }
 
-    const factor = this.mfa.verify(user.id, code, ctx.ip);
+    const factor: SecondFactor | null =
+      typeof proof === 'string' ? this.mfa.verify(user.id, proof, ctx.ip) : this.passkeys.verifyLogin(user.id, hash, proof.passkey, ctx.ip) ? 'passkey' : null;
     if (!factor) {
       // Wrong codes feed the same progressive lockout as wrong passwords.
       this.registerFailure(user, ctx, 'auth.mfa');
@@ -194,11 +206,16 @@ export class AuthService {
     return { email: user.email };
   }
 
-  profile(userId: string): { displayName: string | null; mfaEnabled: boolean } {
+  profile(userId: string): { displayName: string | null; mfaEnabled: boolean; totpEnabled: boolean; passkeys: number } {
     const row = this.db.prepare('SELECT display_name FROM users WHERE id = ?').get(userId) as
       | { display_name: string | null }
       | undefined;
-    return { displayName: row?.display_name ?? null, mfaEnabled: this.mfa.isEnabled(userId) };
+    return {
+      displayName: row?.display_name ?? null,
+      mfaEnabled: this.mfa.hasAnyFactor(userId),
+      totpEnabled: this.mfa.isEnabled(userId),
+      passkeys: this.passkeys.count(userId),
+    };
   }
 
   /** Opt-in scoreboard pseudonym; null takes the user off the scoreboard. */

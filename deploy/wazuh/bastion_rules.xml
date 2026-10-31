@@ -78,8 +78,19 @@
 
   <rule id="100207" level="7">
     <if_sid>100200</if_sid>
-    <action type="osmatch">^mfa.recovery_code_used$|^mfa.disable$</action>
+    <action type="osmatch">^mfa.recovery_code_used$|^mfa.disable$|^passkey.delete$</action>
     <description>Bastion: second factor weakened for $(actor) ($(action))</description>
+  </rule>
+
+  <!-- A security key signed with a counter already seen: two copies of the key exist (ADR 0016). -->
+  <rule id="100211" level="12">
+    <if_sid>100200</if_sid>
+    <action type="osmatch">^passkey.clone_detected$</action>
+    <description>Bastion: passkey of $(actor) used with a stale signature counter (cloned authenticator?)</description>
+    <mitre>
+      <id>T1556</id>
+    </mitre>
+    <group>authentication_failures,</group>
   </rule>
 
   <!-- Failed logins: each one quietly, and the burst loudly (credential stuffing). -->
