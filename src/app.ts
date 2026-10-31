@@ -15,6 +15,7 @@ import { AuthService } from './services/auth-service.js';
 import { ChallengeService } from './services/challenge-service.js';
 import { LearningService } from './services/learning-service.js';
 import { MfaService } from './services/mfa-service.js';
+import { PasskeyService } from './services/passkey-service.js';
 import { httpLabRunner, LabService, type LabRunnerClient } from './services/lab-service.js';
 import { NoteService } from './services/note-service.js';
 import { EnvironmentService, type EnvironmentRunnerClient } from './services/environment-service.js';
@@ -81,7 +82,8 @@ export function createApp({ config, db, logger, curriculum, rateLimits, web, lab
   });
   const ring = { keys: config.ENCRYPTION_KEYS, activeKeyId: config.ACTIVE_KEY_ID };
   const mfa = new MfaService(db, ring, audit, config.MFA_ISSUER);
-  const auth = new AuthService(db, config, signer, audit, mfa);
+  const passkeys = new PasskeyService(db, audit, { id: config.WEBAUTHN_RP_ID, origins: config.WEBAUTHN_ORIGINS, name: config.MFA_ISSUER });
+  const auth = new AuthService(db, config, signer, audit, mfa, passkeys);
   const notes = new NoteService(db, ring, audit);
   const learning = new LearningService(db, curriculum, audit);
   const challenges = new ChallengeService(db, curriculum, learning, audit, config.FLAG_HMAC_KEY);
@@ -159,6 +161,7 @@ export function createApp({ config, db, logger, curriculum, rateLimits, web, lab
       labs,
       environments,
       mfa,
+      passkeys,
       audit,
       signer,
       rateLimits: { auth: limits.auth, refresh: limits.refresh, quiz: limits.quiz, lab: rateLimits?.lab ?? config.RATE_LIMIT_LAB },

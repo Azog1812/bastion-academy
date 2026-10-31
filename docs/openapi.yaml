@@ -75,12 +75,29 @@ paths:
   /v1/auth/mfa:
     post:
       tags: [auth, mfa]
-      summary: Complete a login with a TOTP code or a recovery code
-      description: The challenge is single-use, expires after 5 minutes and dies after 5 wrong codes. Wrong codes count towards the account lockout. A TOTP code is never accepted twice.
+      summary: Complete a login with a TOTP code, a recovery code or a passkey
+      description: >-
+        The challenge is single-use, expires after 5 minutes and dies after 5 wrong codes or assertions.
+        Wrong ones count towards the account lockout. A TOTP code is never accepted twice; a passkey
+        assertion answers a challenge from /v1/auth/mfa/passkey/options for this same MFA step (ADR 0016).
       security: []
       requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/MfaLogin" } } } }
       responses:
         "200": { description: Authenticated, content: { application/json: { schema: { $ref: "#/components/schemas/TokenPair" } } } }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+  /v1/auth/mfa/passkey/options:
+    post:
+      tags: [auth, mfa]
+      summary: WebAuthn request options for a pending MFA step
+      description: A single-use challenge (5 minutes), bound to this MFA step, and the account's credential ids. Spends no attempt.
+      security: []
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, additionalProperties: false, required: [mfaToken], properties: { mfaToken: { type: string, minLength: 20, maxLength: 100 } } } } }
+      responses:
+        "200": { description: PublicKeyCredentialRequestOptions (base64url fields), content: { application/json: { schema: { type: object } } } }
         "400": { $ref: "#/components/responses/ValidationError" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "429": { $ref: "#/components/responses/RateLimited" }
@@ -220,6 +237,55 @@ paths:
         "400": { $ref: "#/components/responses/ValidationError" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "429": { $ref: "#/components/responses/RateLimited" }
+  /v1/me/passkeys:
+    get:
+      tags: [mfa]
+      summary: My passkeys (name and dates only, no key material)
+      responses:
+        "200": { description: Passkeys, content: { application/json: { schema: { type: object, properties: { items: { type: array, items: { type: object, properties: { id: { type: string, format: uuid }, name: { type: string }, createdAt: { type: string, format: date-time }, lastUsedAt: { type: string, format: date-time, nullable: true } } } } } } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      tags: [mfa]
+      summary: Register a passkey (the response of navigator.credentials.create)
+      description: Checks type, challenge, exact origin, RP ID hash, user presence and the COSE key (Ed25519, ES256, RS256 ≥ 2048 bits). The first second factor of an account returns recovery codes, once.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [name, credential]
+              properties:
+                name: { type: string, minLength: 1, maxLength: 40 }
+                credential: { $ref: "#/components/schemas/PasskeyCredential" }
+      responses:
+        "201": { description: Registered, content: { application/json: { schema: { type: object, properties: { id: { type: string, format: uuid }, name: { type: string }, recoveryCodes: { type: array, nullable: true, items: { type: string } } } } } } }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "409": { $ref: "#/components/responses/Error" }
+  /v1/me/passkeys/options:
+    post:
+      tags: [mfa]
+      summary: WebAuthn creation options (password required)
+      requestBody: { required: true, content: { application/json: { schema: { type: object, additionalProperties: false, required: [password], properties: { password: { type: string } } } } } }
+      responses:
+        "200": { description: PublicKeyCredentialCreationOptions (base64url fields, attestation none), content: { application/json: { schema: { type: object } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "409": { $ref: "#/components/responses/Error" }
+  /v1/me/passkeys/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    delete:
+      tags: [mfa]
+      summary: Remove a passkey (password; a recovery code too if it is the last second factor)
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, additionalProperties: false, required: [password], properties: { password: { type: string }, code: { type: string, minLength: 6, maxLength: 19 } } } } }
+      responses:
+        "204": { description: Removed }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { description: Not one of my passkeys, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
   /v1/me/password:
     post:
       tags: [me]
@@ -735,12 +801,47 @@ components:
       properties:
         code: { type: string, minLength: 6, maxLength: 19, description: 6-digit TOTP code }
     MfaLogin:
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required: [mfaToken, code]
+          properties:
+            mfaToken: { type: string, minLength: 20, maxLength: 100 }
+            code: { type: string, minLength: 6, maxLength: 19, description: 6-digit TOTP code or XXXX-XXXX-XXXX-XXXX recovery code }
+        - type: object
+          additionalProperties: false
+          required: [mfaToken, passkey]
+          properties:
+            mfaToken: { type: string, minLength: 20, maxLength: 100 }
+            passkey:
+              type: object
+              additionalProperties: false
+              required: [id, type, response]
+              properties:
+                id: { type: string, maxLength: 1400 }
+                type: { type: string, enum: [public-key] }
+                response:
+                  type: object
+                  additionalProperties: false
+                  required: [clientDataJSON, authenticatorData, signature]
+                  properties:
+                    clientDataJSON: { type: string, maxLength: 4096 }
+                    authenticatorData: { type: string, maxLength: 4096 }
+                    signature: { type: string, maxLength: 1400 }
+    PasskeyCredential:
       type: object
       additionalProperties: false
-      required: [mfaToken, code]
+      required: [id, type, response]
       properties:
-        mfaToken: { type: string, minLength: 20, maxLength: 100 }
-        code: { type: string, minLength: 6, maxLength: 19, description: 6-digit TOTP code or XXXX-XXXX-XXXX-XXXX recovery code }
+        id: { type: string, maxLength: 1400 }
+        type: { type: string, enum: [public-key] }
+        response:
+          type: object
+          additionalProperties: false
+          required: [clientDataJSON, attestationObject]
+          properties:
+            clientDataJSON: { type: string, maxLength: 4096 }
+            attestationObject: { type: string, maxLength: 12000 }
     ChallengeSummary:
       type: object
       properties:

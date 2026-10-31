@@ -64,7 +64,7 @@ as such in the code.
 - **Removal** needs both the password and a valid code: neither a hijacked session nor a
   stolen password alone can turn MFA off.
 
-Rejected for now: WebAuthn/passkeys (phishing-resistant, the better long-term option, but
+Rejected for now (since done, ADR 0016): WebAuthn/passkeys (phishing-resistant, the better long-term option, but
 a much larger surface to build without a library; next step on the roadmap); SMS (SIM swap,
 and no sending channel in a local install).
 
