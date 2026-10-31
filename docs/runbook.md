@@ -34,6 +34,28 @@ docker compose up --build                    # platform, lab runner, lab gateway
 - **Rotating `LAB_RUNNER_TOKEN`**: generate a new value, update `.env`, then
   `docker compose up -d` (platform and runner restart together; running labs survive).
 
+## Wazuh (ADR 0013)
+
+```bash
+node dist/cli.js gen-secrets > .env          # includes WAZUH_ADMIN/DASHBOARD/API_PASSWORD
+docker compose --profile wazuh up -d         # once: certificates, users, then the stack (~4 GiB RAM, ~7 GiB disk)
+```
+
+Afterwards learners start and stop it from the Wazuh module card. Dashboard:
+**https://localhost:8443**, user `admin`, password `WAZUH_ADMIN_PASSWORD`. The browser warns
+about the certificate: it comes from the private CA made at setup (`wazuh-certs` volume).
+
+- **"Not installed yet"** in the UI: the containers do not exist, run the command above.
+- **Stuck on "starting"**: the indexer needs one to two minutes; check
+  `docker logs bastion-wazuh-indexer`. Below ~4 GiB of free RAM it may never become healthy.
+- **It stopped by itself**: the runner stops it after 8 hours (log line
+  `environments stopped after their maximum run time`).
+- **Changing a password after the first start**: the indexer only reads `internal_users.yml`
+  when it creates its security index. Either reset everything
+  (`docker compose --profile wazuh down -v`, update `.env`, `up -d` again: alerts are lost), or
+  run `securityadmin.sh` inside `bastion-wazuh-indexer` with the admin certificate.
+- **Removing it**: `docker compose --profile wazuh down -v` (containers, certificates, data).
+
 ## Observability (ADR 0011)
 
 ```bash

@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomInt } from 'node:crypto';
 import { AuditLog } from './audit.js';
 import { loadConfig } from './config.js';
 import { openDatabase } from './db.js';
@@ -19,6 +19,19 @@ import { NoteService } from './services/note-service.js';
 const [command, arg] = process.argv.slice(2);
 const b64 = (n: number) => randomBytes(n).toString('base64');
 
+/**
+ * A password for the Wazuh stack. Wazuh's policy asks for upper case, lower case, a
+ * digit and a symbol; 24 random characters from 64 give ~144 bits. Symbols are limited
+ * to "." and "-", which survive YAML, shell and URL contexts without escaping.
+ */
+function wazuhPassword(): string {
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.-';
+  for (;;) {
+    const p = Array.from({ length: 24 }, () => alphabet.charAt(randomInt(alphabet.length))).join('');
+    if (/[A-Z]/.test(p) && /[a-z]/.test(p) && /[0-9]/.test(p) && /[.-]/.test(p)) return p;
+  }
+}
+
 function main(): number {
   if (command === 'gen-secrets') {
     process.stdout.write(
@@ -28,6 +41,9 @@ function main(): number {
         `FLAG_HMAC_KEY=${b64(32)}`,
         `LAB_RUNNER_TOKEN=${b64(32)}`,
         `METRICS_TOKEN=${b64(32)}`,
+        `WAZUH_ADMIN_PASSWORD=${wazuhPassword()}`,
+        `WAZUH_DASHBOARD_PASSWORD=${wazuhPassword()}`,
+        `WAZUH_API_PASSWORD=${wazuhPassword()}`,
         `ENCRYPTION_KEYS=k1:${b64(32)}`,
         'ACTIVE_KEY_ID=k1',
         '',

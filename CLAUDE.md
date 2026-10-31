@@ -23,7 +23,8 @@ HMAC flags, scoreboard, TOTP MFA) → v5 isolated per-learner lab containers (sh
 → v6 blue team (detection challenges + level 5 path shipped, ADR 0010; observability
 shipped, ADR 0011; AI tutor to come). All six levels have a path (level 6 "Expert": race conditions,
 deserialization, advanced AD and its detection, certification prep). Heavy modules are
-optional, added per learner from the UI (ADR 0012); the first is Wazuh (level 5). Distribution is **local only** for now (clone + Docker);
+optional, added per learner from the UI (ADR 0012); the first is Wazuh (level 5), whose real
+stack learners start and stop from the UI (ADR 0013). Distribution is **local only** for now (clone + Docker);
 hosting comes later. Lab apps are intentionally vulnerable: they must bind to 127.0.0.1,
 stay out of `src/`, and never weaken the platform's own invariants below.
 
@@ -36,7 +37,7 @@ explain the *why* (threat, standard, trade-off), not only the *what*.
 npm ci --ignore-scripts      # never run install scripts
 npm run lint                 # ESLint strictTypeChecked + security plugin + custom SQL rules
 npm run typecheck            # tsc strict, noUncheckedIndexedAccess, exactOptionalPropertyTypes
-npm test                     # vitest (299 tests)
+npm test                     # vitest (314 tests)
 npm run test:coverage        # thresholds: lines/statements/functions 90 %, branches 80 %
 npm run check                # lint + typecheck + coverage
 npm run build && node dist/cli.js gen-secrets > .env   # local secrets (gitignored)
@@ -46,6 +47,7 @@ semgrep scan --config .semgrep/ --metrics=off --error src
 docker compose --profile labs build   # lab images (v5), once
 docker compose up --build    # platform + lab runner + lab gateway, same hardening as prod
 docker compose --profile observability up -d   # + Prometheus on 127.0.0.1:9090 (ADR 0011)
+docker compose --profile wazuh up -d   # once: real Wazuh (~4 GiB), then started/stopped from the UI (ADR 0013)
 docker run --rm -v "$PWD/deploy/prometheus:/rules:ro" -w /rules --entrypoint promtool prom/prometheus:v3.15.1 test rules alerts.test.yml   # alert unit tests (also in CI)
 ```
 
@@ -77,10 +79,13 @@ src/
                          (shared-flag detection), opt-in scoreboard (ADR 0008)
   challenges/generators  closed set of artifact kinds (content picks one, never ships code)
   labs/catalog.ts        closed set of labs (image, port); content picks one by id (ADR 0009)
+  labs/environments.ts   closed set of shared environments (Wazuh: container names, URL, max run time)
   labs/runner/           the ONLY Docker client: spec.ts (container hardening), runner.ts
-                         (start/stop/reap, re-attach gateway), app.ts (token, strict schema)
+                         (start/stop/reap, re-attach gateway), environments.ts (inspect/start/stop
+                         of catalog names only, ADR 0013), app.ts (token, strict schema)
   labs/gateway/          reverse proxy l<id>.lab.localhost → bastion-lab-<id>:8080, no secrets
   services/lab-service   per-learner instances (UNIQUE user_id), flag injection, TTL reaper
+  services/environment-service  shared environments gated by the optional module, audited
   detection/engine.ts    rule language (Sigma subset: match/exclude/threshold, NO regex), score()
   detection/datasets.ts  labelled per-learner log datasets with traps for naive rules (ADR 0010)
   services/note-service  owner-scoped CRUD, optimistic concurrency (version), rotateKeys()
@@ -92,7 +97,8 @@ src/
   http/schemas.ts        all zod schemas are .strict() (mass-assignment protection)
   http/routes.ts         /v1/auth/*, /v1/session/*, /v1/me*, /v1/me/mfa/*, /v1/notes*,
                          /v1/curriculum, /v1/lessons/:id[/complete], /v1/challenges*,
-                         /v1/challenges/:id/lab (POST start, DELETE stop), /v1/scoreboard, /v1/admin/audit*
+                         /v1/challenges/:id/lab (POST start, DELETE stop), /v1/environments[/:id/start|stop],
+                         /v1/scoreboard, /v1/admin/audit*
   http/session.ts        browser sessions: __Host- HttpOnly refresh cookie, Origin check (ADR 0007)
   http/web.ts            serves web/public + dist/web, page CSP with Trusted Types
   http/metrics.ts        request metrics by route *pattern*; metricsListener (own port, bearer token)
@@ -109,9 +115,10 @@ content/                 curriculum as code: index.json (levels, path order), <p
                          challenges.json (challenge → module, points, kind, brief)
 test/unit, test/security, test/helpers.ts (setup(), newUser(), auditActions())
 deploy/k8s (kustomize), deploy/policies (Kyverno signed-image policy),
-deploy/prometheus (scrape config, alerts.yml, alerts.test.yml for promtool)
+deploy/prometheus (scrape config, alerts.yml, alerts.test.yml for promtool),
+deploy/wazuh (offline certs.sh, users.sh without demo accounts, indexer/manager/dashboard config)
 docs/  threat-model · security-controls (OWASP API Top 10 + ASVS 4.0.3) · security-pipeline ·
-       adr/0001-0012 · runbook · openapi.yaml (used by DAST)
+       adr/0001-0013 · runbook · openapi.yaml (used by DAST)
 ```
 
 ## Security invariants — never break these
@@ -167,6 +174,12 @@ docs/  threat-model · security-controls (OWASP API Top 10 + ASVS 4.0.3) · secu
     listener on `METRICS_PORT` with the bearer `METRICS_TOKEN`, never by the API app;
     label values come from closed sets (route patterns, `AUDIT_ACTIONS`, status codes),
     never from request data (no ids, e-mails, IPs). A new alert gets a `promtool` test.
+18. **Shared environments are started, never created** (ADR 0013). Compose creates them from
+    reviewed configuration; the runner may only inspect, start and stop the container names
+    of `src/labs/environments.ts`, from an id checked with `z.enum`. The platform gates them
+    like lessons (module added and unlocked, audited), never sends a password to the browser
+    (login hint only), and their networks stay `internal` except the loopback-published UI.
+    No demo account or public default password survives setup.
 
 ## Conventions
 
@@ -238,7 +251,8 @@ If a CI job is renamed, update the ruleset's required checks in the same change 
 4. **PostgreSQL + Redis** (rate-limit store, multiple replicas) behind the same service layer;
    use row-level security as a second IDOR barrier.
 5. ~~**Observability**: Prometheus metrics, alerting rules matching `docs/runbook.md`~~
-   (done 31 Oct 2026, ADR 0011). Next: Alertmanager routing, Grafana dashboard, Wazuh.
+   (done 31 Oct 2026, ADR 0011). Real Wazuh from the UI done (ADR 0013). Next: Wazuh rule
+   challenges, a decoder for Bastion's audit log, Alertmanager routing, Grafana dashboard.
 6. **Signed commits** (SSH/GPG) and a release workflow with semantic versioning.
 7. **Fuzzing** of the HTTP layer (e.g. schemathesis against `docs/openapi.yaml`) in CI.
 8. Interview prep: a mock technical interview on this repo (threat model, ADRs, auth-service).

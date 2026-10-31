@@ -42,6 +42,7 @@ export function setup(
     curriculum?: Curriculum;
     web?: AppOptions['web'];
     labRunner?: AppOptions['labRunner'];
+    environmentRunner?: AppOptions['environmentRunner'];
   } = {},
 ): TestContext {
   const config = loadConfig(testEnv(opts.env));
@@ -53,6 +54,7 @@ export function setup(
     curriculum: opts.curriculum ?? realCurriculum,
     ...(opts.web ? { web: opts.web } : {}),
     ...(opts.labRunner ? { labRunner: opts.labRunner } : {}),
+    ...(opts.environmentRunner ? { environmentRunner: opts.environmentRunner } : {}),
     rateLimits: { global: 10_000, auth: 10_000, refresh: 10_000, quiz: 10_000, ...opts.rateLimits },
   });
   return { config, db, app, services, metrics, http: request(app) };

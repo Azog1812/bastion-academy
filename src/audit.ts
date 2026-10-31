@@ -33,6 +33,8 @@ export const AUDIT_ACTIONS = [
   'lab.start',
   'lab.stop',
   'lab.expire',
+  'environment.start',
+  'environment.stop',
   'note.create',
   'note.read',
   'note.update',

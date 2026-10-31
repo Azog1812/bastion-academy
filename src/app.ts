@@ -17,6 +17,7 @@ import { LearningService } from './services/learning-service.js';
 import { MfaService } from './services/mfa-service.js';
 import { httpLabRunner, LabService, type LabRunnerClient } from './services/lab-service.js';
 import { NoteService } from './services/note-service.js';
+import { EnvironmentService, type EnvironmentRunnerClient } from './services/environment-service.js';
 import { createMetrics, type AppMetrics } from './metrics.js';
 import { httpMetrics } from './http/metrics.js';
 
@@ -31,6 +32,8 @@ export interface AppOptions {
   rateLimits?: { global: number; auth: number; refresh: number; quiz: number; lab?: number };
   /** Overridable so tests run without Docker. Default: the configured runner, or labs off. */
   labRunner?: LabRunnerClient;
+  /** Same, for shared environments such as Wazuh (ADR 0013). */
+  environmentRunner?: EnvironmentRunnerClient;
 }
 
 export interface App {
@@ -43,12 +46,13 @@ export interface App {
     learning: LearningService;
     challenges: ChallengeService;
     labs: LabService;
+    environments: EnvironmentService;
     mfa: MfaService;
     audit: AuditLog;
   };
 }
 
-export function createApp({ config, db, logger, curriculum, rateLimits, web, labRunner }: AppOptions): App {
+export function createApp({ config, db, logger, curriculum, rateLimits, web, labRunner, environmentRunner }: AppOptions): App {
   const limits = rateLimits ?? {
     global: config.RATE_LIMIT_GLOBAL,
     auth: config.RATE_LIMIT_AUTH,
@@ -72,9 +76,9 @@ export function createApp({ config, db, logger, curriculum, rateLimits, web, lab
   const notes = new NoteService(db, ring, audit);
   const learning = new LearningService(db, curriculum, audit);
   const challenges = new ChallengeService(db, curriculum, learning, audit, config.FLAG_HMAC_KEY);
-  const runner =
-    labRunner ?? (config.LAB_RUNNER_URL && config.LAB_RUNNER_TOKEN ? httpLabRunner(config.LAB_RUNNER_URL, config.LAB_RUNNER_TOKEN) : undefined);
-  const labs = new LabService(db, curriculum, challenges, learning, audit, runner, config.LAB_TTL_SECONDS, config.LAB_GATEWAY_PORT);
+  const http = config.LAB_RUNNER_URL && config.LAB_RUNNER_TOKEN ? httpLabRunner(config.LAB_RUNNER_URL, config.LAB_RUNNER_TOKEN) : undefined;
+  const labs = new LabService(db, curriculum, challenges, learning, audit, labRunner ?? http, config.LAB_TTL_SECONDS, config.LAB_GATEWAY_PORT);
+  const environments = new EnvironmentService(curriculum, learning, audit, environmentRunner ?? http);
 
   const app = express();
 
@@ -144,6 +148,7 @@ export function createApp({ config, db, logger, curriculum, rateLimits, web, lab
       learning,
       challenges,
       labs,
+      environments,
       mfa,
       audit,
       signer,
@@ -158,5 +163,5 @@ export function createApp({ config, db, logger, curriculum, rateLimits, web, lab
     }),
   );
 
-  return { app, metrics, services: { auth, notes, learning, challenges, labs, mfa, audit } };
+  return { app, metrics, services: { auth, notes, learning, challenges, labs, environments, mfa, audit } };
 }
