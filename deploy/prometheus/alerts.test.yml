@@ -97,6 +97,8 @@ tests:
         values: "0 0 1 1 1"
       - series: "bastion_metrics_series_dropped_total"
         values: "0 0 0 0 0"
+      - series: "bastion_audit_export_failures_total"
+        values: "0 0 3 3 3"
     alert_rule_test:
       - eval_time: 3m
         alertname: BastionCiphertextTampering
@@ -114,6 +116,17 @@ tests:
               runbook: docs/runbook.md#alert-bastionsharedflag
       - eval_time: 3m
         alertname: BastionMetricsCardinality
+        exp_alerts: []
+      - eval_time: 3m
+        alertname: BastionAuditExportFailing
+        exp_alerts:
+          - exp_labels: { severity: warning }
+            exp_annotations:
+              summary: Audit entries are not reaching the SIEM file
+              runbook: docs/runbook.md#alert-bastionauditexportfailing
+      # Quiet when the export works: the counter exists at 0 from the start.
+      - eval_time: 1m
+        alertname: BastionAuditExportFailing
         exp_alerts: []
 
   - name: availability

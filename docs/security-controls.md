@@ -91,6 +91,8 @@ Standards: **OWASP API Security Top 10 (2023)** and **OWASP ASVS 4.0.3** (Level 
 | 7.1.3 | Security events logged | Audit trail of auth, authz denials, admin actions |
 | 7.1.4 | Logs contain enough to investigate | Actor, action, target, IP, outcome, timestamp, request id |
 | 7.3.3 | Logs protected from modification | Append-only triggers + HMAC chain |
+| 7.3.1 | Log entries encoded against injection | SIEM export: one `JSON.stringify` per line, control characters escaped (ADR 0015, `audit-export.test.ts`) |
+| 7.1.3 / 7.2.x | Security events sent to a monitoring system and alerted on | Audit log copied to Wazuh, rules for token theft, broken chain, denials, brute force and stuffing, checked in `wazuh-logtest` |
 | 7.4.1 | Generic error messages with a correlation id | Central error handler, `requestId` |
 | (beyond ASVS) | Security events acted upon, not only stored | Audit events exported as Prometheus counters; tested alerts for token replay, credential stuffing, lockouts, MFA guessing, authorization probing, ciphertext tampering (ADR 0011) |
 

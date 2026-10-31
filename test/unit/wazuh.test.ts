@@ -192,6 +192,15 @@ describe('Wazuh rule language: what the evaluator accepts', () => {
     expect(lines.find((l) => l.rule.id === '5710')?.data).toHaveProperty('srcuser');
   });
 
+  it('uses up the events a correlation counted, as Wazuh does', () => {
+    const failures = ssh.events.filter((e) => e.sid === 5760 && e.srcip === '10.0.5.20');
+    const only = { ...ssh, events: failures.slice(0, 10) };
+    const xml = rule('<same_srcip />', 'id="100100" level="10" frequency="3" timeframe="86400"').replace('<same_srcip />', '<if_matched_sid>5760</if_matched_sid><same_srcip />');
+    // Fires on the 3rd, 6th and 9th failure: never on the 4th with the first three again.
+    const fired = evaluate(compileRules(xml, only), only).map(({ event }) => only.events.indexOf(event) + 1);
+    expect(fired).toEqual([3, 6, 9]);
+  });
+
   it('accepts the base rule given in the brief as XML, and comments', () => {
     expect(parseXml(BASTION_BASE_RULE)[0]?.children[0]?.attrs.get('id')).toBe('100000');
     expect(compileRules(`<!-- tuning -->${REFERENCE['wazuh-bastion']}`, bastion)).toHaveLength(3);

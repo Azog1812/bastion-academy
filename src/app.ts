@@ -19,6 +19,7 @@ import { httpLabRunner, LabService, type LabRunnerClient } from './services/lab-
 import { NoteService } from './services/note-service.js';
 import { EnvironmentService, type EnvironmentRunnerClient } from './services/environment-service.js';
 import { createMetrics, type AppMetrics } from './metrics.js';
+import { auditFileExport, type AuditExport } from './audit-export.js';
 import { httpMetrics } from './http/metrics.js';
 
 export interface AppOptions {
@@ -37,6 +38,8 @@ export interface AppOptions {
 }
 
 export interface App {
+  /** The SIEM copy of the audit log, if configured: closed at shutdown. */
+  siem: AuditExport | undefined;
   app: Express;
   /** Served by server.ts on METRICS_PORT, never by `app`. */
   metrics: AppMetrics;
@@ -61,8 +64,14 @@ export function createApp({ config, db, logger, curriculum, rateLimits, web, lab
   };
 
   const metrics = createMetrics(db);
-  const audit = new AuditLog(db, config.AUDIT_HMAC_KEY, (e) => {
+  const siem = config.AUDIT_EXPORT_FILE
+    ? auditFileExport(config.AUDIT_EXPORT_FILE, logger, () => {
+        metrics.auditExportFailures.inc();
+      })
+    : undefined;
+  const audit = new AuditLog(db, config.AUDIT_HMAC_KEY, (e, written) => {
     metrics.auditEvents.inc({ action: e.action, outcome: e.outcome });
+    siem?.write(e, written);
   });
   const signer = createTokenSigner({
     secret: config.JWT_SECRET,
@@ -163,5 +172,5 @@ export function createApp({ config, db, logger, curriculum, rateLimits, web, lab
     }),
   );
 
-  return { app, metrics, services: { auth, notes, learning, challenges, labs, environments, mfa, audit } };
+  return { app, metrics, siem, services: { auth, notes, learning, challenges, labs, environments, mfa, audit } };
 }

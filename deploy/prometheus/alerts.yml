@@ -68,6 +68,16 @@ groups:
           summary: A challenge flag was shared between learners
           runbook: docs/runbook.md#alert-bastionsharedflag
 
+      - alert: BastionAuditExportFailing
+        # The SIEM copy of the audit log (ADR 0015) lost lines: Wazuh is blind to them.
+        # The database still has every entry; seq shows the gap in Wazuh.
+        expr: increase(bastion_audit_export_failures_total[10m]) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: Audit entries are not reaching the SIEM file
+          runbook: docs/runbook.md#alert-bastionauditexportfailing
+
   - name: bastion-availability
     rules:
       - alert: BastionDown

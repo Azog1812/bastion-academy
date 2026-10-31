@@ -481,24 +481,30 @@ const childOf = (rule: CompiledRule, node: Node) => {
  */
 export function evaluate(rules: readonly CompiledRule[], dataset: WazuhDataset): { event: WazuhEvent; rule: CompiledRule }[] {
   const stock = new Map(dataset.stock.map((s) => [s.id, s]));
-  const history = new Map<string, WazuhEvent[]>();
+  /** Per rule id, the events that reached it and are not used up yet. */
+  const history = new Map<number, WazuhEvent[]>();
   const remember = (node: Node, e: WazuhEvent) => {
-    for (const key of [`sid:${String(node.id)}`, ...node.groups.map((g) => `group:${g}`)]) {
-      // An event walking 5716 → 5760 meets the group twice: it still counts once.
-      const list = history.get(key);
-      if (!list) history.set(key, [e]);
-      else if (list[list.length - 1] !== e) list.push(e);
-    }
+    const list = history.get(node.id);
+    if (list) list.push(e);
+    else history.set(node.id, [e]);
   };
-  const frequencyHolds = (rule: CompiledRule, e: WazuhEvent) => {
+  const counted = (rule: CompiledRule, e: WazuhEvent): WazuhEvent[] => {
     const f = rule.frequency;
-    if (!f) return true;
-    const p = rule.parent;
-    const key = p.kind === 'matched_sid' ? `sid:${String(p.id)}` : '';
-    const count = (history.get(key) ?? []).filter(
+    if (!f || rule.parent.kind !== 'matched_sid') return [];
+    return (history.get(rule.parent.id) ?? []).filter(
       (h) => h.ts <= e.ts && e.ts - h.ts <= f.timeframe && (!f.sameSrcip || h.srcip === e.srcip) && (!f.sameUser || h.user === e.user),
-    ).length;
-    return count >= f.count;
+    );
+  };
+  const frequencyHolds = (rule: CompiledRule, e: WazuhEvent) => !rule.frequency || counted(rule, e).length >= rule.frequency.count;
+  /**
+   * When a correlation fires, the events it counted are used up: they count again neither
+   * for it nor for a sibling correlation on the same rule (wazuh-logtest, 4.14: after a
+   * per-address rule fired on 6 failures, a global rule on the same parent needed 50 more).
+   */
+  const consume = (rule: CompiledRule, e: WazuhEvent) => {
+    if (rule.parent.kind !== 'matched_sid') return;
+    const used = new Set(counted(rule, e));
+    history.set(rule.parent.id, (history.get(rule.parent.id) ?? []).filter((h) => !used.has(h)));
   };
 
   const alerts: { event: WazuhEvent; rule: CompiledRule }[] = [];
@@ -520,6 +526,7 @@ export function evaluate(rules: readonly CompiledRule[], dataset: WazuhDataset):
       const stockChild = current.learner ? undefined : path[depth + 1];
       const next = local ?? (stockChild ? undefined : rules.find((r) => r.frequency !== undefined && matches(r)));
       if (next) {
+        if (next.frequency) consume(next, e);
         visited.add(next.id);
         node = { id: next.id, level: next.level, groups: next.groups, learner: true };
         last = next;

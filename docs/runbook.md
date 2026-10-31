@@ -55,6 +55,13 @@ about the certificate: it comes from the private CA made at setup (`wazuh-certs`
   (`docker compose --profile wazuh down -v`, update `.env`, `up -d` again: alerts are lost), or
   run `securityadmin.sh` inside `bastion-wazuh-indexer` with the admin certificate.
 - **Removing it**: `docker compose --profile wazuh down -v` (containers, certificates, data).
+- **Bastion's own alerts** (ADR 0015): the platform appends its audit log to
+  `/var/log/bastion/audit.json` (volume `bastion-audit`), the manager reads it with
+  `deploy/wazuh/bastion_rules.xml`. In the dashboard, filter on `rule.groups: bastion`.
+  Lines written while Wazuh was stopped are not read at its next start; the database
+  has them (`GET /v1/admin/audit`), and `seq` shows the gap.
+- **Checking the rules after an edit or a Wazuh upgrade**: `test/wazuh-real/run.sh`
+  (offline, in the pinned image); CI runs it too.
 
 ## Observability (ADR 0011)
 
@@ -118,6 +125,12 @@ the accounts concerned.
 ## Alert: `BastionSharedFlag`
 A learner submitted another learner's flag. Not a security incident: the audit entry
 (`challenge.flag_shared`) names both accounts; the score was not granted.
+
+## Alert: `BastionAuditExportFailing`
+Audit entries are not reaching `AUDIT_EXPORT_FILE`: Wazuh is blind to them. The
+database still has every entry. Look for `audit export:` in the platform's logs: a full
+disk (`docker system df`), or the `bastion-audit` volume missing or read-only. Once
+fixed, compare `seq` in Wazuh with `GET /v1/admin/audit` to see what Wazuh missed.
 
 ## Alert: `BastionDown`
 Prometheus cannot scrape the platform for two minutes. Check `/healthz` on the API: if

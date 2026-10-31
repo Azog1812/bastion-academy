@@ -61,6 +61,8 @@ src/
   config.ts              zod schema, fail-closed; secrets via VAR or VAR_FILE (*_FILE preferred)
   db.ts                  node:sqlite (built-in, zero native deps), STRICT tables, migrations via
                          PRAGMA user_version, append-only triggers on audit_log
+  audit-export.ts        SIEM copy of the audit log: one JSON line per entry (AUDIT_EXPORT_FILE, 0600),
+                         failures counted, never thrown (ADR 0015)
   audit.ts               HMAC-SHA256 chained audit log; verify() returns firstInvalidSeq;
                          AUDIT_ACTIONS is the closed list (also the metrics label set)
   metrics.ts             Prometheus text format on node: built-ins (counter, histogram, scrape-time
@@ -120,9 +122,10 @@ content/                 curriculum as code: index.json (levels, path order), <p
 test/unit, test/security, test/helpers.ts (setup(), newUser(), auditActions())
 deploy/k8s (kustomize), deploy/policies (Kyverno signed-image policy),
 deploy/prometheus (scrape config, alerts.yml, alerts.test.yml for promtool),
-deploy/wazuh (offline certs.sh, users.sh without demo accounts, indexer/manager/dashboard config)
+deploy/wazuh (offline certs.sh, users.sh without demo accounts, indexer/manager/dashboard config,
+             bastion_rules.xml: rules for Bastion's own audit log, ids 100200-100299)
 docs/  threat-model · security-controls (OWASP API Top 10 + ASVS 4.0.3) · security-pipeline ·
-       adr/0001-0014 · runbook · openapi.yaml (used by DAST)
+       adr/0001-0015 · runbook · openapi.yaml (used by DAST)
 ```
 
 ## Security invariants — never break these
@@ -144,7 +147,10 @@ docs/  threat-model · security-controls (OWASP API Top 10 + ASVS 4.0.3) · secu
    else becomes a generic 500 with `requestId`. `DecryptionError` stays generic.
 8. **Config fails closed**: never add an insecure default for a secret.
 9. **No privilege escalation over HTTP**: admin promotion and key rotation are CLI-only.
-10. **Audit every security-relevant event** (`AuditAction` union in `audit.ts`).
+10. **Audit every security-relevant event** (`AuditAction` union in `audit.ts`). The SIEM
+    copy (ADR 0015) is one `JSON.stringify` per line (no log injection), never the record,
+    and never breaks a request; a new action that matters gets a rule in
+    `deploy/wazuh/bastion_rules.xml` and a line in `test/wazuh-real/bastion-audit.ts`.
 11. **Zero native dependencies / no install scripts.** Think hard before adding any
     dependency (supply-chain surface); prefer `node:` built-ins.
 12. **Learning gating is server-side.** Quiz `answer` fields never leave the server (lessons
@@ -261,8 +267,8 @@ If a CI job is renamed, update the ruleset's required checks in the same change 
    use row-level security as a second IDOR barrier.
 5. ~~**Observability**: Prometheus metrics, alerting rules matching `docs/runbook.md`~~
    (done 31 Oct 2026, ADR 0011). Real Wazuh from the UI done (ADR 0013), Wazuh rule challenges
-   done (ADR 0014). Next: ship Bastion's audit log to the real Wazuh (decoder + rules),
-   Alertmanager routing, Grafana dashboard.
+   done (ADR 0014), Bastion's audit log in Wazuh done (ADR 0015). Next: Alertmanager routing,
+   Grafana dashboard, WebAuthn.
 6. **Signed commits** (SSH/GPG) and a release workflow with semantic versioning.
 7. **Fuzzing** of the HTTP layer (e.g. schemathesis against `docs/openapi.yaml`) in CI.
 8. Interview prep: a mock technical interview on this repo (threat model, ADRs, auth-service).

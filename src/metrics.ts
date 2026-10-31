@@ -221,6 +221,7 @@ export interface AppMetrics {
   httpDuration: Histogram;
   auditEvents: Counter;
   integrityFailures: Counter;
+  auditExportFailures: Counter;
 }
 
 /** Process-wide, so one sampler per process however many apps are created (tests create hundreds). */
@@ -257,6 +258,10 @@ export function createMetrics(db: Database): AppMetrics {
     integrityFailures: registry.counter(
       'bastion_integrity_failures_total',
       'Ciphertexts that failed authentication on decryption: the database was modified outside the application.',
+    ),
+    auditExportFailures: registry.counter(
+      'bastion_audit_export_failures_total',
+      'Audit entries that could not be copied to the SIEM file (ADR 0015); the database still has them.',
     ),
   };
 

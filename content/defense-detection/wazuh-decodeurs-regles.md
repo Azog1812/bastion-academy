@@ -85,6 +85,22 @@ angle mort que l'attaquant apprendra vite à utiliser.
 Une règle non testée ne sait que deux choses : se taire pendant l'attaque, ou
 réveiller le SOC pour rien.
 
+## Exercice : Bastion sous surveillance
+
+La plateforme que tu utilises envoie son propre journal d'audit à Wazuh, en JSON, avec
+les règles de `deploy/wazuh/bastion_rules.xml` (ADR 0015). Démarre Wazuh depuis ce
+module, puis, dans le tableau de bord, filtre sur `rule.groups: bastion` :
+
+- connecte-toi, valide une leçon : des alertes de niveau 3, qui ne réveillent personne ;
+- appelle `GET /v1/admin/audit` avec ton jeton d'élève : la règle 100203 (niveau 10) ;
+- rate ton mot de passe six fois : la règle 100209. Pourquoi six et pas dix ? Au-delà de
+  dix essais en quinze minutes, le limiteur de Bastion répond 429 sans rien journaliser :
+  une règle au-dessus de ce seuil ne se déclencherait jamais. Une détection se règle
+  **en dessous** des contrôles préventifs, pas à côté.
+
+Lis ensuite ces règles : ce sont celles que le défi « Surveiller Bastion lui-même » te
+fait écrire.
+
 ## Ce que les défis Wazuh évaluent
 
 Dans les défis de ce module, tu écris de vraies règles Wazuh, et Bastion les évalue
@@ -117,8 +133,11 @@ Ce que `wazuh-logtest` nous a appris, et que le défi reproduit :
   l'adresse. Pour exclure, écris `<srcip negate="yes">10.0.5.20</srcip>`, ou mieux une
   règle enfant de niveau 0.
 - **`frequency="N"` compte N événements, celui-ci compris**, dans les `timeframe`
-  dernières secondes. Attention : Wazuh mesure le temps **à la réception** des
-  événements, pas avec l'horodatage de la ligne. Rejouer une journée dans
+  dernières secondes (`wazuh-logtest`, à chaque fois). Le manager en service, lui, a
+  déclenché la même règle au N-ième, au N+1-ième ou au N+2-ième événement selon les
+  essais : garde de la marge. Une fois déclenchée, une corrélation **consomme** les
+  événements comptés : ils ne servent plus à aucune autre. Et Wazuh mesure le temps
+  **à la réception** des événements, pas avec l'horodatage de la ligne. Rejouer une journée dans
   `wazuh-logtest` la compresse en quelques secondes : une fenêtre trop courte, que le
   défi sanctionne, s'y déclenche quand même.
 
