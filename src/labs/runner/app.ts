@@ -3,6 +3,8 @@ import express, { type NextFunction, type Request, type Response } from 'express
 import type { Logger } from 'pino';
 import { z } from 'zod';
 import { INSTANCE_ID, LAB_IDS } from '../catalog.js';
+import { ENVIRONMENT_IDS } from '../environments.js';
+import { EnvironmentMissing, type EnvironmentController } from './environments.js';
 import { LabAlreadyRunning, LabImageMissing, type LabRunner } from './runner.js';
 
 const startSchema = z
@@ -14,15 +16,18 @@ const startSchema = z
   })
   .strict();
 
+const environmentSchema = z.object({ id: z.enum(ENVIRONMENT_IDS) }).strict();
+
 const digest = (v: string) => createHash('sha256').update(v).digest();
 
 /**
  * Internal API of the lab runner. Only the platform calls it, over a network
  * that nothing else joins, with a shared token. Whoever reaches it can start
  * and stop lab containers, nothing more: no image, command, mount or port is
- * ever taken from the request.
+ * ever taken from the request. For shared environments (ADR 0013), it can start,
+ * stop and inspect the containers the catalog names, nothing more.
  */
-export function createRunnerApp(runner: LabRunner, token: Buffer, logger: Logger) {
+export function createRunnerApp(runner: LabRunner, token: Buffer, logger: Logger, environments?: EnvironmentController) {
   const app = express();
   app.disable('x-powered-by');
   const expected = digest(`Bearer ${token.toString('base64')}`);
@@ -72,6 +77,49 @@ export function createRunnerApp(runner: LabRunner, token: Buffer, logger: Logger
       res.status(502).json({ error: 'lab_stop_failed' });
     }
   });
+
+  if (environments) {
+    const envId = (req: Request, res: Response) => {
+      const parsed = environmentSchema.safeParse(req.params);
+      if (!parsed.success) res.status(404).json({ error: 'not_found' });
+      return parsed.success ? parsed.data.id : undefined;
+    };
+    const fail = (res: Response, err: unknown, step: string) => {
+      if (err instanceof EnvironmentMissing) res.status(503).json({ error: 'environment_missing' });
+      else {
+        logger.error({ err }, `environment ${step} failed`);
+        res.status(502).json({ error: 'environment_failed' });
+      }
+    };
+    app.get('/environments/:id', async (req, res) => {
+      const id = envId(req, res);
+      if (!id) return;
+      try {
+        res.json(await environments.status(id));
+      } catch (err) {
+        fail(res, err, 'status');
+      }
+    });
+    app.post('/environments/:id/start', async (req, res) => {
+      const id = envId(req, res);
+      if (!id) return;
+      try {
+        res.status(202).json(await environments.start(id));
+      } catch (err) {
+        fail(res, err, 'start');
+      }
+    });
+    app.post('/environments/:id/stop', async (req, res) => {
+      const id = envId(req, res);
+      if (!id) return;
+      try {
+        await environments.stop(id);
+        res.status(204).end();
+      } catch (err) {
+        fail(res, err, 'stop');
+      }
+    });
+  }
 
   app.use((_req: Request, res: Response) => {
     res.status(404).json({ error: 'not_found' });
