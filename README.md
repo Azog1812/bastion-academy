@@ -35,7 +35,7 @@ from first principles up to the level expected by major industry certifications.
 | Milestone | Scope | Status |
 |---|---|---|
 | **v3: foundations** | Learning paths → modules → lessons, progress tracking, web front-end, built on Bastion's auth core | ✅ API, web UI, all six levels shipped |
-| **v4: challenges** | Per-user HMAC flags (unshareable), scoreboard, anti-cheat, TOTP MFA | ✅ Shipped: 11 challenges (levels 1 to 3), opt-in scoreboard, TOTP + recovery codes |
+| **v4: challenges** | Per-user HMAC flags (unshareable), scoreboard, anti-cheat, TOTP MFA | ✅ Shipped: 11 challenges (levels 1 to 3), opt-in scoreboard, TOTP + recovery codes · **passkeys** (WebAuthn, [ADR 0016](docs/adr/0016-passkeys.md)) |
 | **v5: isolated labs** | One vulnerable container per learner: no egress, TTL, sandboxed runtime, quotas | ✅ Shipped: 10 labs (SQLi, IDOR, mass assignment, JWT `alg:none`, SSRF, path traversal, command injection, stored XSS with a headless-browser victim, a three-flaw chain, a race condition), lab runner + gateway, optional gVisor |
 | **v6: blue team** | Level 5 path (logging, SIEM, detection engineering, incident response, forensics) and detection challenges | ✅ Shipped: 6 lessons, 5 detection challenges graded on precision **and** recall · real Wazuh from the UI and 2 Wazuh XML rule challenges ([ADR 0013](docs/adr/0013-shared-environments.md), [0014](docs/adr/0014-wazuh-rule-challenges.md)) · Observability shipped (Prometheus, tested alerts, [ADR 0011](docs/adr/0011-observability.md)) · AI tutor: planned |
 
@@ -45,7 +45,7 @@ hosted instance yet.
 ### What's available today
 
 The curriculum spans six levels, from **Fundamentals** to **Expert**, all available
-(in French, 48 lessons, 136 quiz questions). Heavy hands-on modules are **optional**:
+(in French, 50 lessons, 142 quiz questions). Heavy hands-on modules are **optional**:
 each learner adds them to their training from the web UI if their machine can run them,
 and leaving one out never locks the rest of the path:
 
@@ -197,6 +197,7 @@ admin route, and the alert shows up in the dashboard (`rule.groups: bastion`).
 | `GET /v1/challenges[/{id}]` · `POST /v1/challenges/{id}/submit` | Challenges: your personal artifact, then your personal flag |
 | `GET /v1/scoreboard` · `PUT /v1/me/profile` | Opt-in scoreboard under a pseudonym |
 | `POST /v1/me/mfa/{setup,enable,disable}` · `POST /v1/auth/mfa` | TOTP second factor and recovery codes |
+| `GET/POST /v1/me/passkeys` · `POST /v1/me/passkeys/options` · `DELETE /v1/me/passkeys/{id}` · `POST /v1/auth/mfa/passkey/options` | Passkeys (WebAuthn) as a phishing-resistant second factor |
 
 How it is secured ([ADR 0006](docs/adr/0006-curriculum-as-code.md), [ADR 0007](docs/adr/0007-web-front-end.md)):
 
@@ -218,6 +219,13 @@ How it is secured ([ADR 0006](docs/adr/0006-curriculum-as-code.md), [ADR 0007](d
 - **TOTP MFA without a library** (RFC 6238 on `node:crypto`, checked against the RFC test
   vectors). Seeds are encrypted under the KEK ring; a code is never accepted twice; wrong
   codes feed the account lockout; turning MFA off needs the password *and* a code.
+- **Passkeys without a library** (WebAuthn on `node:crypto`, [ADR 0016](docs/adr/0016-passkeys.md)):
+  the exact origin and the RP ID hash are checked, so a phishing proxy's relayed signature
+  is refused, which TOTP cannot do. Single-use challenges bound to their MFA step, a
+  bounded CBOR decoder for the attacker-supplied structures, clone detection through the
+  signature counter (audited, Wazuh level 12). Tested with a software authenticator playing
+  the attacker, and end to end in Chromium with its virtual authenticator. Open the local
+  install at `http://localhost:3000` (an IP address cannot be an RP ID).
 - **XSS needs two independent failures.** The UI never builds HTML from strings
   (ESLint bans every HTML sink, Markdown is rendered node by node), and the page CSP
   enforces **Trusted Types** with no policy allowed, so any such sink throws in the
@@ -290,7 +298,7 @@ flowchart LR
 | Brute force & credential stuffing | Per-IP rate limit, **progressive lockout** with atomic counters, breached-password blocklist | [`authentication.test.ts`](test/security/authentication.test.ts) |
 | Account enumeration | Identical response for unknown user / wrong password / locked, and a **dummy scrypt hash** so timing matches | [`authentication.test.ts`](test/security/authentication.test.ts) |
 | JWT attacks (`alg:none`, alg confusion, tampering, replay) | Algorithm allow-list, `iss`/`aud`/`typ`/`exp` enforced, claims re-validated | [`tokens.test.ts`](test/unit/tokens.test.ts) |
-| Phished or reused password | Optional **TOTP MFA**: replay-proof codes (compare-and-set on the time step), single-use 5-attempt login challenge, encrypted seeds, hashed one-time recovery codes | [`mfa.test.ts`](test/security/mfa.test.ts), [`totp.test.ts`](test/unit/totp.test.ts) |
+| Phished or reused password | Optional **TOTP MFA**: replay-proof codes (compare-and-set on the time step), single-use 5-attempt login challenge, encrypted seeds, hashed one-time recovery codes; **passkeys** for phishing resistance (origin and RP ID bound) | [`mfa.test.ts`](test/security/mfa.test.ts), [`totp.test.ts`](test/unit/totp.test.ts) |
 | Flag sharing, scoreboard cheating | **Per-learner HMAC flags**, constant-time check, per-account rate limit, shared flags attributed in the audit log | [`challenges.test.ts`](test/security/challenges.test.ts) |
 | Escaping a lab (to the host, the platform, other labs, the Internet) | Hardened container, **per-instance internal network**, gateway as the only peer, Docker socket held by the runner only, closed lab catalog | [`lab-runner.test.ts`](test/unit/lab-runner.test.ts), [`labs.test.ts`](test/security/labs.test.ts) |
 | SSRF through the lab gateway | Upstream **built** from a 32-hex instance id, never read from the request | [`lab-runner.test.ts`](test/unit/lab-runner.test.ts) |
@@ -368,7 +376,7 @@ Or run the whole battery: `npm test`. With Docker: `docker compose up --build`
 ```
 src/
   config.ts            fail-closed configuration (zod), secrets from files
-  crypto/              envelope encryption · scrypt · JWT + refresh tokens · TOTP
+  crypto/              envelope encryption · scrypt · JWT + refresh tokens · TOTP · WebAuthn + CBOR
   services/            auth (lockout, rotation, revocation) · notes (owner-scoped) ·
                        learning (progress, server-side gating) · mfa ·
                        challenges (per-learner flags, scoreboard)
@@ -402,7 +410,7 @@ dependencies, single replica) and how to move to PostgreSQL. Known, accepted ris
 (registration enumeration, lockout-as-DoS, HS256…) are listed in the
 [threat model](docs/threat-model.md#5-accepted-risks) rather than hidden.
 
-**Roadmap:** WebAuthn / passkeys · external KMS (Vault Transit) for KEKs · PostgreSQL +
+**Roadmap:** passwordless passkey login · external KMS (Vault Transit) for KEKs · PostgreSQL +
 Redis for horizontal scaling · signed commits.
 
 ## Security

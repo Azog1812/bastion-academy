@@ -89,10 +89,13 @@ export async function login(email: string, password: string): Promise<LoginStep>
   return { done: true };
 }
 
-export async function completeMfa(mfaToken: string, code: string): Promise<void> {
-  const r = await call<{ accessToken: string }>('POST', '/v1/session/mfa', { mfaToken, code }, false);
+export async function completeMfa(mfaToken: string, proof: { code: string } | { passkey: unknown }): Promise<void> {
+  const r = await call<{ accessToken: string }>('POST', '/v1/session/mfa', { mfaToken, ...proof }, false);
   accessToken = r.accessToken;
 }
+
+/** Passkey challenge for the pending MFA step (ADR 0016). */
+export const passkeyLoginOptions = <T>(mfaToken: string): Promise<T> => call<T>('POST', '/v1/auth/mfa/passkey/options', { mfaToken }, false);
 
 export async function register(email: string, password: string): Promise<LoginStep> {
   await call('POST', '/v1/auth/register', { email, password }, false);
@@ -155,7 +158,10 @@ export interface Me {
   id: string;
   role: 'user' | 'admin';
   displayName: string | null;
+  /** Any second factor: TOTP or a passkey. */
   mfaEnabled: boolean;
+  totpEnabled: boolean;
+  passkeys: number;
 }
 
 export interface ChallengeSummary {

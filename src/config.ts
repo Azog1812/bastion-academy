@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { isIP } from 'node:net';
 import { z } from 'zod';
 
 /**
@@ -91,6 +92,23 @@ const schema = z
     RATE_LIMIT_QUIZ: z.coerce.number().int().min(1).default(30),
     /** Issuer shown in authenticator apps next to the account name. */
     MFA_ISSUER: z.string().min(1).max(40).default('Bastion Academy'),
+
+    /**
+     * Passkeys (ADR 0016). The RP ID binds every credential: a passkey made for
+     * "localhost" signs nothing for another site. Origins are matched exactly against
+     * what the browser writes into the signed client data. WebAuthn refuses IP
+     * addresses as RP ID: open the platform at http://localhost:3000, not 127.0.0.1.
+     */
+    WEBAUTHN_RP_ID: z
+      .string()
+      .refine((v) => isIP(v) === 0, 'an IP address cannot be an RP ID')
+      // Label by label (RFC 1123): no scheme, port, path or empty label.
+      .refine((v) => v.length <= 253 && v.split('.').every((l) => /^[a-z0-9-]{1,63}$/.test(l) && !l.startsWith('-') && !l.endsWith('-')), 'must be a host name (no scheme, port or IP address)')
+      .default('localhost'),
+    WEBAUTHN_ORIGINS: z
+      .string()
+      .default('http://localhost:3000')
+      .transform((v) => v.split(',').map((o) => o.trim()).filter(Boolean)),
     MAX_FAILED_LOGINS: z.coerce.number().int().min(3).max(20).default(5),
 
     /**
@@ -124,6 +142,27 @@ const schema = z
   .superRefine((cfg, ctx) => {
     if (!cfg.ENCRYPTION_KEYS.has(cfg.ACTIVE_KEY_ID)) {
       ctx.addIssue({ code: 'custom', path: ['ACTIVE_KEY_ID'], message: 'must reference a key in ENCRYPTION_KEYS' });
+    }
+    for (const origin of cfg.WEBAUTHN_ORIGINS) {
+      let url: URL | undefined;
+      try {
+        url = new URL(origin);
+      } catch {
+        url = undefined;
+      }
+      const host = url?.hostname ?? '';
+      const ok =
+        url !== undefined &&
+        url.origin === origin &&
+        (url.protocol === 'https:' || (url.protocol === 'http:' && host === 'localhost')) &&
+        (host === cfg.WEBAUTHN_RP_ID || host.endsWith(`.${cfg.WEBAUTHN_RP_ID}`));
+      if (!ok) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['WEBAUTHN_ORIGINS'],
+          message: `${origin}: an exact origin (scheme://host[:port]), https except on localhost, inside the RP ID ${cfg.WEBAUTHN_RP_ID}`,
+        });
+      }
     }
     if (cfg.LAB_RUNNER_URL !== undefined && !cfg.LAB_RUNNER_TOKEN) {
       ctx.addIssue({ code: 'custom', path: ['LAB_RUNNER_TOKEN'], message: 'is required when LAB_RUNNER_URL is set' });

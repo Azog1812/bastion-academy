@@ -97,4 +97,47 @@ export const mfaCodeSchema = z.object({ code: otp }).strict();
 
 export const mfaDisableSchema = z.object({ password, code: otp }).strict();
 
-export const mfaLoginSchema = z.object({ mfaToken: z.string().min(20).max(100), code: otp }).strict();
+const mfaToken = z.string().min(20).max(100);
+
+/* Passkeys (ADR 0016): exactly the fields the page sends, base64url, each bounded before decoding. */
+const b64url = (max: number) => z.string().min(1).max(max).regex(/^[A-Za-z0-9_-]+$/, 'base64url');
+
+const assertionSchema = z
+  .object({
+    id: b64url(1400),
+    type: z.literal('public-key'),
+    response: z.object({ clientDataJSON: b64url(4096), authenticatorData: b64url(4096), signature: b64url(1400) }).strict(),
+  })
+  .strict();
+
+export const passkeyCredentialSchema = z
+  .object({
+    id: b64url(1400),
+    type: z.literal('public-key'),
+    response: z.object({ clientDataJSON: b64url(4096), attestationObject: b64url(12_000) }).strict(),
+  })
+  .strict();
+
+export const mfaLoginSchema = z.union([
+  z.object({ mfaToken, code: otp }).strict(),
+  z.object({ mfaToken, passkey: assertionSchema }).strict(),
+]);
+
+export const passkeyOptionsLoginSchema = z.object({ mfaToken }).strict();
+
+export const passkeyRegisterSchema = z
+  .object({
+    name: z
+      .string()
+      .trim()
+      .min(1)
+      .max(40)
+      .regex(/^[\p{L}\p{N} ._'-]+$/u, 'letters, digits, spaces and . _ \' - only'),
+    credential: passkeyCredentialSchema,
+  })
+  .strict();
+
+/** The code is needed only to remove the last second factor (then it is a recovery code). */
+export const passkeyDeleteSchema = z.object({ password, code: otp.optional() }).strict();
+
+export const passkeyIdSchema = z.object({ id: z.uuid() }).strict();

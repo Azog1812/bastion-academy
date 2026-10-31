@@ -19,7 +19,7 @@ interface MfaRow {
   last_step: number;
 }
 
-export type SecondFactor = 'totp' | 'recovery';
+export type SecondFactor = 'totp' | 'recovery' | 'passkey';
 
 const aad = (userId: string) => `bastion:totp-secret:v1:${userId}`;
 
@@ -51,8 +51,42 @@ export class MfaService {
       | undefined;
   }
 
+  /** TOTP enrolled and confirmed. */
   isEnabled(userId: string): boolean {
     return this.row(userId)?.enabled_at != null;
+  }
+
+  private passkeys(userId: string): number {
+    return (this.db.prepare('SELECT COUNT(*) AS n FROM passkeys WHERE user_id = ?').get(userId) as { n: number }).n;
+  }
+
+  /** Any second factor: TOTP or at least one passkey (ADR 0016). Login asks for it when true. */
+  hasAnyFactor(userId: string): boolean {
+    return this.isEnabled(userId) || this.passkeys(userId) > 0;
+  }
+
+  /**
+   * Recovery codes for the first second factor of an account (a passkey enrolled before
+   * any TOTP): shown once, like at TOTP enrolment. Null when the account already has some.
+   */
+  issueRecoveryCodesIfNone(userId: string): string[] | null {
+    const { n } = this.db.prepare('SELECT COUNT(*) AS n FROM mfa_recovery_codes WHERE user_id = ?').get(userId) as { n: number };
+    if (n > 0) return null;
+    const { codes, hashes } = generateRecoveryCodes();
+    transaction(this.db, () => {
+      const insert = this.db.prepare('INSERT INTO mfa_recovery_codes (user_id, code_hash) VALUES (?, ?)');
+      for (const h of hashes) insert.run(userId, h);
+    });
+    return codes;
+  }
+
+  /** Called when a factor goes away: with none left, recovery codes and pending MFA steps go too. */
+  dropIfNoFactor(userId: string): void {
+    if (this.hasAnyFactor(userId)) return;
+    transaction(this.db, () => {
+      this.db.prepare('DELETE FROM mfa_recovery_codes WHERE user_id = ?').run(userId);
+      this.db.prepare('DELETE FROM mfa_challenges WHERE user_id = ?').run(userId);
+    });
   }
 
   /** Starts (or restarts) enrolment. The seed is returned once, for the authenticator app. */
@@ -94,13 +128,12 @@ export class MfaService {
     return codes;
   }
 
-  /** Checks a TOTP code or a recovery code, and consumes it. */
+  /** Checks a TOTP code or a recovery code, and consumes it. Recovery codes also stand in for passkeys. */
   verify(userId: string, code: string, ip: string | null): SecondFactor | null {
     const row = this.row(userId);
-    if (!row || row.enabled_at === null) return null;
     const trimmed = code.trim();
-    if (/^\d{6}$/.test(trimmed)) return this.claimTotp(userId, row, trimmed) === null ? null : 'totp';
-    if (!isRecoveryCodeFormat(trimmed)) return null;
+    if (/^\d{6}$/.test(trimmed)) return row && row.enabled_at !== null && this.claimTotp(userId, row, trimmed) !== null ? 'totp' : null;
+    if (!isRecoveryCodeFormat(trimmed) || !this.hasAnyFactor(userId)) return null;
 
     const used = this.db
       .prepare('UPDATE mfa_recovery_codes SET used_at = ? WHERE user_id = ? AND code_hash = ? AND used_at IS NULL')
@@ -113,12 +146,10 @@ export class MfaService {
     return 'recovery';
   }
 
+  /** Removes TOTP. Recovery codes stay while a passkey remains (ADR 0016). */
   disable(userId: string, ip: string | null): void {
-    transaction(this.db, () => {
-      this.db.prepare('DELETE FROM user_mfa WHERE user_id = ?').run(userId);
-      this.db.prepare('DELETE FROM mfa_recovery_codes WHERE user_id = ?').run(userId);
-      this.db.prepare('DELETE FROM mfa_challenges WHERE user_id = ?').run(userId);
-    });
+    this.db.prepare('DELETE FROM user_mfa WHERE user_id = ?').run(userId);
+    this.dropIfNoFactor(userId);
     this.audit.record({ action: 'mfa.disable', outcome: 'success', actorId: userId, ip });
   }
 

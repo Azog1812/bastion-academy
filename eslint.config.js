@@ -77,4 +77,13 @@ export default tseslint.config(
     },
   },
   { files: ['eslint.config.js'], ...tseslint.configs.disableTypeChecked },
+  // Browser e2e harness: plain JS run inside the lab's Chromium image, outside the TS project.
+  {
+    files: ['test/e2e/**/*.mjs'],
+    ...tseslint.configs.disableTypeChecked,
+    languageOptions: {
+      ...tseslint.configs.disableTypeChecked.languageOptions,
+      globals: { process: 'readonly', setTimeout: 'readonly', clearTimeout: 'readonly', WebSocket: 'readonly' },
+    },
+  },
 );

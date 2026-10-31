@@ -49,6 +49,7 @@ docker compose up --build    # platform + lab runner + lab gateway, same hardeni
 docker compose --profile observability up -d   # + Prometheus on 127.0.0.1:9090 (ADR 0011)
 docker compose --profile wazuh up -d   # once: real Wazuh (~4 GiB), then started/stopped from the UI (ADR 0013)
 test/wazuh-real/run.sh       # Wazuh challenges: Bastion's evaluator vs the real wazuh-logtest (Docker, offline)
+test/e2e/passkeys-browser.sh # passkeys in real Chromium (virtual authenticator); needs bastion:local + lab-xss-stored images
 docker run --rm -v "$PWD/deploy/prometheus:/rules:ro" -w /rules --entrypoint promtool prom/prometheus:v3.15.1 test rules alerts.test.yml   # alert unit tests (also in CI)
 ```
 
@@ -73,6 +74,10 @@ src/
   crypto/tokens.ts       JWT HS256 (typ at+jwt, alg allow-list, iss/aud/exp/jti), opaque refresh
                          tokens stored as SHA-256
   crypto/totp.ts         RFC 6238 on node:crypto, base32, recovery codes (80 bits, SHA-256)
+  crypto/webauthn.ts     WebAuthn RP checks (origin, RP ID, challenge, UP, signature, counter) on
+                         node:crypto; crypto/cbor.ts: strict bounded CBOR decoder (ADR 0016)
+  services/passkey-service  passkeys as a second factor: single-use challenges bound to user,
+                         purpose and MFA step; user_id-scoped queries; counter compare-and-set
   security/              NIST 800-63B password policy + SecLists blocklist (generated file)
   services/auth-service  register/login (→ tokens or MFA challenge)/completeMfa/refresh/logout/
                          logoutEverywhere/changePassword/confirmPassword/profile
@@ -101,7 +106,7 @@ src/
                          fail closed (ADR 0006)
   http/middleware.ts     requestId, noStore, requireJson, authenticate, requireRole, errorHandler
   http/schemas.ts        all zod schemas are .strict() (mass-assignment protection)
-  http/routes.ts         /v1/auth/*, /v1/session/*, /v1/me*, /v1/me/mfa/*, /v1/notes*,
+  http/routes.ts         /v1/auth/*, /v1/session/*, /v1/me*, /v1/me/mfa/*, /v1/me/passkeys*, /v1/notes*,
                          /v1/curriculum, /v1/lessons/:id[/complete], /v1/challenges*,
                          /v1/challenges/:id/lab (POST start, DELETE stop), /v1/environments[/:id/start|stop],
                          /v1/scoreboard, /v1/admin/audit*
@@ -125,7 +130,7 @@ deploy/prometheus (scrape config, alerts.yml, alerts.test.yml for promtool),
 deploy/wazuh (offline certs.sh, users.sh without demo accounts, indexer/manager/dashboard config,
              bastion_rules.xml: rules for Bastion's own audit log, ids 100200-100299)
 docs/  threat-model · security-controls (OWASP API Top 10 + ASVS 4.0.3) · security-pipeline ·
-       adr/0001-0015 · runbook · openapi.yaml (used by DAST)
+       adr/0001-0016 · runbook · openapi.yaml (used by DAST)
 ```
 
 ## Security invariants — never break these
@@ -169,6 +174,10 @@ docs/  threat-model · security-controls (OWASP API Top 10 + ASVS 4.0.3) · secu
     no token or refresh cookie is issued before the second factor; MFA challenges are
     single-use with an atomic attempt cap; disabling MFA needs password + code. The
     scoreboard is the only cross-user read and projects pseudonym + score only.
+    Passkeys (ADR 0016): exact origin and RP ID hash always checked; challenges single-use
+    and bound to user, purpose and MFA step; CBOR parsed by `crypto/cbor.ts` only (bounded);
+    Ed25519/ES256/RS256 only; counter compare-and-set, a stale one refused and audited;
+    removing the last second factor needs password + code; no new dependency for WebAuthn.
 15. **Labs stay boxed** (ADR 0009). Only the lab runner holds the Docker socket; the
     platform and gateway never do. The runner takes a catalog lab id, a hex instance id,
     a flag and a bounded TTL, nothing else: image, command, mounts, ports and limits come
@@ -260,7 +269,8 @@ If a CI job is renamed, update the ruleset's required checks in the same change 
 ## Roadmap (suggested order, highest interview value first)
 
 1. ~~Base images pinned by digest~~ (done 29 Oct 2026).
-2. ~~**MFA**: TOTP~~ (done in v4, ADR 0008). Next: WebAuthn/passkeys (phishing-resistant).
+2. ~~**MFA**: TOTP~~ (done in v4, ADR 0008), ~~passkeys~~ (done 1 Nov 2026, ADR 0016). Next:
+   passwordless passkey login (discoverable credentials, account recovery design).
 3. **External KMS for KEKs** (Vault Transit or a cloud KMS): only `wrapDek`/`unwrapDek` change;
    add a local Vault in docker-compose for demos.
 4. **PostgreSQL + Redis** (rate-limit store, multiple replicas) behind the same service layer;
@@ -268,7 +278,7 @@ If a CI job is renamed, update the ruleset's required checks in the same change 
 5. ~~**Observability**: Prometheus metrics, alerting rules matching `docs/runbook.md`~~
    (done 31 Oct 2026, ADR 0011). Real Wazuh from the UI done (ADR 0013), Wazuh rule challenges
    done (ADR 0014), Bastion's audit log in Wazuh done (ADR 0015). Next: Alertmanager routing,
-   Grafana dashboard, WebAuthn.
+   Grafana dashboard.
 6. **Signed commits** (SSH/GPG) and a release workflow with semantic versioning.
 7. **Fuzzing** of the HTTP layer (e.g. schemathesis against `docs/openapi.yaml`) in CI.
 8. Interview prep: a mock technical interview on this repo (threat model, ADRs, auth-service).

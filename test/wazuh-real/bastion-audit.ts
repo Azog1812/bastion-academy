@@ -34,6 +34,10 @@ const CASES: [AuditEvent, string][] = [
   [{ action: 'challenge.flag_shared', outcome: 'denied', ...USER, target: 'lab-sqli-connexion', details: { owner: 'u-other' } }, '100205'],
   [{ action: 'admin.promote', outcome: 'success', actorId: null, target: USER.actorId }, '100206'],
   [{ action: 'mfa.recovery_code_used', outcome: 'success', ...USER }, '100207'],
+  // Passkeys (ADR 0016): a new key is routine, a removed one weakens the account, a clone pages.
+  [{ action: 'passkey.register', outcome: 'success', ...USER, target: 'a3c1e7d2-0000-4000-8000-000000000002', details: { alg: -7 } }, '100200'],
+  [{ action: 'passkey.delete', outcome: 'success', ...USER, target: 'a3c1e7d2-0000-4000-8000-000000000002' }, '100207'],
+  [{ action: 'passkey.clone_detected', outcome: 'denied', ...USER, target: 'a3c1e7d2-0000-4000-8000-000000000003', details: { stored: 41 } }, '100211'],
   // Brute force: six failures from one address, under the auth rate limit's ten.
   ...Array.from({ length: 5 }, (): [AuditEvent, string] => [{ action: 'auth.login', outcome: 'failure', ip: ATTACKER, details: { reason: 'unknown_user' } }, '100208']),
   [{ action: 'auth.login', outcome: 'failure', ip: ATTACKER, details: { reason: 'bad_password' } }, '100209'],

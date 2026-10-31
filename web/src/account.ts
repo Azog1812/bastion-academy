@@ -1,8 +1,9 @@
 import { api, type Me } from './api.js';
 import { h } from './dom.js';
+import { passkeysCard } from './passkeys.js';
 import { alert, onSubmit, show } from './ui.js';
 
-/** #/compte: scoreboard pseudonym and two-factor authentication. */
+/** #/compte: scoreboard pseudonym, two-factor authentication (TOTP) and passkeys. */
 
 const passwordInput = () =>
   h('input', { type: 'password', name: 'password', required: true, maxlength: '128', autocomplete: 'current-password' });
@@ -106,5 +107,8 @@ function disableMfaCard(): HTMLElement {
 
 export async function accountView(): Promise<void> {
   const me = await api<Me>('GET', '/v1/me');
-  show(h('h1', {}, 'Mon compte'), profileCard(me), me.mfaEnabled ? disableMfaCard() : enableMfaCard());
+  const passkeys = await passkeysCard(me, (codes) => {
+    show(h('h1', {}, 'Mon compte'), recoveryCodesCard(codes));
+  });
+  show(h('h1', {}, 'Mon compte'), profileCard(me), me.totpEnabled ? disableMfaCard() : enableMfaCard(), passkeys);
 }
