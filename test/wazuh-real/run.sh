@@ -18,7 +18,8 @@ host() { if command -v cygpath >/dev/null; then cygpath -w "$1"; else printf '%s
 npx tsx test/wazuh-real/prepare.ts "$(host "$work")"
 for suite in "$work"/*/; do
   echo "== $(basename "$suite")"
-  docker run --rm --network none --memory 1500m \
+  # nofile as in docker-compose.yml: analysisd raises its limit at start and logs an ERROR otherwise.
+  docker run --rm --network none --memory 1500m --ulimit nofile=655360:655360 \
     -v "$(host "$suite"):/suite" -v "$(host "$PWD/test/wazuh-real/replay.sh"):/replay.sh:ro" \
     --entrypoint bash "$IMAGE" /replay.sh
 done
