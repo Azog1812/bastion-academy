@@ -16,3 +16,4 @@ Format: context → decision → consequences.
 | [0009](0009-isolated-labs.md) | Isolated per-learner labs: lab runner, per-instance networks, gateway |
 | [0010](0010-detection-challenges.md) | Blue-team detection challenges: learner rules (Sigma subset, no regex) scored on labelled datasets |
 | [0011](0011-observability.md) | Observability: Prometheus metrics on a separate authenticated listener, closed-set labels, unit-tested alerts |
+| [0012](0012-optional-modules.md) | Optional modules chosen per learner, enforced server-side, never blocking the mandatory path |

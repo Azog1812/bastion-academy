@@ -61,12 +61,16 @@ progress { flex: 1; height: 0.8rem; accent-color: var(--ok); }
 
 .level.soon { opacity: 0.55; }
 .module header { display: flex; justify-content: space-between; align-items: center; gap: 1rem; }
-.module h3 { margin: 0; }
+.module h3 { margin: 0; flex: 1; }
 .module.locked { border-style: dashed; }
 .badge { font-size: 0.8rem; padding: 0.15rem 0.6rem; border-radius: 999px; border: 1px solid var(--border); white-space: nowrap; }
 .badge-terminé { color: var(--ok); border-color: var(--ok); }
 .badge-disponible { color: var(--accent); border-color: var(--accent); }
 .badge-verrouillé { color: var(--muted); }
+.badge-non-ajouté { color: var(--muted); }
+.badge-optionnel { color: var(--warn); border-color: var(--warn); }
+button.secondary { background: none; color: var(--accent); border: 1px solid var(--accent); }
+.module-choice { display: flex; flex-direction: column; align-items: flex-start; gap: 0.5rem; margin-top: 0.75rem; }
 .lessons li { margin: 0.35rem 0; }
 .lessons li.done a { color: var(--ok); }
 .lessons .meta { margin-left: 0.5rem; }

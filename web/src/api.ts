@@ -121,6 +121,10 @@ export interface ModuleView {
   title: string;
   summary: string;
   prerequisites: string[];
+  /** Optional modules are off until the learner adds them (what their machine can run). */
+  optional: boolean;
+  requirements: { docker?: boolean; ramGb?: number };
+  added: boolean;
   unlocked: boolean;
   completed: boolean;
   lessons: LessonSummary[];

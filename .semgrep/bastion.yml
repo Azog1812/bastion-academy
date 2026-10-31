@@ -37,14 +37,14 @@ rules:
     paths: { include: ["src/"] }
     severity: ERROR
     message: >-
-      Query on `lesson_progress` without `user_id`. Progress must be scoped to the
+      Query on `lesson_progress` or `module_choices` without `user_id`. Progress and choices must be scoped to the
       authenticated learner inside the SQL itself (IDOR / OWASP API1:2023).
     metadata: { cwe: "CWE-639", owasp: "API1:2023 - Broken Object Level Authorization" }
     patterns:
       - pattern: $DB.prepare("$SQL")
       - metavariable-regex:
           metavariable: $SQL
-          regex: (?is)^(?!.*\buser_id\b).*\blesson_progress\b
+          regex: (?is)^(?!.*\buser_id\b).*\b(lesson_progress|module_choices)\b
 
   - id: bastion-jwt-verify-without-algorithms
     languages: [typescript]

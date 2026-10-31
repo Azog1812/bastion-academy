@@ -61,6 +61,7 @@ Standards: **OWASP API Security Top 10 (2023)** and **OWASP ASVS 4.0.3** (Level 
 | 4.1.3 | Least privilege | Users see only their notes; admin limited to audit |
 | 4.1.5 | Access control fails securely | Missing principal → 401 (`uid()` throws) |
 | 4.2.1 | Protection against IDOR | Owner scoping + uniform 404 |
+| 4.1.2 | Attributes used by access control cannot be manipulated by the user | Optional-module choices are per learner and scoped in SQL; every lesson, quiz, challenge and lab re-checks them server-side (ADR 0012) |
 
 ### V5 Validation and injection
 | ID | Requirement (summary) | How |

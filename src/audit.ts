@@ -38,6 +38,7 @@ export const AUDIT_ACTIONS = [
   'note.update',
   'note.delete',
   'lesson.complete',
+  'module.select',
   'authz.denied',
   'admin.audit_read',
   'admin.audit_verify',

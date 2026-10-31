@@ -45,7 +45,9 @@ hosted instance yet.
 ### What's available today
 
 The curriculum spans six levels, from **Fundamentals** to **Expert**, all available
-(in French, 45 lessons, 127 quiz questions):
+(in French, 48 lessons, 136 quiz questions). Heavy hands-on modules are **optional**:
+each learner adds them to their training from the web UI if their machine can run them,
+and leaving one out never locks the rest of the path:
 
 - **Level 1, Fundamentals**: security basics, HTTP, sessions and JWT, then a
   *break it, then fix it* IDOR module.
@@ -61,7 +63,8 @@ The curriculum spans six levels, from **Fundamentals** to **Expert**, all availa
 - **Level 5, Defense and detection** (blue team): what to log, SIEM and correlation,
   writing Sigma-style rules, reading web attacks in logs, incident response (NIST SP
   800-61r3, 72-hour GDPR notification), forensics first steps (order of volatility,
-  containers).
+  containers); optional **Wazuh** module (architecture, decoders and XML rules,
+  file integrity monitoring, CIS configuration assessment, active response and its traps).
 - **Level 6, Expert**: race conditions (TOCTOU, single-packet attack) and insecure
   deserialization (gadget chains, prototype pollution); Kerberos delegation, AD CS
   (ESC1, ESC8) and DCSync, then how to detect them (4769, 4662, 4887, honey
@@ -217,7 +220,8 @@ curl -s $B/v1/lessons/cia-et-risque -H "authorization: Bearer $ALICE" | jq -r .b
 > neutralisent. Progression des bases jusqu'au niveau des grandes certifications.
 > Déjà disponible : une interface web (http://localhost:3000 après installation),
 > l'API d'apprentissage (cursus, progression, quiz corrigés côté serveur), six
-> parcours en français, des « Fondamentaux » au niveau « Expert » (45 leçons), des
+> parcours en français, des « Fondamentaux » au niveau « Expert » (48 leçons, dont un
+> module Wazuh optionnel : chaque élève ajoute les modules lourds selon sa machine), des
 > défis à flag personnel, 10 labs isolés, 5 défis de détection, un classement et la
 > MFA TOTP. Les labs sont volontairement vulnérables : à lancer uniquement en local.
 
@@ -282,7 +286,7 @@ generic errors with correlation ids · secret redaction in logs · secrets read 
 files rather than env vars · socket timeouts · privileged operations only via an
 operator CLI, never over HTTP.
 
-**291 tests, ~99 % line coverage** — most of them are *abuse cases*, not happy paths.
+**299 tests, ~99 % line coverage** — most of them are *abuse cases*, not happy paths.
 
 ### Supply chain & infrastructure
 

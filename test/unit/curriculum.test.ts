@@ -47,6 +47,17 @@ describe('curriculum validation (fail closed at startup)', () => {
     expect(() => buildCurriculum(source(modules))).toThrow(error);
   });
 
+  it('never lets a mandatory module depend on an optional one (leaving it out would lock the rest)', () => {
+    const opt = (id: string, prerequisites: string[] = []) => ({ ...mod(id, prerequisites), optional: true, requirements: { docker: true, ramGb: 8 } });
+    expect(() => buildCurriculum(source([opt('siem'), mod('after', ['siem'])]))).toThrow(/mandatory module "after" cannot require optional module "siem"/);
+    // Optional on top of optional, or optional on top of mandatory, is fine.
+    const c = buildCurriculum(source([mod('a'), opt('siem', ['a']), opt('soar', ['siem'])]));
+    expect(c.modules.get('siem')).toMatchObject({ optional: true, requirements: { docker: true, ramGb: 8 } });
+    expect(c.modules.get('a')?.optional).toBe(false);
+    expect(() => buildCurriculum(source([{ ...opt('x'), requirements: { gpu: true } }]))).toThrow();
+    expect(() => buildCurriculum(source([{ ...opt('x'), requirements: { ramGb: 0 } }]))).toThrow();
+  });
+
   it('rejects inconsistent quizzes', () => {
     const bad = (q: unknown) => source([{ ...mod('a'), lessons: [{ id: 'l', title: 't', minutes: 5, quiz: [q] }] }]);
     expect(() => buildCurriculum(bad({ id: 'q', prompt: 'p', choices: ['a', 'b'], answer: [2] }))).toThrow(/out of range/);

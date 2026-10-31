@@ -40,6 +40,8 @@ export const updateNoteSchema = z
 export const noteIdSchema = z.object({ id: z.uuid() }).strict();
 
 export const lessonIdSchema = z.object({ id: slug }).strict();
+export const moduleIdSchema = z.object({ id: slug }).strict();
+export const moduleChoiceSchema = z.object({ added: z.boolean() }).strict();
 
 export const completeLessonSchema = z
   .object({

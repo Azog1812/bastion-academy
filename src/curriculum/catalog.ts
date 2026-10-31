@@ -54,6 +54,16 @@ const moduleSchema = z
     summary: z.string().min(1).max(500),
     /** Module ids that must be fully completed first (any path). */
     prerequisites: z.array(slug).max(10).default([]),
+    /**
+     * An optional module is off until the learner adds it to their training: it
+     * may need more than their machine has (a SIEM, several containers).
+     */
+    optional: z.boolean().default(false),
+    /** What the hands-on part needs, shown before the learner adds the module. */
+    requirements: z
+      .object({ docker: z.boolean().optional(), ramGb: z.number().int().min(1).max(64).optional() })
+      .strict()
+      .optional(),
     lessons: z.array(lessonSchema).min(1).max(30),
   })
   .strict();
@@ -188,6 +198,10 @@ export function buildCurriculum(src: CurriculumSource): Curriculum {
   for (const m of modules.values()) {
     for (const p of m.prerequisites) {
       if (!modules.has(p)) throw new CurriculumError(`module "${m.id}" requires unknown module "${p}"`);
+      // Leaving an optional module out must never lock the rest of the curriculum.
+      if (!m.optional && modules.get(p)?.optional === true) {
+        throw new CurriculumError(`mandatory module "${m.id}" cannot require optional module "${p}"`);
+      }
     }
   }
   assertAcyclic(modules);

@@ -19,6 +19,8 @@ import {
   createNoteSchema,
   credentialsSchema,
   lessonIdSchema,
+  moduleChoiceSchema,
+  moduleIdSchema,
   mfaCodeSchema,
   mfaDisableSchema,
   mfaLoginSchema,
@@ -329,6 +331,16 @@ export function buildRouter(d: RouteDeps): Router {
     requireAuth,
     handler((req, res) => {
       res.json(d.learning.overview(uid(req)));
+    }),
+  );
+
+  r.put(
+    '/me/modules/:id',
+    requireAuth,
+    handler((req, res) => {
+      const { id } = parse(moduleIdSchema, req.params);
+      const { added } = parse(moduleChoiceSchema, req.body);
+      res.json(d.learning.chooseModule(uid(req), id, added, ctx(req).ip));
     }),
   );
 
