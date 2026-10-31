@@ -11,7 +11,7 @@ const logger = createLogger(config.LOG_LEVEL);
 const db = openDatabase(config.DATABASE_PATH);
 // Invalid content stops the boot, like invalid config: fail closed.
 const curriculum = loadCurriculum();
-const { app, services, metrics } = createApp({ config, db, logger, curriculum });
+const { app, services, metrics, siem } = createApp({ config, db, logger, curriculum });
 
 // Expired labs are destroyed even if nobody comes back to stop them (the runner reaps on its own too).
 const labReaper = setInterval(() => {
@@ -60,6 +60,7 @@ function shutdown(signal: string): void {
   force.unref();
   metricsServer?.close();
   server.close(() => {
+    siem?.close();
     db.close();
     logger.info('bye');
     process.exit(0);

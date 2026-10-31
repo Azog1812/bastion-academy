@@ -80,8 +80,11 @@ export class AuditLog {
   constructor(
     private readonly db: Database,
     private readonly key: Buffer,
-    /** Called after each entry is written: metrics count security events from the one place that sees them all. */
-    private readonly onRecord?: (event: AuditEvent) => void,
+    /**
+     * Called after each entry is written: metrics count security events, and the SIEM
+     * export copies them (ADR 0015), from the one place that sees them all.
+     */
+    private readonly onRecord?: (event: AuditEvent, written: { seq: number; ts: number }) => void,
   ) {}
 
   private digest(prev: string, e: Omit<AuditRow, 'seq' | 'prev_hash' | 'hash'>): string {
@@ -104,13 +107,13 @@ export class AuditLog {
       outcome: event.outcome,
       details: JSON.stringify(event.details ?? {}),
     };
-    this.db
+    const { lastInsertRowid } = this.db
       .prepare(
         `INSERT INTO audit_log (ts, actor_id, action, target, ip, outcome, details, prev_hash, hash)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(entry.ts, entry.actor_id, entry.action, entry.target, entry.ip, entry.outcome, entry.details, prev, this.digest(prev, entry));
-    this.onRecord?.(event);
+    this.onRecord?.(event, { seq: Number(lastInsertRowid), ts: entry.ts });
   }
 
   list(limit: number, beforeSeq?: number): AuditRow[] {

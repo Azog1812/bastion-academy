@@ -34,7 +34,7 @@ COPY web/tsconfig.json ./web/tsconfig.json
 COPY web/src ./web/src
 RUN npm run build \
  && npm prune --omit=dev --ignore-scripts \
- && mkdir -p /out/data \
+ && mkdir -p /out/data /out/log \
  && cp -r dist node_modules package.json /out/
 
 ########################### runtime ###########################
@@ -54,6 +54,9 @@ ENV NODE_ENV=production \
     UV_THREADPOOL_SIZE=4
 
 COPY --from=build --chown=65532:65532 /out/data /data
+# SIEM copy of the audit log (ADR 0015), when AUDIT_EXPORT_FILE points here: its own volume,
+# so the SIEM never sees the database.
+COPY --from=build --chown=65532:65532 --chmod=0700 /out/log /var/log/bastion
 COPY --from=build --chown=0:0 --chmod=0555 /out/dist ./dist
 COPY --from=build --chown=0:0 /out/node_modules ./node_modules
 COPY --from=build --chown=0:0 /out/package.json ./package.json

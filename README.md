@@ -184,7 +184,9 @@ fire in the *Alerts* tab ([ADR 0011](docs/adr/0011-observability.md)).
 **With a real Wazuh** (optional module, ~4 GiB of RAM): `docker compose --profile wazuh up -d`
 once, then learners start and stop it from the module card; dashboard on
 **https://localhost:8443**. Setup makes its own CA offline and drops Wazuh's demo accounts
-([ADR 0013](docs/adr/0013-shared-environments.md)).
+([ADR 0013](docs/adr/0013-shared-environments.md)). The platform's own audit log goes into
+it too ([ADR 0015](docs/adr/0015-audit-log-to-siem.md)): replay a refresh token or probe an
+admin route, and the alert shows up in the dashboard (`rule.groups: bastion`).
 
 | Endpoint | Purpose |
 |---|---|
@@ -320,7 +322,7 @@ operator CLI, never over HTTP.
 | Container | Distroless, UID 65532, no shell (asserted in CI), smoke-tested with `--read-only --cap-drop ALL`, Trivy gate |
 | DAST | OWASP ZAP API scan **authenticated with a real token**, driven by the OpenAPI spec |
 | Release | Push of the exact scanned image → **cosign keyless signature** → signed **CycloneDX SBOM** → **SLSA provenance** → self-verification |
-| Monitoring | Prometheus metrics on a **separate, token-protected listener**, labels from closed sets only (no personal data, no cardinality DoS), **11 alerts unit-tested with `promtool`** in CI and linked to the [runbook](docs/runbook.md) |
+| Monitoring | Prometheus metrics on a **separate, token-protected listener**, labels from closed sets only (no personal data, no cardinality DoS), **12 alerts unit-tested with `promtool`** in CI and linked to the [runbook](docs/runbook.md); the audit log itself in **Wazuh**, with rules checked in the real `wazuh-logtest` ([ADR 0015](docs/adr/0015-audit-log-to-siem.md)) |
 | Runtime | Kubernetes PSS *restricted*, default-deny NetworkPolicy with **no egress**, no SA token, secrets as 0400 files, **Kyverno rejects unsigned images** |
 | Pipeline itself | `permissions: {}`, every action **SHA-pinned**, `--ignore-scripts`, `persist-credentials: false`, harden-runner, OpenSSF Scorecard |
 

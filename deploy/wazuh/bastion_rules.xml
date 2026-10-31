@@ -1,0 +1,121 @@
+<!--
+  Bastion Academy: Wazuh rules for the platform's own audit log (ADR 0015).
+
+  The platform appends one JSON line per audit entry to /var/log/bastion/audit.json
+  (AUDIT_EXPORT_FILE); the manager reads it with log_format json (wazuh_manager.conf),
+  so every key is decoded without a regular expression. "action" and "srcip" land in
+  Wazuh's static fields (<action>, <srcip>), the other keys in dynamic ones (<field>).
+
+  Ids 100200-100299: clear of local_rules.xml's example (100001) and of the challenges.
+  Checked in CI against the real engine (test/wazuh-real, suite bastion-audit).
+  Level 10 and above is what pages the SOC, as in the challenges.
+-->
+<group name="bastion,">
+
+  <!-- Every line of the audit log. Level 3: visible in the dashboard, pages nobody. -->
+  <rule id="100200" level="3">
+    <decoded_as>json</decoded_as>
+    <field name="service" type="osmatch">^bastion$</field>
+    <description>Bastion: $(action) ($(outcome))</description>
+  </rule>
+
+  <!-- A refresh token that was already used came back: the session family is revoked. -->
+  <rule id="100201" level="12">
+    <if_sid>100200</if_sid>
+    <action type="osmatch">^auth.refresh_reuse_detected$</action>
+    <description>Bastion: a used refresh token came back from $(srcip), session revoked (token theft?)</description>
+    <mitre>
+      <id>T1550.001</id>
+    </mitre>
+    <group>session_hijacking,</group>
+  </rule>
+
+  <!-- The audit chain does not verify: an entry was changed, removed or reordered. -->
+  <rule id="100202" level="15">
+    <if_sid>100200</if_sid>
+    <action type="osmatch">^admin.audit_verify$</action>
+    <field name="outcome" type="osmatch">^failure$</field>
+    <description>Bastion: the audit log chain is broken (tampering or a lost entry)</description>
+    <mitre>
+      <id>T1070</id>
+    </mitre>
+    <group>integrity,</group>
+  </rule>
+
+  <!-- A role or ownership check refused a request: admin routes, another learner's note. -->
+  <rule id="100203" level="10">
+    <if_sid>100200</if_sid>
+    <action type="osmatch">^authz.denied$</action>
+    <description>Bastion: access denied to $(target) for $(actor)</description>
+    <group>access_denied,</group>
+  </rule>
+
+  <!-- An account locked after repeated failures. -->
+  <rule id="100204" level="10">
+    <if_sid>100200</if_sid>
+    <action type="osmatch">^auth.lockout$</action>
+    <description>Bastion: account $(actor) locked after repeated failed logins</description>
+    <mitre>
+      <id>T1110</id>
+    </mitre>
+    <group>authentication_failures,</group>
+  </rule>
+
+  <!-- A learner submitted a flag that belongs to someone else. -->
+  <rule id="100205" level="10">
+    <if_sid>100200</if_sid>
+    <action type="osmatch">^challenge.flag_shared$</action>
+    <description>Bastion: $(actor) submitted another learner's flag for $(target)</description>
+    <group>policy_violation,</group>
+  </rule>
+
+  <!-- Operator actions (CLI only, never over HTTP): worth seeing, not worth paging. -->
+  <rule id="100206" level="8">
+    <if_sid>100200</if_sid>
+    <action type="osmatch">^admin.promote$|^admin.key_rotation$</action>
+    <description>Bastion: privileged operation $(action)</description>
+  </rule>
+
+  <rule id="100207" level="7">
+    <if_sid>100200</if_sid>
+    <action type="osmatch">^mfa.recovery_code_used$|^mfa.disable$</action>
+    <description>Bastion: second factor weakened for $(actor) ($(action))</description>
+  </rule>
+
+  <!-- Failed logins: each one quietly, and the burst loudly (credential stuffing). -->
+  <rule id="100208" level="3">
+    <if_sid>100200</if_sid>
+    <action type="osmatch">^auth.login$</action>
+    <field name="outcome" type="osmatch">^failure$</field>
+    <description>Bastion: failed login from $(srcip)</description>
+    <group>authentication_failed,</group>
+  </rule>
+
+  <!--
+    One address. Bastion's auth rate limit (RATE_LIMIT_AUTH, 10 requests per 15 minutes
+    per address) answers 429 before a 10th try, and a refused request is not audited: a
+    threshold at or above the limit could never fire. Found by the end-to-end test.
+    The live manager fired this rule on the 6th to the 8th failure depending on the run
+    (wazuh-logtest: always the 6th): 6 keeps that margin under the limit.
+  -->
+  <rule id="100209" level="10" frequency="6" timeframe="900">
+    <if_matched_sid>100208</if_matched_sid>
+    <same_srcip />
+    <description>Bastion: 6 failed logins from $(srcip) in 15 minutes (brute force)</description>
+    <mitre>
+      <id>T1110</id>
+    </mitre>
+    <group>authentication_failures,</group>
+  </rule>
+
+  <!-- Many addresses: what the per-address limit cannot see (as BastionCredentialStuffing in Prometheus). -->
+  <rule id="100210" level="10" frequency="50" timeframe="300">
+    <if_matched_sid>100208</if_matched_sid>
+    <description>Bastion: 50 failed logins in 5 minutes from many addresses (credential stuffing)</description>
+    <mitre>
+      <id>T1110.004</id>
+    </mitre>
+    <group>authentication_failures,</group>
+  </rule>
+
+</group>

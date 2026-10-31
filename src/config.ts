@@ -114,6 +114,12 @@ const schema = z
     METRICS_PORT: z.coerce.number().int().min(1).max(65535).optional(),
     METRICS_HOST: z.string().default('127.0.0.1'),
     METRICS_TOKEN: base64Key(32).optional(),
+
+    /**
+     * Copy of the audit log for a SIEM (ADR 0015): one JSON line per entry, appended to
+     * this file (mode 0600) for Wazuh's logcollector. Off unless set.
+     */
+    AUDIT_EXPORT_FILE: z.string().min(1).optional(),
   })
   .superRefine((cfg, ctx) => {
     if (!cfg.ENCRYPTION_KEYS.has(cfg.ACTIVE_KEY_ID)) {

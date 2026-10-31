@@ -9,6 +9,7 @@ import { join } from 'node:path';
 import { compileRules, evaluate } from '../../src/detection/wazuh.js';
 import { BASTION_BASE_RULE, buildWazuhDataset, WAZUH_DATASET_KINDS } from '../../src/detection/wazuh-datasets.js';
 import { REFERENCE } from '../fixtures/wazuh-reference.js';
+import { bastionAuditSuite } from './bastion-audit.js';
 
 const out = process.argv[2];
 if (!out) throw new Error('usage: prepare.ts <work directory>');
@@ -33,4 +34,15 @@ for (const kind of WAZUH_DATASET_KINDS) {
     }),
   );
   process.stdout.write(`${kind}: ${String(d.events.length)} lines\n`);
+}
+
+// The production rules for Bastion's own audit log (ADR 0015): an expected rule per line.
+{
+  const { lines, ids } = bastionAuditSuite();
+  const dir = join(out, 'bastion-audit');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'lines.log'), `${lines.join('\n')}\n`);
+  writeFileSync(join(dir, 'rules.xml'), readFileSync(join(import.meta.dirname, '../../deploy/wazuh/bastion_rules.xml'), 'utf8'));
+  writeFileSync(join(dir, 'expected.json'), JSON.stringify({ ids }));
+  process.stdout.write(`bastion-audit: ${String(lines.length)} lines\n`);
 }

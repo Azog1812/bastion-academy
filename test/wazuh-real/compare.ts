@@ -11,8 +11,23 @@ if (!work) throw new Error('usage: compare.ts <work directory>');
 
 let failed = false;
 for (const suite of readdirSync(work)) {
-  const expected = JSON.parse(readFileSync(join(work, suite, 'expected.json'), 'utf8')) as { units: string[]; alerted: string[]; learnerIds: string[]; minLevel: number };
+  const raw = JSON.parse(readFileSync(join(work, suite, 'expected.json'), 'utf8')) as Record<string, unknown>;
   const results = readFileSync(join(work, suite, 'result.txt'), 'utf8').trim().split('\n');
+
+  // Production rules: the exact rule each line must end on.
+  if (Array.isArray(raw.ids)) {
+    const ids = raw.ids as string[];
+    const got = results.map((l) => l.split(' ')[0] ?? '');
+    const wrong = ids.flatMap((id, i) => (got[i] === id ? [] : [`line ${String(i + 1)}: expected ${id}, Wazuh says ${got[i] ?? 'nothing'}`]));
+    if (got.length !== ids.length || wrong.length) {
+      console.error(`${suite}: ${String(wrong.length)} lines differ (${String(got.length)} results for ${String(ids.length)} lines)`);
+      for (const w of wrong.slice(0, 10)) console.error(`  ${w}`);
+      failed = true;
+    } else process.stdout.write(`${suite}: all ${String(ids.length)} lines reach the expected rule in wazuh-logtest\n`);
+    continue;
+  }
+
+  const expected = raw as { units: string[]; alerted: string[]; learnerIds: string[]; minLevel: number };
   if (results.length !== expected.units.length) {
     console.error(`${suite}: ${String(results.length)} results for ${String(expected.units.length)} lines`);
     failed = true;

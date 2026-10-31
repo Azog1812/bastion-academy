@@ -46,7 +46,8 @@ learner regex is a ReDoS (ADR 0010).
   (5700 → 5716 → 5760 for "Failed password") and, at each rule, tries local children
   first, then the stock child it goes on to, then correlation children; the last rule
   decides, and a level 0 child silences its parent. Correlation rules count, within
-  `timeframe`, the events that reached the named rule, this one included. An alert
+  `timeframe`, the events that reached the named rule, this one included; when one
+  fires, the events it counted are used up (found while checking ADR 0015's rules). An alert
   counts from the challenge's level (10: the level that pages the SOC).
 - **Checked against the real engine in CI** (`test/wazuh-real/`, workflow `wazuh.yml`):
   each challenge's reference rules are replayed through `wazuh-logtest` in the pinned

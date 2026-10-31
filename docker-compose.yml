@@ -26,6 +26,8 @@ services:
       METRICS_PORT: "9464"
       METRICS_HOST: 0.0.0.0
       METRICS_TOKEN: "${METRICS_TOKEN:?METRICS_TOKEN is missing from .env, run gen-secrets}"
+      # A copy of the audit log for Wazuh (ADR 0015), on its own volume: the database stays private.
+      AUDIT_EXPORT_FILE: /var/log/bastion/audit.json
     ports:
       - "127.0.0.1:3000:3000" # loopback only: not exposed to the LAN
     networks: [default, lab-control, metrics]
@@ -34,6 +36,7 @@ services:
       - /tmp:size=16m,mode=1777
     volumes:
       - bastion-data:/data
+      - bastion-audit:/var/log/bastion
     cap_drop: [ALL]
     security_opt:
       - no-new-privileges:true
@@ -273,6 +276,10 @@ services:
       - wazuh-filebeat-etc:/etc/filebeat
       - wazuh-filebeat-var:/var/lib/filebeat
       - ./deploy/wazuh/wazuh_manager.conf:/wazuh-config-mount/etc/ossec.conf:ro
+      # Copied into etc/rules at start by the image's init script (ADR 0015).
+      - ./deploy/wazuh/bastion_rules.xml:/wazuh-config-mount/etc/rules/bastion_rules.xml:ro
+      # Bastion's audit log, read-only: Wazuh reads it, never writes it.
+      - bastion-audit:/var/log/bastion:ro
       - type: volume
         source: wazuh-certs
         target: /etc/ssl/wazuh
@@ -350,6 +357,7 @@ networks:
 
 volumes:
   bastion-data:
+  bastion-audit:
   prometheus-data:
   wazuh-certs:
   wazuh-indexer-data:
