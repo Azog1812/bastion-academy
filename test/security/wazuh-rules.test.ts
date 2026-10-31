@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { buildCurriculum } from '../../src/curriculum/catalog.js';
+import { REFERENCE } from '../fixtures/wazuh-reference.js';
 import { auditActions, newUser, setup, type Session, type TestContext } from '../helpers.js';
 
 /** basics (mandatory) -> wazuh (optional): a Wazuh rule challenge; basics also holds a JSON detection challenge. */
@@ -25,15 +26,8 @@ const curriculum = buildCurriculum({
   },
 });
 
-const GOOD = `<group name="local,sshd,">
-  <rule id="100100" level="10" frequency="8" timeframe="3600">
-    <if_matched_group>authentication_failed</if_matched_group>
-    <same_srcip />
-    <srcip>!10.0.5.20</srcip>
-    <description>sshd : force brute depuis $(srcip)</description>
-  </rule>
-</group>`;
-const WIDE = GOOD.replace('!10.0.5.20', '!10.0.5.0/24');
+const GOOD = REFERENCE['wazuh-ssh'];
+const WIDE = GOOD.replace('<srcip negate="yes">10.0.5.20</srcip>', '<srcip negate="yes">10.0.5.0/24</srcip>');
 
 const ctx = (quiz = 10_000) => setup({ curriculum, rateLimits: { quiz } });
 const detect = (t: TestContext, s: Session, id: string, rule: unknown) => t.http.post(`/v1/challenges/${id}/detect`).set(s.auth).send({ rule });
@@ -49,14 +43,14 @@ describe('Wazuh rule challenges (ADR 0014)', () => {
     await ready(t, s);
     const res = await t.http.get('/v1/challenges/wz-bastion').set(s.auth).expect(200);
     expect(res.body.detection).toMatchObject({ format: 'wazuh', unit: 'event', minLevel: 10 });
-    expect(res.body.detection.fields).toContain('action');
+    expect(res.body.detection.fields).toContain('outcome');
     const alerts = (res.body.artifact['alerts.json'] as string).split('\n');
     expect(alerts.length).toBe(res.body.detection.events);
     expect(JSON.parse(alerts[0] ?? '{}')).toMatchObject({ id: 'e001', rule: { id: '100000' }, decoder: { name: 'json' } });
     expect(res.body.artifact['Règle de base (fournie)']).toContain('<rule id="100000"');
     expect(JSON.stringify(res.body)).not.toMatch(/malicious|"bad"|label|BASTION\{/i);
     const ssh = await t.http.get('/v1/challenges/wz-ssh').set(s.auth).expect(200);
-    expect(ssh.body.artifact['Règles déjà en place']).toContain('5716 (niveau 5)');
+    expect(ssh.body.artifact['Règles déjà en place']).toContain('5760 (niveau 5, enfant de 5716)');
     expect(ssh.body.artifact).not.toHaveProperty('Règle de base (fournie)');
   });
 

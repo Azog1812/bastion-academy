@@ -89,21 +89,38 @@ réveiller le SOC pour rien.
 
 Dans les défis de ce module, tu écris de vraies règles Wazuh, et Bastion les évalue
 lui-même sur un jeu d'alertes : il ne les envoie à aucun Wazuh. Il lit un
-**sous-ensemble** de la syntaxe, et refuse le reste avec un message précis.
+**sous-ensemble** de la syntaxe, et refuse le reste avec un message précis. Ses
+réponses sont comparées en CI à celles du vrai `wazuh-logtest` (Wazuh 4.14), sur les
+mêmes lignes.
 
 - **Pas d'expression régulière.** `<regex>`, `<pcre2>` et `<field>` sans
   `type="osmatch"` sont refusés. Une expression régulière écrite par un élève et
   exécutée sur le serveur peut le bloquer pour tout le monde (ReDoS). OS_Match suffit :
-  sous-chaîne, `^` pour le début, `$` pour la fin, `|` pour « ou ».
+  sous-chaîne sans tenir compte de la casse, `^` pour le début, `$` pour la fin, `|`
+  pour « ou ».
 - **Pas de DTD ni d'entité.** Un analyseur XML qui accepte `<!DOCTYPE>` lit des
   fichiers du serveur (XXE) ou explose en mémoire (*billion laughs*). Le lecteur de
   Bastion ne connaît que les éléments, les attributs, les commentaires et les cinq
   entités `&lt; &gt; &amp; &quot; &apos;`.
 - **Une règle précise toujours une règle existante**, définie plus haut : l'arbre
   des règles ne peut pas boucler.
+
+Ce que `wazuh-logtest` nous a appris, et que le défi reproduit :
+
+- **L'ordre des enfants compte.** Sous une règle, Wazuh essaie d'abord tes règles
+  enfants, puis la règle fournie qui suit, puis les règles de corrélation. Un
+  « Failed password » descend de 5716 vers 5760 : une corrélation sur 5716 ne le voit
+  donc jamais. Corrèle sur la règle **la plus basse** que l'événement atteint.
+- **Champs statiques.** `srcip`, `srcuser`, `dstuser`, `action`, `status`, `url`… ont
+  leur propre élément ; `<field name="action">` est refusé par Wazuh lui-même.
+- **`<srcip>!10.0.5.20</srcip>` n'exclut rien** : Wazuh 4.14 ignore le `!` et compare
+  l'adresse. Pour exclure, écris `<srcip negate="yes">10.0.5.20</srcip>`, ou mieux une
+  règle enfant de niveau 0.
 - **`frequency="N"` compte N événements, celui-ci compris**, dans les `timeframe`
-  dernières secondes. Sur ce point, Wazuh et OSSEC ont varié d'une version à l'autre :
-  garde de la marge, et vérifie avec `wazuh-logtest`.
+  dernières secondes. Attention : Wazuh mesure le temps **à la réception** des
+  événements, pas avec l'horodatage de la ligne. Rejouer une journée dans
+  `wazuh-logtest` la compresse en quelques secondes : une fenêtre trop courte, que le
+  défi sanctionne, s'y déclenche quand même.
 
 Les règles qui réussissent un défi se collent telles quelles dans
 `local_rules.xml` : c'est le but.

@@ -168,29 +168,38 @@ function ipv4(value: string): number | null {
   return n;
 }
 
-/** `<srcip>`: an IPv4 address or CIDR block, `!` negates (Wazuh syntax). */
+/**
+ * `<srcip>`: an IPv4 address or CIDR block. Wazuh 4.14 ignores a leading `!` and matches
+ * the address itself (checked with wazuh-logtest), the opposite of what it reads like:
+ * refused, with `negate="yes"` as the way to exclude.
+ */
 function srcipTest(raw: string, line: number): (ip: string) => boolean {
-  const negated = raw.startsWith('!');
-  const [addr = '', bits = '32'] = (negated ? raw.slice(1) : raw).trim().split('/');
+  if (raw.trim().startsWith('!')) {
+    throw new WazuhRuleError(`ligne ${String(line)} : Wazuh 4.14 ignore ce « ! » et compare l'adresse elle-même (vérifié avec wazuh-logtest) ; pour exclure, écris <srcip negate="yes">`);
+  }
+  const [addr = '', bits = '32'] = raw.trim().split('/');
   const base = ipv4(addr);
   const prefix = Number(bits);
-  if (base === null || !/^\d{1,2}$/.test(bits) || prefix > 32) throw new WazuhRuleError(`ligne ${String(line)} : <srcip> attend une adresse IPv4 ou un bloc CIDR, par exemple 10.0.5.20 ou !10.0.5.0/24`);
+  if (base === null || !/^\d{1,2}$/.test(bits) || prefix > 32) throw new WazuhRuleError(`ligne ${String(line)} : <srcip> attend une adresse IPv4 ou un bloc CIDR, par exemple 10.0.5.20 ou 10.0.5.0/24`);
   const size = 2 ** (32 - prefix);
   const net = base - (base % size);
   return (ip) => {
     const v = ipv4(ip);
-    const inside = v !== null && v >= net && v < net + size;
-    return negated ? !inside : inside;
+    return v !== null && v >= net && v < net + size;
   };
 }
 
 export interface WazuhEvent {
   readonly id: string;
   readonly ts: number;
-  /** The rule of the stock ruleset (or of the brief) that this event reached before any learner rule. */
+  /** The deepest rule of the stock ruleset (or of the brief) this event reaches without learner rules. */
   readonly sid: number;
   readonly srcip: string;
   readonly user: string;
+  /** Which static field the decoder filled: sshd puts "Invalid user x" in srcuser, "Failed password for x" in dstuser. */
+  readonly userKey?: 'srcuser' | 'dstuser';
+  /** Static field `action` (the JSON decoder fills it from an "action" key). */
+  readonly action: string;
   readonly program_name: string;
   readonly full_log: string;
   /** Fields extracted by the decoder (dynamic fields, `<field name="…">`). */
@@ -202,7 +211,15 @@ export interface StockRule {
   level: number;
   description: string;
   groups: readonly string[];
+  /** The stock rule this one refines (`if_sid`): events walk 5700 → 5716 → 5760 in Wazuh. */
+  parent?: number;
 }
+
+/**
+ * Static fields of Wazuh: decoders fill them, rules test them with their own element
+ * (`<srcip>`, `<user>`, `<action>`…); `<field>` refuses them ("Field 'action' is static").
+ */
+const STATIC_FIELDS = ['user', 'srcuser', 'dstuser', 'srcip', 'dstip', 'srcport', 'dstport', 'protocol', 'action', 'id', 'url', 'data', 'extra_data', 'status', 'system_name'];
 
 export interface WazuhDataset {
   decoder: string;
@@ -217,7 +234,7 @@ export interface WazuhDataset {
   minLevel: number;
 }
 
-type Parent = { kind: 'sid'; ids: number[] } | { kind: 'group'; name: string } | { kind: 'matched_sid'; id: number } | { kind: 'matched_group'; name: string };
+type Parent = { kind: 'sid'; ids: number[] } | { kind: 'group'; name: string } | { kind: 'matched_sid'; id: number };
 type Condition = (e: WazuhEvent) => boolean;
 
 export interface CompiledRule {
@@ -233,7 +250,7 @@ export interface CompiledRule {
 const MAX_RULES = 10;
 const MAX_CONDITIONS = 8;
 const RULE_ATTRS = new Set(['id', 'level', 'frequency', 'timeframe']);
-const PARENTS = ['if_sid', 'if_group', 'if_matched_sid', 'if_matched_group'] as const;
+const PARENTS = ['if_sid', 'if_group', 'if_matched_sid'] as const;
 
 function int(raw: string | undefined, min: number, max: number, what: string, line: number): number {
   const n = raw !== undefined && /^\d{1,6}$/.test(raw.trim()) ? Number(raw.trim()) : NaN;
@@ -257,6 +274,8 @@ const UNSUPPORTED: Readonly<Record<string, string>> = {
   regex: 'les expressions régulières ne sont pas évaluées dans ces défis (ReDoS) : utilise <match> ou <field type="osmatch">',
   pcre2: 'les expressions régulières ne sont pas évaluées dans ces défis (ReDoS)',
   decoded_as: 'le décodeur est déjà fixé par le jeu de données : précise une règle avec <if_sid>',
+  if_matched_group:
+    "dans Wazuh 4.14, cette corrélation ne s'est pas déclenchée sur les règles sshd (vérifié avec wazuh-logtest) : corrèle sur une règle précise avec <if_matched_sid>, une règle par règle fournie",
 };
 
 function compileRule(node: XmlNode, inherited: readonly string[], known: Map<number, readonly string[]>, fields: readonly string[]): CompiledRule {
@@ -291,7 +310,7 @@ function compileRule(node: XmlNode, inherited: readonly string[], known: Map<num
     if (child.children.length > 0 && child.name !== 'mitre') throw new WazuhRuleError(`ligne ${String(l)} : <${child.name}> ne contient que du texte`);
     if ((PARENTS as readonly string[]).includes(child.name)) {
       only(child, []);
-      if (parent) throw new WazuhRuleError(`ligne ${String(l)} : une seule règle parente par règle (if_sid, if_group, if_matched_sid ou if_matched_group)`);
+      if (parent) throw new WazuhRuleError(`ligne ${String(l)} : une seule règle parente par règle (if_sid, if_group ou if_matched_sid)`);
       if (child.name === 'if_sid') {
         const ids = text.split(/[\s,]+/).filter(Boolean);
         if (ids.length < 1 || ids.length > 10) throw new WazuhRuleError(`ligne ${String(l)} : <if_sid> cite de 1 à 10 règles`);
@@ -299,7 +318,7 @@ function compileRule(node: XmlNode, inherited: readonly string[], known: Map<num
       } else if (child.name === 'if_matched_sid') parent = { kind: 'matched_sid', id: refer(text, l) };
       else {
         if (!text || text.length > 50) throw new WazuhRuleError(`ligne ${String(l)} : nom de groupe attendu`);
-        parent = child.name === 'if_group' ? { kind: 'group', name: text } : { kind: 'matched_group', name: text };
+        parent = { kind: 'group', name: text };
       }
       continue;
     }
@@ -343,6 +362,15 @@ function compileRule(node: XmlNode, inherited: readonly string[], known: Map<num
         conditions.push(negatable(child, (e) => test(pick(e))));
         break;
       }
+      case 'action': {
+        only(child, ['negate', 'type']);
+        once('action');
+        // Checked with wazuh-logtest (4.14): <action> without a type does not do OS_Match.
+        if (child.attrs.get('type') !== 'osmatch') throw new WazuhRuleError(`ligne ${String(l)} : dans Wazuh, <action> sans type ne fait pas d'OS_Match ; écris <action type="osmatch">`);
+        const test = osMatch(text, l);
+        conditions.push(negatable(child, (e) => test(e.action)));
+        break;
+      }
       case 'srcip': {
         only(child, ['negate']);
         once('srcip');
@@ -353,6 +381,10 @@ function compileRule(node: XmlNode, inherited: readonly string[], known: Map<num
       case 'field': {
         only(child, ['name', 'type', 'negate']);
         const name = child.attrs.get('name') ?? '';
+        if (STATIC_FIELDS.includes(name)) {
+          const tag = name === 'srcuser' || name === 'dstuser' ? 'user' : name;
+          throw new WazuhRuleError(`ligne ${String(l)} : « ${name} » est un champ statique dans Wazuh, que <field> refuse ; utilise <${tag}>`);
+        }
         if (!fields.includes(name)) throw new WazuhRuleError(`ligne ${String(l)} : champ inconnu « ${name} » (champs décodés : ${fields.join(', ') || 'aucun'})`);
         if (child.attrs.get('type') !== 'osmatch') {
           throw new WazuhRuleError(`ligne ${String(l)} : dans Wazuh, <field> est une expression régulière par défaut ; ajoute type="osmatch" (les expressions régulières ne sont pas évaluées ici)`);
@@ -369,11 +401,11 @@ function compileRule(node: XmlNode, inherited: readonly string[], known: Map<num
     if (conditions.length > MAX_CONDITIONS) throw new WazuhRuleError(`ligne ${String(l)} : ${String(MAX_CONDITIONS)} conditions au plus par règle`);
   }
 
-  if (!parent) throw new WazuhRuleError(`ligne ${String(line)} : une règle locale précise une règle existante (<if_sid>, <if_group>, <if_matched_sid> ou <if_matched_group>)`);
+  if (!parent) throw new WazuhRuleError(`ligne ${String(line)} : une règle locale précise une règle existante (<if_sid>, <if_group> ou <if_matched_sid>)`);
   if (!description) throw new WazuhRuleError(`ligne ${String(line)} : <description> est obligatoire`);
-  const matched = parent.kind === 'matched_sid' || parent.kind === 'matched_group';
+  const matched = parent.kind === 'matched_sid';
   if (matched !== hasFrequency) {
-    throw new WazuhRuleError(`ligne ${String(line)} : frequency et timeframe vont avec <if_matched_sid> ou <if_matched_group>, et réciproquement`);
+    throw new WazuhRuleError(`ligne ${String(line)} : frequency et timeframe vont avec <if_matched_sid>, et réciproquement`);
   }
   if ((sameSrcip || sameUser) && !matched) throw new WazuhRuleError(`ligne ${String(line)} : <same_srcip /> et <same_user /> n'ont de sens que dans une règle de corrélation`);
   const rule: CompiledRule = { id, level, description, groups, parent, conditions };
@@ -430,33 +462,39 @@ const childOf = (rule: CompiledRule, node: Node) => {
     case 'matched_sid':
       return p.id === node.id;
     case 'group':
-    case 'matched_group':
       return node.groups.includes(p.name);
   }
 };
 
 /**
- * Walks each event down the rule tree as Wazuh does: from the stock rule it reached,
- * into the first child rule whose conditions hold, until none does. The last rule
- * reached decides the alert and its level (a level 0 child silences its parent).
- * Correlation rules count, within `timeframe`, the earlier events that reached the
- * rule or group they name, this one included.
+ * Walks each event down the rule tree as Wazuh does, from the root of its stock path
+ * (5700 → 5716 → 5760 for "Failed password"). At each rule, in Wazuh's order (checked
+ * with wazuh-logtest, 4.14): local child rules first, then the stock child the event
+ * goes on to, then correlation children (`if_matched_*`), which therefore never see an
+ * event that a stock child took. The last rule reached decides the alert and its level
+ * (a level 0 child silences its parent). Correlation rules count, within `timeframe`,
+ * the events that reached the rule or group they name, this one included.
+ *
+ * Time is the event's timestamp. Wazuh correlates on the time it *receives* events, so a
+ * replay in wazuh-logtest compresses time: a window that is too short here may still
+ * fire there.
  */
 export function evaluate(rules: readonly CompiledRule[], dataset: WazuhDataset): { event: WazuhEvent; rule: CompiledRule }[] {
   const stock = new Map(dataset.stock.map((s) => [s.id, s]));
   const history = new Map<string, WazuhEvent[]>();
   const remember = (node: Node, e: WazuhEvent) => {
     for (const key of [`sid:${String(node.id)}`, ...node.groups.map((g) => `group:${g}`)]) {
+      // An event walking 5716 → 5760 meets the group twice: it still counts once.
       const list = history.get(key);
-      if (list) list.push(e);
-      else history.set(key, [e]);
+      if (!list) history.set(key, [e]);
+      else if (list[list.length - 1] !== e) list.push(e);
     }
   };
   const frequencyHolds = (rule: CompiledRule, e: WazuhEvent) => {
     const f = rule.frequency;
     if (!f) return true;
     const p = rule.parent;
-    const key = p.kind === 'matched_sid' ? `sid:${String(p.id)}` : p.kind === 'matched_group' ? `group:${p.name}` : '';
+    const key = p.kind === 'matched_sid' ? `sid:${String(p.id)}` : '';
     const count = (history.get(key) ?? []).filter(
       (h) => h.ts <= e.ts && e.ts - h.ts <= f.timeframe && (!f.sameSrcip || h.srcip === e.srcip) && (!f.sameUser || h.user === e.user),
     ).length;
@@ -465,19 +503,30 @@ export function evaluate(rules: readonly CompiledRule[], dataset: WazuhDataset):
 
   const alerts: { event: WazuhEvent; rule: CompiledRule }[] = [];
   for (const e of [...dataset.events].sort((a, b) => a.ts - b.ts)) {
-    const base = stock.get(e.sid);
-    if (!base) continue;
-    let node: Node = { ...base, learner: false };
+    // The stock path, root first; a broken chain (unknown parent) stops where it breaks.
+    const path: StockRule[] = [];
+    for (let s = stock.get(e.sid); s && path.length <= dataset.stock.length; s = s.parent === undefined ? undefined : stock.get(s.parent)) path.unshift(s);
+    const root = path[0];
+    if (!root) continue;
+    let node: Node = { ...root, learner: false };
+    let depth = 0; // position on the stock path while the event is still on it
     let last: CompiledRule | undefined;
     remember(node, e);
     const visited = new Set<number>();
     for (;;) {
       const current = node;
-      const next = rules.find((r) => !visited.has(r.id) && childOf(r, current) && r.conditions.every((c) => c(e)) && frequencyHolds(r, e));
-      if (!next) break;
-      visited.add(next.id);
-      node = { id: next.id, level: next.level, groups: next.groups, learner: true };
-      last = next;
+      const matches = (r: CompiledRule) => !visited.has(r.id) && childOf(r, current) && r.conditions.every((c) => c(e)) && frequencyHolds(r, e);
+      const local = rules.find((r) => !r.frequency && matches(r));
+      const stockChild = current.learner ? undefined : path[depth + 1];
+      const next = local ?? (stockChild ? undefined : rules.find((r) => r.frequency !== undefined && matches(r)));
+      if (next) {
+        visited.add(next.id);
+        node = { id: next.id, level: next.level, groups: next.groups, learner: true };
+        last = next;
+      } else if (stockChild) {
+        node = { ...stockChild, learner: false };
+        depth++;
+      } else break;
       remember(node, e);
     }
     if (node.learner && last && last.level >= dataset.minLevel) alerts.push({ event: e, rule: last });

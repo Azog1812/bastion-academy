@@ -48,6 +48,7 @@ docker compose --profile labs build   # lab images (v5), once
 docker compose up --build    # platform + lab runner + lab gateway, same hardening as prod
 docker compose --profile observability up -d   # + Prometheus on 127.0.0.1:9090 (ADR 0011)
 docker compose --profile wazuh up -d   # once: real Wazuh (~4 GiB), then started/stopped from the UI (ADR 0013)
+test/wazuh-real/run.sh       # Wazuh challenges: Bastion's evaluator vs the real wazuh-logtest (Docker, offline)
 docker run --rm -v "$PWD/deploy/prometheus:/rules:ro" -w /rules --entrypoint promtool prom/prometheus:v3.15.1 test rules alerts.test.yml   # alert unit tests (also in CI)
 ```
 
@@ -90,6 +91,7 @@ src/
   detection/datasets.ts  labelled per-learner log datasets with traps for naive rules (ADR 0010)
   detection/wazuh.ts     closed XML reader (no DTD/entities) + Wazuh rule subset, OS_Match only,
                          Wazuh's rule tree and correlation (ADR 0014); wazuh-datasets.ts: alerts.json-shaped data
+                         (test/wazuh-real/run.sh replays the reference rules in the real wazuh-logtest)
   services/note-service  owner-scoped CRUD, optimistic concurrency (version), rotateKeys()
   services/learning-service  progress scoped by user_id, server-side prerequisites + quiz grading,
                          optional modules added per learner (module_choices, ADR 0012)
@@ -176,6 +178,7 @@ docs/  threat-model · security-controls (OWASP API Top 10 + ASVS 4.0.3) · secu
     `detection/wazuh.ts` only: DOCTYPE, entity declarations, CDATA and processing
     instructions refused, five predefined entities, size/depth/node caps, OS_Match only,
     parents defined above (no cycle). Never feed learner XML to a general-purpose parser.
+    Teach only Wazuh behaviour that `test/wazuh-real/` confirms on the pinned image.
 17. **Metrics never widen the attack surface** (ADR 0011). Served only by the separate
     listener on `METRICS_PORT` with the bearer `METRICS_TOKEN`, never by the API app;
     label values come from closed sets (route patterns, `AUDIT_ACTIONS`, status codes),

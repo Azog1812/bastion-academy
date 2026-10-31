@@ -161,7 +161,9 @@ export class ChallengeService {
 
   /** The alerts, the stock rules they reached (a learner rule must refine one), and the brief's base rule if any. */
   private wazuhArtifact(d: WazuhDataset): Record<string, string> {
-    const stock = d.stock.map((r) => `${String(r.id)} (niveau ${String(r.level)}) ${r.description} · groupes : ${r.groups.join(', ')}`).join('\n');
+    const stock = d.stock
+      .map((r) => `${String(r.id)} (niveau ${String(r.level)}${r.parent === undefined ? '' : `, enfant de ${String(r.parent)}`}) ${r.description} · groupes : ${r.groups.join(', ')}`)
+      .join('\n');
     return {
       'alerts.json': toAlertLines(d),
       'Règles déjà en place': stock,

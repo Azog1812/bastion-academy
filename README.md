@@ -93,10 +93,14 @@ optional Wazuh module: the learner writes **real Wazuh XML rules**, as in
 `local_rules.xml`, against alerts shaped like Wazuh's `alerts.json`. Learner XML never
 reaches a general-purpose parser: a closed reader refuses DTDs and entities (**XXE**,
 *billion laughs*), patterns are OS_Match only (no ReDoS), and the rule tree cannot loop.
+The evaluator is **checked against the real Wazuh in CI**: the reference rules are replayed
+through `wazuh-logtest` (Wazuh 4.14, no network) and must raise exactly the same alerts.
+That check corrected the model: "Failed password" walks 5716 → 5760, `<srcip>!x` does not
+exclude x, and `action` is a static field.
 
 | Challenge | What the naive rule gets wrong |
 |---|---|
-| SSH brute force, in XML | `if_matched_sid 5716` misses the attacker who only tries non-existent users (5710); excluding the backup server's whole subnet hides a compromised neighbour |
+| SSH brute force, in XML | Correlating on 5716 sees nothing (the event goes on to 5760); on 5760 alone, the attacker who only tries non-existent users (5710) slips through; excluding the backup server's whole subnet hides a compromised neighbour |
 | Monitoring Bastion itself (its JSON audit log) | `<match>refresh</match>` flags every normal token refresh; without a level 0 child, the CI's nightly DAST scan pages the SOC |
 
 Every *break it, then fix it* module ends in Bastion's own code: the learner

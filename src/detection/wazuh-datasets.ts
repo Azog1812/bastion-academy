@@ -34,12 +34,19 @@ function finish(drafts: { e: Draft; bad: boolean }[]): { events: WazuhEvent[]; b
 
 /* ------------------------------------------------------------------ wazuh-ssh */
 
-/** Stock sshd rules of the Wazuh ruleset (0095-sshd_rules.xml), as far as this dataset needs them. */
+/**
+ * Stock sshd rules of Wazuh 4.14 (0095-sshd_rules.xml) that these events reach, with their
+ * parents, as wazuh-logtest shows them: "Failed password" walks 5700 → 5716 → 5760. The
+ * compliance groups (pci_dss_…, gdpr_…) are left out. The stock correlation rules (5712,
+ * 5720, 5763, 40111) are left out on purpose: writing one is the exercise.
+ */
 const SSH_STOCK: readonly StockRule[] = [
-  { id: 5700, level: 0, description: 'sshd: SSHD messages grouped.', groups: ['syslog', 'sshd'] },
-  { id: 5710, level: 5, description: 'sshd: Attempt to login using a non-existent user', groups: ['syslog', 'sshd', 'authentication_failed', 'invalid_login'] },
-  { id: 5715, level: 3, description: 'sshd: authentication success.', groups: ['syslog', 'sshd', 'authentication_success'] },
-  { id: 5716, level: 5, description: 'sshd: authentication failed.', groups: ['syslog', 'sshd', 'authentication_failed'] },
+  { id: 5700, level: 0, description: 'SSHD messages grouped.', groups: ['syslog', 'sshd'] },
+  { id: 5710, level: 5, description: 'sshd: Attempt to login using a non-existent user', groups: ['syslog', 'sshd', 'authentication_failed', 'invalid_login'], parent: 5700 },
+  { id: 5715, level: 3, description: 'sshd: authentication success.', groups: ['syslog', 'sshd', 'authentication_success'], parent: 5700 },
+  { id: 5716, level: 5, description: 'sshd: authentication failed.', groups: ['syslog', 'sshd', 'authentication_failed'], parent: 5700 },
+  { id: 5760, level: 5, description: 'sshd: authentication failed.', groups: ['syslog', 'sshd', 'authentication_failed'], parent: 5716 },
+  { id: 5721, level: 0, description: 'sshd: System disconnected from sshd.', groups: ['syslog', 'sshd'], parent: 5700 },
 ];
 
 function wazuhSsh(seed: Buffer): WazuhDataset {
@@ -47,20 +54,21 @@ function wazuhSsh(seed: Buffer): WazuhDataset {
   const drafts: { e: Draft; bad: boolean }[] = [];
   const line = (ts: number, message: string) => `${syslogTime(ts)} srv-web-01 sshd[${String(1000 + r.int(30_000))}]: ${message}`;
   const port = () => String(32_768 + r.int(28_000));
+  // The sshd decoder puts the account of "Accepted/Failed … for x" in dstuser, of "Invalid user x" in srcuser.
   const ok = (ts: number, user: string, ip: string, method = 'publickey') =>
-    drafts.push({ e: { ts, sid: 5715, srcip: ip, user, program_name: 'sshd', full_log: line(ts, `Accepted ${method} for ${user} from ${ip} port ${port()} ssh2`), fields: {} }, bad: false });
+    drafts.push({ e: { ts, sid: 5715, srcip: ip, user, userKey: 'dstuser', action: '', program_name: 'sshd', full_log: line(ts, `Accepted ${method} for ${user} from ${ip} port ${port()} ssh2`), fields: {} }, bad: false });
   const failed = (ts: number, user: string, ip: string, bad: boolean) =>
-    drafts.push({ e: { ts, sid: 5716, srcip: ip, user, program_name: 'sshd', full_log: line(ts, `Failed password for ${user} from ${ip} port ${port()} ssh2`), fields: {} }, bad });
+    drafts.push({ e: { ts, sid: 5760, srcip: ip, user, userKey: 'dstuser', action: '', program_name: 'sshd', full_log: line(ts, `Failed password for ${user} from ${ip} port ${port()} ssh2`), fields: {} }, bad });
   const invalid = (ts: number, user: string, ip: string, bad: boolean) =>
-    drafts.push({ e: { ts, sid: 5710, srcip: ip, user, program_name: 'sshd', full_log: line(ts, `Invalid user ${user} from ${ip} port ${port()}`), fields: {} }, bad });
+    drafts.push({ e: { ts, sid: 5710, srcip: ip, user, userKey: 'srcuser', action: '', program_name: 'sshd', full_log: line(ts, `Invalid user ${user} from ${ip} port ${port()}`), fields: {} }, bad });
 
   // Admins with keys, all day; the jump host, constantly.
   for (let k = 0; k < 40; k++) ok(T0 + r.int(28_800), r.pick(['deploy', 'florian', 'admin']), `10.2.0.${String(5 + r.int(3))}`);
   for (let k = 0; k < 25; k++) ok(T0 + r.int(7200), 'deploy', '10.2.0.1');
-  // Monitoring opens the port and leaves before authenticating (stock rule 5700, level 0).
+  // Monitoring opens the port and leaves before authenticating (stock rule 5721, level 0).
   for (let k = 0; k < 30; k++) {
     const ts = T0 + k * 120;
-    drafts.push({ e: { ts, sid: 5700, srcip: '10.2.0.9', user: '', program_name: 'sshd', full_log: line(ts, `Received disconnect from 10.2.0.9 port ${port()}:11: Bye Bye [preauth]`), fields: {} }, bad: false });
+    drafts.push({ e: { ts, sid: 5721, srcip: '10.2.0.9', user: '', action: '', program_name: 'sshd', full_log: line(ts, `Received disconnect from 10.2.0.9 port ${port()}:11: Bye Bye [preauth]`), fields: {} }, bad: false });
   }
   // A developer mistyping twice, then in.
   failed(T0 + 5000, 'marc', '10.2.3.40', false);
@@ -83,7 +91,7 @@ function wazuhSsh(seed: Buffer): WazuhDataset {
   // TRAP for wide exclusions: a compromised machine on the backup server's own subnet.
   const tc = T0 + 15_000 + r.int(8000);
   for (let k = 0; k < 15; k++) {
-    if (k % 2 === 0) invalid(tc + k * 12, r.pick(['admin', 'backup', 'ftp']), '10.0.5.77', true);
+    if (k % 3 === 0) invalid(tc + k * 12, r.pick(['admin', 'backup', 'ftp']), '10.0.5.77', true);
     else failed(tc + k * 12, 'root', '10.0.5.77', true);
   }
   // TRAP for short windows: a slow brute forcer, twelve tries in under an hour.
@@ -116,16 +124,18 @@ export const BASTION_BASE_RULE = `<group name="bastion,">
 </group>`;
 
 const BASTION_STOCK: readonly StockRule[] = [{ id: 100_000, level: 3, description: "Bastion : événement du journal d'audit", groups: ['bastion'] }];
-const BASTION_FIELDS = ['service', 'action', 'outcome', 'actor', 'target', 'reason', 'required', 'resource'] as const;
+/** Dynamic fields for `<field>`. `action` and `srcip` are static fields in Wazuh: `<action>`, `<srcip>`. */
+const BASTION_FIELDS = ['service', 'outcome', 'actor', 'target', 'reason', 'required', 'resource'] as const;
 
 function wazuhBastion(seed: Buffer): WazuhDataset {
   const r = rng(seed, 'wazuh-bastion');
   const drafts: { e: Draft; bad: boolean }[] = [];
   const learners = Array.from({ length: 30 }, (_, k) => ({ actor: `u-${(0x3a00 + k * 37).toString(16)}`, ip: `10.3.0.${String(20 + k)}` }));
   const audit = (ts: number, who: { actor: string; ip: string }, action: string, outcome: string, extra: Record<string, string> = {}, bad = false) => {
-    const fields = { service: 'bastion', action, outcome, actor: who.actor, ...extra };
-    const full = JSON.stringify({ ts: new Date(ts * 1000).toISOString(), ...fields, srcip: who.ip });
-    drafts.push({ e: { ts, sid: 100_000, srcip: who.ip, user: '', program_name: '', full_log: full, fields }, bad });
+    const fields = { service: 'bastion', outcome, actor: who.actor, ...extra };
+    const { service, ...rest } = fields;
+    const full = JSON.stringify({ ts: new Date(ts * 1000).toISOString(), service, action, ...rest, srcip: who.ip });
+    drafts.push({ e: { ts, sid: 100_000, srcip: who.ip, user: '', action, program_name: '', full_log: full, fields }, bad });
   };
   const any = () => r.pick(learners);
   const day = () => T0 + r.int(43_200);
@@ -194,7 +204,7 @@ export function toAlertLines(d: WazuhDataset): string {
         rule: rule ? { id: String(rule.id), level: rule.level, description: rule.description, groups: rule.groups } : null,
         decoder: { name: d.decoder },
         ...(e.program_name ? { predecoder: { program_name: e.program_name, hostname: 'srv-web-01' } } : {}),
-        data: { srcip: e.srcip, ...(e.user ? { srcuser: e.user } : {}), ...e.fields },
+        data: { srcip: e.srcip, ...(e.user ? { [e.userKey ?? 'srcuser']: e.user } : {}), ...(e.action ? { action: e.action } : {}), ...e.fields },
         full_log: e.full_log,
       });
     })

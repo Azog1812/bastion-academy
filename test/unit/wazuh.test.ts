@@ -2,40 +2,9 @@ import { randomBytes } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { compileRules, evaluate, osMatch, parseXml, scoreWazuh, WazuhRuleError } from '../../src/detection/wazuh.js';
 import { BASTION_BASE_RULE, buildWazuhDataset, toAlertLines, WAZUH_DATASET_KINDS, type WazuhDatasetKind } from '../../src/detection/wazuh-datasets.js';
+import { REFERENCE } from '../fixtures/wazuh-reference.js';
 
 const run = (kind: WazuhDatasetKind, xml: string, seed = randomBytes(32)) => scoreWazuh(xml, buildWazuhDataset(kind, seed));
-
-/** What a careful analyst would write: each dataset must admit one, on every seed. */
-const REFERENCE: Record<WazuhDatasetKind, string> = {
-  'wazuh-ssh': `
-<group name="local,sshd,">
-  <rule id="100100" level="10" frequency="8" timeframe="3600">
-    <if_matched_group>authentication_failed</if_matched_group>
-    <same_srcip />
-    <srcip>!10.0.5.20</srcip>
-    <description>sshd : force brute depuis $(srcip)</description>
-    <mitre><id>T1110</id></mitre>
-  </rule>
-</group>`,
-  'wazuh-bastion': `
-<group name="local,bastion,">
-  <rule id="100010" level="12">
-    <if_sid>100000</if_sid>
-    <field name="action" type="osmatch">^auth.refresh_reuse_detected$|^challenge.flag_shared$</field>
-    <description>Bastion : session volée ou drapeau partagé</description>
-  </rule>
-  <rule id="100011" level="10">
-    <if_sid>100000</if_sid>
-    <field name="action" type="osmatch">^authz.denied$</field>
-    <description>Bastion : accès refusé à une ressource d'un autre</description>
-  </rule>
-  <rule id="100012" level="0">
-    <if_sid>100011</if_sid>
-    <srcip>10.0.9.50</srcip>
-    <description>Scan DAST nocturne de la CI</description>
-  </rule>
-</group>`,
-};
 
 describe('Wazuh datasets', () => {
   it.each(WAZUH_DATASET_KINDS)('%s: the reference rules are perfect on any seed', (kind) => {
@@ -60,22 +29,29 @@ describe('Wazuh datasets', () => {
   });
 
   it('wazuh-ssh: each trap catches the naive rule', () => {
-    const rule = (attrs: string, parent: string, extra = '') =>
-      `<rule id="100100" level="10" ${attrs}>${parent}<same_srcip />${extra}<description>x</description></rule>`;
+    const rule = (id: number, attrs: string, sid: number, extra = '') =>
+      `<rule id="${String(id)}" level="10" ${attrs}><if_matched_sid>${String(sid)}</if_matched_sid><same_srcip />${extra}<description>x</description></rule>`;
+    // The reference shape: one correlation per stock rule, the backup server excluded from the password one.
+    const pair = (attrs: string, exclusion = '<srcip negate="yes">10.0.5.20</srcip>') => rule(100_100, attrs, 5760, exclusion) + rule(100_101, attrs, 5710);
     const seed = randomBytes(32);
-    const group = '<if_matched_group>authentication_failed</if_matched_group>';
-    // Only 5716: the attacker who only tries non-existent users (5710) slips through.
-    expect(run('wazuh-ssh', rule('frequency="8" timeframe="3600"', '<if_matched_sid>5716</if_matched_sid>', '<srcip>!10.0.5.20</srcip>'), seed).missed).toBeGreaterThan(0);
+    // Correlating on 5716 catches nothing: "Failed password" goes on to its stock child 5760 first (as in Wazuh).
+    expect(run('wazuh-ssh', rule(100_100, 'frequency="8" timeframe="3600"', 5716), seed)).toMatchObject({ alerts: 0, missed: 4 });
+    // Only 5760: the attacker who only tries non-existent users (5710) slips through.
+    const only5760 = run('wazuh-ssh', rule(100_100, 'frequency="8" timeframe="3600"', 5760, '<srcip negate="yes">10.0.5.20</srcip>'), seed);
+    expect(only5760).toMatchObject({ missed: 1, falsePositives: 0 });
     // A short window misses the slow attacker.
-    expect(run('wazuh-ssh', rule('frequency="8" timeframe="600"', group, '<srcip>!10.0.5.20</srcip>'), seed).missed).toBe(1);
+    expect(run('wazuh-ssh', pair('frequency="8" timeframe="600"'), seed).missed).toBe(1);
     // A low threshold flags the user who forgot her password.
-    expect(run('wazuh-ssh', rule('frequency="5" timeframe="3600"', group, '<srcip>!10.0.5.20</srcip>'), seed).examples.falsePositives).toContain('10.2.3.41');
+    expect(run('wazuh-ssh', pair('frequency="5" timeframe="3600"'), seed).examples.falsePositives).toContain('10.2.3.41');
     // No exclusion: the backup job's expired password.
-    expect(run('wazuh-ssh', rule('frequency="8" timeframe="3600"', group), seed).examples.falsePositives).toContain('10.0.5.20');
+    expect(run('wazuh-ssh', pair('frequency="8" timeframe="3600"', ''), seed).examples.falsePositives).toContain('10.0.5.20');
     // Excluding the whole subnet hides the compromised neighbour.
-    const wide = run('wazuh-ssh', rule('frequency="8" timeframe="3600"', group, '<srcip>!10.0.5.0/24</srcip>'), seed);
+    const wide = run('wazuh-ssh', pair('frequency="8" timeframe="3600"', '<srcip negate="yes">10.0.5.0/24</srcip>'), seed);
     expect(wide).toMatchObject({ missed: 1, falsePositives: 0 });
     expect(wide.examples.missed).toEqual(['10.0.5.77']);
+    // The production way to silence the backup server works too: a level 0 child of 5760.
+    const silenced = `<rule id="100099" level="0"><if_sid>5760</if_sid><srcip>10.0.5.20</srcip><description>x</description></rule>${pair('frequency="8" timeframe="3600"', '')}`;
+    expect(run('wazuh-ssh', silenced, seed)).toMatchObject({ missed: 0, falsePositives: 0 });
   });
 
   it('wazuh-bastion: each trap catches the naive rule', () => {
@@ -93,7 +69,7 @@ describe('Wazuh datasets', () => {
   });
 
   it('only alerts from a learner rule at or above the paging level', () => {
-    const low = REFERENCE['wazuh-ssh'].replace('level="10"', 'level="7"');
+    const low = REFERENCE['wazuh-ssh'].replaceAll('level="10"', 'level="7"');
     expect(run('wazuh-ssh', low)).toMatchObject({ alerts: 0, missed: 4 });
   });
 });
@@ -140,7 +116,7 @@ describe('Wazuh rule language: what the evaluator accepts', () => {
     expect(err(`<group name="g">${'<rule/>'.repeat(301)}</group>`)).toMatch(/trop d'éléments/);
     const many = Array.from({ length: 11 }, (_, k) => rule('<if_sid>5716</if_sid>', `id="${String(100_100 + k)}" level="1"`)).join('');
     expect(err(many)).toMatch(/10 règles au plus/);
-    const conds = Array.from({ length: 9 }, (_, k) => `<field name="${['action', 'outcome', 'actor', 'target', 'reason', 'required', 'resource', 'service', 'action'][k] ?? ''}" type="osmatch">a</field>`).join('');
+    const conds = Array.from({ length: 9 }, (_, k) => `<field name="${['service', 'outcome', 'actor', 'target', 'reason', 'required', 'resource', 'service', 'outcome'][k] ?? ''}" type="osmatch">a</field>`).join('');
     expect(err(rule(`<if_sid>100000</if_sid>${conds}`), bastion)).toMatch(/répété|conditions au plus/);
   });
 
@@ -157,7 +133,11 @@ describe('Wazuh rule language: what the evaluator accepts', () => {
     for (const name of ['__proto__', 'constructor', 'toString', 'full_log']) {
       expect(err(rule(`<if_sid>100000</if_sid><field name="${name}" type="osmatch">x</field>`), bastion)).toMatch(/champ inconnu/);
     }
-    expect(err(rule('<if_sid>100000</if_sid><field name="action">x</field>'), bastion)).toMatch(/type="osmatch"/);
+    expect(err(rule('<if_sid>100000</if_sid><field name="outcome">x</field>'), bastion)).toMatch(/type="osmatch"/);
+    // Static fields have their own element in Wazuh, which refuses them in <field> ("Field 'action' is static").
+    expect(err(rule('<if_sid>100000</if_sid><field name="action" type="osmatch">x</field>'), bastion)).toMatch(/champ statique.*<action>/);
+    expect(err(rule('<if_sid>5716</if_sid><field name="srcuser" type="osmatch">x</field>'))).toMatch(/champ statique.*<user>/);
+    expect(err(rule('<if_sid>100000</if_sid><action>auth.login</action>'), bastion)).toMatch(/type="osmatch"/);
   });
 
   it('keeps the rule tree acyclic and local: parents defined before, ids in the local range', () => {
@@ -177,6 +157,9 @@ describe('Wazuh rule language: what the evaluator accepts', () => {
     expect(err(rule('<if_sid>5716</if_sid><same_srcip />'))).toMatch(/corrélation/);
     expect(err(rule('<if_sid>5716</if_sid>', 'id="100100" level="10" ignore="60"'))).toMatch(/ignore/);
     expect(err(rule('<if_sid>5716</if_sid><srcip>10.0.5.0/33</srcip>'))).toMatch(/CIDR/);
+    // Behaviours checked against Wazuh 4.14 with wazuh-logtest, refused rather than taught wrong:
+    expect(err(rule('<if_sid>5716</if_sid><srcip>!10.0.5.20</srcip>'))).toMatch(/ignore ce « ! ».*negate="yes"/);
+    expect(err(rule('<if_matched_group>authentication_failed</if_matched_group><same_srcip />', 'id="100100" level="10" frequency="8" timeframe="60"'))).toMatch(/if_matched_sid/);
     expect(err(rule('<if_sid>5716</if_sid><decoded_as>json</decoded_as>'))).toMatch(/décodeur/);
     expect(err('<rule id="100100" level="10"><if_sid>5716</if_sid><description>x</description>')).toMatch(/jamais fermé/);
     expect(err('<rule id="100100" level="10"></group>')).toMatch(/ne ferme pas/);
@@ -194,6 +177,19 @@ describe('Wazuh rule language: what the evaluator accepts', () => {
     const negated = evaluate(compileRules(rule('<if_sid>5716</if_sid><user negate="yes">root</user>'), ssh), ssh);
     expect(negated.length).toBeGreaterThan(0);
     expect(negated.every(({ event }) => event.user !== 'root')).toBe(true);
+  });
+
+  it('follows the stock path: local children first, the stock child next, correlation last', () => {
+    // A local child of 5716 is tried before the stock child 5760 (wazuh-logtest shows the same).
+    const child = evaluate(compileRules(rule('<if_sid>5716</if_sid><user>^root$</user>'), ssh), ssh);
+    expect(child.length).toBeGreaterThan(0);
+    // A local child of the root 5700 too, and it takes the event off the stock path.
+    const rootChild = evaluate(compileRules(rule('<if_sid>5700</if_sid><match>Failed password</match>'), ssh), ssh);
+    expect(rootChild.length).toBe(child.length + ssh.events.filter((e) => e.sid === 5760 && e.user !== 'root').length);
+    // The exported alerts show the deepest stock rule and the right user field.
+    const lines = toAlertLines(ssh).split('\n').map((l) => JSON.parse(l) as { rule: { id: string }; data: Record<string, string> });
+    expect(lines.find((l) => l.rule.id === '5760')?.data).toHaveProperty('dstuser');
+    expect(lines.find((l) => l.rule.id === '5710')?.data).toHaveProperty('srcuser');
   });
 
   it('accepts the base rule given in the brief as XML, and comments', () => {

@@ -1,0 +1,58 @@
+name: Wazuh
+
+# The Wazuh rule challenges (ADR 0014) are graded by Bastion's own evaluator. This
+# replays their reference rules through the real wazuh-logtest, offline, and fails
+# if the two disagree: the challenges cannot drift away from Wazuh unnoticed.
+# The image is ~2.7 GB, so this runs only when something it checks changes.
+on:
+  push:
+    branches: [main]
+    paths:
+      - src/detection/**
+      - test/fixtures/wazuh-reference.ts
+      - test/wazuh-real/**
+      - deploy/wazuh/**
+      - docker-compose.yml
+      - .github/workflows/wazuh.yml
+  pull_request:
+    paths:
+      - src/detection/**
+      - test/fixtures/wazuh-reference.ts
+      - test/wazuh-real/**
+      - deploy/wazuh/**
+      - docker-compose.yml
+      - .github/workflows/wazuh.yml
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  logtest:
+    name: Wazuh challenges vs wazuh-logtest
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci --ignore-scripts
+
+      # Same image and digest as docker-compose.yml (run.sh reads it from there).
+      - name: Replay the reference rules in the real Wazuh
+        run: bash test/wazuh-real/run.sh
