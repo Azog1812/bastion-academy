@@ -22,7 +22,8 @@ v3 foundations (paths/modules/lessons, progress, web front-end) → v4 challenge
 HMAC flags, scoreboard, TOTP MFA) → v5 isolated per-learner lab containers (shipped, ADR 0009)
 → v6 blue team (detection challenges + level 5 path shipped, ADR 0010; observability
 shipped, ADR 0011; AI tutor to come). All six levels have a path (level 6 "Expert": race conditions,
-deserialization, advanced AD and its detection, certification prep). Distribution is **local only** for now (clone + Docker);
+deserialization, advanced AD and its detection, certification prep). Heavy modules are
+optional, added per learner from the UI (ADR 0012); the first is Wazuh (level 5). Distribution is **local only** for now (clone + Docker);
 hosting comes later. Lab apps are intentionally vulnerable: they must bind to 127.0.0.1,
 stay out of `src/`, and never weaken the platform's own invariants below.
 
@@ -35,7 +36,7 @@ explain the *why* (threat, standard, trade-off), not only the *what*.
 npm ci --ignore-scripts      # never run install scripts
 npm run lint                 # ESLint strictTypeChecked + security plugin + custom SQL rules
 npm run typecheck            # tsc strict, noUncheckedIndexedAccess, exactOptionalPropertyTypes
-npm test                     # vitest (291 tests)
+npm test                     # vitest (299 tests)
 npm run test:coverage        # thresholds: lines/statements/functions 90 %, branches 80 %
 npm run check                # lint + typecheck + coverage
 npm run build && node dist/cli.js gen-secrets > .env   # local secrets (gitignored)
@@ -83,7 +84,8 @@ src/
   detection/engine.ts    rule language (Sigma subset: match/exclude/threshold, NO regex), score()
   detection/datasets.ts  labelled per-learner log datasets with traps for naive rules (ADR 0010)
   services/note-service  owner-scoped CRUD, optimistic concurrency (version), rotateKeys()
-  services/learning-service  progress scoped by user_id, server-side prerequisites + quiz grading
+  services/learning-service  progress scoped by user_id, server-side prerequisites + quiz grading,
+                         optional modules added per learner (module_choices, ADR 0012)
   curriculum/catalog.ts  loads + validates content/ at boot (slug ids, no cycles, https links),
                          fail closed (ADR 0006)
   http/middleware.ts     requestId, noStore, requireJson, authenticate, requireRole, errorHandler
@@ -109,7 +111,7 @@ test/unit, test/security, test/helpers.ts (setup(), newUser(), auditActions())
 deploy/k8s (kustomize), deploy/policies (Kyverno signed-image policy),
 deploy/prometheus (scrape config, alerts.yml, alerts.test.yml for promtool)
 docs/  threat-model · security-controls (OWASP API Top 10 + ASVS 4.0.3) · security-pipeline ·
-       adr/0001-0011 · runbook · openapi.yaml (used by DAST)
+       adr/0001-0012 · runbook · openapi.yaml (used by DAST)
 ```
 
 ## Security invariants — never break these
@@ -136,7 +138,9 @@ docs/  threat-model · security-controls (OWASP API Top 10 + ASVS 4.0.3) · secu
     dependency (supply-chain surface); prefer `node:` built-ins.
 12. **Learning gating is server-side.** Quiz `answer` fields never leave the server (lessons
     are projected field by field); prerequisites are checked on read *and* on completion;
-    progress queries include `user_id` (Semgrep `bastion-progress-query-without-user`).
+    progress and `module_choices` queries include `user_id` (Semgrep `bastion-progress-query-without-user`).
+    Optional modules (ADR 0012): a mandatory module never requires an optional one (boot
+    check), and a left-out module stays closed server-side (lessons, quizzes, challenges, labs).
     Content is never written over HTTP and never read from disk per request.
 13. **Front-end never builds HTML from strings** (`h()`/textContent only; ESLint bans HTML
     sinks and web storage in `web/`), the page CSP keeps Trusted Types with no policy, and

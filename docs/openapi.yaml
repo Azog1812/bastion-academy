@@ -328,7 +328,7 @@ paths:
         "200": { description: Lesson, content: { application/json: { schema: { $ref: "#/components/schemas/Lesson" } } } }
         "400": { $ref: "#/components/responses/ValidationError" }
         "401": { $ref: "#/components/responses/Unauthorized" }
-        "403": { description: Prerequisite modules not completed, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "403": { description: Prerequisite modules not completed, or optional module not added, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "404": { $ref: "#/components/responses/Error" }
   /v1/lessons/{id}/complete:
     parameters:
@@ -368,10 +368,29 @@ paths:
                     properties: { passed: { const: false }, incorrect: { type: array, items: { type: string } } }
         "400": { $ref: "#/components/responses/ValidationError" }
         "401": { $ref: "#/components/responses/Unauthorized" }
-        "403": { description: Prerequisite modules not completed, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "403": { description: Prerequisite modules not completed, or optional module not added, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "404": { $ref: "#/components/responses/Error" }
         "429": { $ref: "#/components/responses/RateLimited" }
 
+  /v1/me/modules/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { $ref: "#/components/schemas/Slug" } }
+    put:
+      tags: [learning]
+      summary: Add an optional module to my training, or remove it
+      description: >-
+        Optional modules (heavy hands-on parts, such as a SIEM) are left out until the learner adds them.
+        Removing keeps progress. Mandatory modules cannot be removed. Idempotent.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: false, required: [added], properties: { added: { type: boolean } } }
+      responses:
+        "200": { description: Choice saved, content: { application/json: { schema: { type: object, properties: { id: { type: string }, added: { type: boolean } } } } } }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/Error" }
   /v1/challenges:
     get:
       tags: [challenges]
@@ -620,6 +639,9 @@ components:
                     title: { type: string }
                     summary: { type: string }
                     prerequisites: { type: array, items: { type: string } }
+                    optional: { type: boolean, description: Left out until the learner adds it }
+                    requirements: { type: object, properties: { docker: { type: boolean }, ramGb: { type: integer } } }
+                    added: { type: boolean, description: Part of my training (always true for mandatory modules) }
                     unlocked: { type: boolean }
                     completed: { type: boolean }
                     lessons:

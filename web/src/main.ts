@@ -140,9 +140,35 @@ function progressBar(done: number, total: number): HTMLElement {
   return h('div', { class: 'progress' }, bar, h('span', {}, `${done} / ${total} leçons (${pct} %)`));
 }
 
+function requirementsText(r: ModuleView['requirements']): string | null {
+  const parts = [r.docker ? 'Docker' : null, r.ramGb ? `${String(r.ramGb)} Go de RAM libres` : null].filter((x) => x !== null);
+  return parts.length > 0 ? `Pour la pratique : ${parts.join(' · ')}` : null;
+}
+
+/** Adds or removes an optional module, then redraws the catalogue (the server decides what opens). */
+function choiceButton(m: ModuleView): HTMLElement {
+  const button = h('button', { type: 'button', class: m.added ? 'secondary' : undefined }, m.added ? 'Retirer de ma formation' : 'Ajouter à ma formation');
+  const status = h('div', { 'aria-live': 'polite' });
+  button.addEventListener('click', () => {
+    button.setAttribute('disabled', '');
+    status.replaceChildren();
+    api('PUT', `/v1/me/modules/${m.id}`, { added: !m.added }).then(
+      () => catalogView(),
+      (err: unknown) => {
+        button.removeAttribute('disabled');
+        status.replaceChildren(alert(errorMessage(err)));
+      },
+    );
+  });
+  return h('div', { class: 'module-choice' }, button, status);
+}
+
 function moduleCard(m: ModuleView, titles: ReadonlyMap<string, string>): HTMLElement {
-  const state = m.completed ? 'Terminé' : m.unlocked ? 'Disponible' : 'Verrouillé';
-  const lessons = m.unlocked
+  const state = !m.added ? 'Non ajouté' : m.completed ? 'Terminé' : m.unlocked ? 'Disponible' : 'Verrouillé';
+  const needs = requirementsText(m.requirements);
+  const lessons = !m.added
+    ? h('p', { class: 'hint' }, 'Module optionnel : ajoute-le à ta formation si ta machine le permet. Tu peux le retirer à tout moment, ta progression est conservée.')
+    : m.unlocked
     ? h(
         'ol',
         { class: 'lessons' },
@@ -158,10 +184,18 @@ function moduleCard(m: ModuleView, titles: ReadonlyMap<string, string>): HTMLEle
     : h('p', { class: 'hint' }, `Termine d'abord : ${m.prerequisites.map((p) => titles.get(p) ?? p).join(', ')}.`);
   return h(
     'section',
-    { class: `card module ${m.unlocked ? '' : 'locked'}` },
-    h('header', {}, h('h3', {}, m.title), h('span', { class: `badge badge-${state.toLowerCase()}` }, state)),
+    { class: `card module ${m.unlocked && m.added ? '' : 'locked'}` },
+    h(
+      'header',
+      {},
+      h('h3', {}, m.title),
+      ...(m.optional ? [h('span', { class: 'badge badge-optionnel' }, 'Optionnel')] : []),
+      h('span', { class: `badge badge-${state.toLowerCase().replace(' ', '-')}` }, state),
+    ),
     h('p', {}, m.summary),
+    ...(needs ? [h('p', { class: 'meta' }, needs)] : []),
     lessons,
+    ...(m.optional ? [choiceButton(m)] : []),
   );
 }
 
@@ -190,7 +224,7 @@ async function catalogView(): Promise<void> {
 /* ---------- lesson ---------- */
 
 function nextLessonId(cur: Curriculum, lessonId: string): string | null {
-  const ordered = cur.paths.flatMap((p) => p.modules.flatMap((m) => m.lessons.map((l) => l.id)));
+  const ordered = cur.paths.flatMap((p) => p.modules.filter((m) => m.added).flatMap((m) => m.lessons.map((l) => l.id)));
   const i = ordered.indexOf(lessonId);
   return i >= 0 && i + 1 < ordered.length ? (ordered[i + 1] ?? null) : null;
 }

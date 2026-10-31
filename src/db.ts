@@ -131,6 +131,16 @@ const MIGRATIONS: readonly string[] = [
   ) STRICT;
   CREATE INDEX lab_instances_expiry ON lab_instances(expires_at);
   `,
+  // v5: optional modules each learner added to their training. A row means "added";
+  // removing deletes it, progress in lesson_progress is kept.
+  `
+  CREATE TABLE module_choices (
+    user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    module_id  TEXT NOT NULL,
+    added_at   INTEGER NOT NULL,
+    PRIMARY KEY (user_id, module_id)
+  ) STRICT, WITHOUT ROWID;
+  `,
 ];
 
 export type Database = DatabaseSync;

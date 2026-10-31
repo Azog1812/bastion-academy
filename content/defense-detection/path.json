@@ -203,6 +203,106 @@
           ]
         }
       ]
+    },
+    {
+      "id": "wazuh",
+      "title": "Wazuh, un SIEM open source en entreprise",
+      "summary": "Le SIEM et XDR open source le plus déployé : son architecture, ses décodeurs et ses règles XML, la surveillance d'intégrité, l'audit de configuration et la réponse active, avec ses pièges.",
+      "prerequisites": ["detection-ingenierie"],
+      "optional": true,
+      "requirements": { "docker": true, "ramGb": 8 },
+      "lessons": [
+        {
+          "id": "wazuh-architecture",
+          "title": "Architecture et déploiement de Wazuh",
+          "minutes": 25,
+          "references": [
+            { "label": "Documentation Wazuh — Composants", "url": "https://documentation.wazuh.com/current/getting-started/components/index.html" },
+            { "label": "Documentation Wazuh — Démarrage rapide et exigences", "url": "https://documentation.wazuh.com/current/quickstart.html" },
+            { "label": "Documentation Wazuh — Inscription des agents", "url": "https://documentation.wazuh.com/current/user-manual/agent/agent-enrollment/index.html" }
+          ],
+          "quiz": [
+            {
+              "id": "wa-composants",
+              "prompt": "Quel composant de Wazuh applique les décodeurs et les règles aux événements ?",
+              "choices": ["L'agent", "Le serveur (manager)", "L'indexeur", "Le tableau de bord"],
+              "answer": [1]
+            },
+            {
+              "id": "wa-agent",
+              "prompt": "Que fait un agent Wazuh installé sur un poste ?",
+              "choices": ["Il collecte les journaux et surveille l'intégrité des fichiers, puis envoie les événements au serveur", "Il stocke toutes les alertes de l'entreprise", "Il remplace l'antivirus"],
+              "answer": [0]
+            },
+            {
+              "id": "wa-exposition",
+              "prompt": "Quels ports du serveur Wazuh faut-il éviter d'exposer à Internet sans filtrage ?",
+              "choices": ["L'API du serveur (55000)", "L'inscription des agents (1515)", "Aucun, ils sont tous authentifiés"],
+              "answer": [0, 1]
+            }
+          ]
+        },
+        {
+          "id": "wazuh-decodeurs-regles",
+          "title": "Décodeurs et règles Wazuh",
+          "minutes": 30,
+          "references": [
+            { "label": "Documentation Wazuh — Syntaxe des règles", "url": "https://documentation.wazuh.com/current/user-manual/ruleset/ruleset-xml-syntax/rules.html" },
+            { "label": "Documentation Wazuh — Syntaxe des décodeurs", "url": "https://documentation.wazuh.com/current/user-manual/ruleset/ruleset-xml-syntax/decoders.html" },
+            { "label": "Documentation Wazuh — Tester avec wazuh-logtest", "url": "https://documentation.wazuh.com/current/user-manual/ruleset/testing.html" }
+          ],
+          "quiz": [
+            {
+              "id": "wr-ordre",
+              "prompt": "Dans quel ordre Wazuh traite-t-il un événement ?",
+              "choices": ["Pré-décodage, décodage, puis évaluation des règles", "Règles, puis décodage", "Indexation, puis décodage"],
+              "answer": [0]
+            },
+            {
+              "id": "wr-frequence",
+              "prompt": "Une règle porte frequency=\"8\" timeframe=\"120\", <if_matched_sid>5710</if_matched_sid> et <same_srcip />. Que signifie-t-elle ?",
+              "choices": ["La règle se déclenche quand la règle parente a correspondu 8 fois en 120 secondes depuis la même IP source", "La règle se déclenche toutes les 120 secondes", "La règle bloque l'IP pendant 120 secondes"],
+              "answer": [0]
+            },
+            {
+              "id": "wr-local",
+              "prompt": "Où écrire ses propres règles pour qu'une mise à jour de Wazuh ne les écrase pas ?",
+              "choices": ["Dans local_rules.xml (ou un autre fichier du dossier etc/rules), avec des identifiants à partir de 100000", "Directement dans les fichiers de règles fournis par Wazuh", "Nulle part : Wazuh n'accepte pas de règles personnalisées"],
+              "answer": [0]
+            }
+          ]
+        },
+        {
+          "id": "wazuh-fim-reponse",
+          "title": "Intégrité des fichiers, audit et réponse active",
+          "minutes": 25,
+          "references": [
+            { "label": "Documentation Wazuh — Surveillance d'intégrité (FIM)", "url": "https://documentation.wazuh.com/current/user-manual/capabilities/file-integrity/index.html" },
+            { "label": "Documentation Wazuh — Security Configuration Assessment", "url": "https://documentation.wazuh.com/current/user-manual/capabilities/sec-config-assessment/index.html" },
+            { "label": "Documentation Wazuh — Réponse active", "url": "https://documentation.wazuh.com/current/user-manual/capabilities/active-response/index.html" }
+          ],
+          "quiz": [
+            {
+              "id": "wf-whodata",
+              "prompt": "Qu'apporte le mode « who-data » de la surveillance d'intégrité ?",
+              "choices": ["Il indique quel utilisateur et quel processus ont modifié le fichier", "Il chiffre les fichiers surveillés", "Il restaure automatiquement le fichier"],
+              "answer": [0]
+            },
+            {
+              "id": "wf-sca",
+              "prompt": "À quoi sert le module SCA (Security Configuration Assessment) ?",
+              "choices": ["Vérifier la configuration des machines contre des référentiels comme les benchmarks CIS", "Scanner les ports des machines du réseau", "Analyser le code source des applications"],
+              "answer": [0]
+            },
+            {
+              "id": "wf-ar",
+              "prompt": "Quels risques présente une réponse active qui bloque automatiquement l'IP source d'une attaque ?",
+              "choices": ["Un attaquant peut usurper l'IP d'un serveur légitime pour le faire bloquer", "Un faux positif coupe un utilisateur légitime", "Aucun, le blocage est toujours sûr"],
+              "answer": [0, 1]
+            }
+          ]
+        }
+      ]
     }
   ]
 }

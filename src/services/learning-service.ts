@@ -36,6 +36,16 @@ export class LearningService {
     return new Map(rows.map((r) => [r.lesson_id, r.completed_at]));
   }
 
+  /** Optional modules this learner added to their training. */
+  private added(userId: string): Set<string> {
+    const rows = this.db.prepare('SELECT module_id FROM module_choices WHERE user_id = ?').all(userId) as { module_id: string }[];
+    return new Set(rows.map((r) => r.module_id));
+  }
+
+  private static inTraining(m: Module, added: ReadonlySet<string>): boolean {
+    return !m.optional || added.has(m.id);
+  }
+
   private static moduleDone(m: Module, done: ReadonlyMap<string, number>): boolean {
     return m.lessons.every((l) => done.has(l.id));
   }
@@ -55,20 +65,46 @@ export class LearningService {
 
   private assertUnlocked(userId: string, lesson: Lesson, done: ReadonlyMap<string, number>, ip: string | null): void {
     const mod = this.curriculum.modules.get(lesson.moduleId);
+    if (mod && !LearningService.inTraining(mod, this.added(userId))) {
+      this.audit.record({ action: 'lesson.complete', outcome: 'denied', actorId: userId, target: lesson.id, ip, details: { reason: 'not_added' } });
+      throw forbidden('Add this optional module to your training first');
+    }
     if (mod && this.unlocked(mod, done)) return;
     this.audit.record({ action: 'lesson.complete', outcome: 'denied', actorId: userId, target: lesson.id, ip, details: { reason: 'locked' } });
     throw forbidden('Complete the prerequisite modules first');
   }
 
-  /** Used by challenges, which open with their module. */
+  /** Used by challenges and labs, which open with their module: added (if optional) and unlocked. */
   isModuleUnlocked(userId: string, moduleId: string): boolean {
     const mod = this.curriculum.modules.get(moduleId);
-    return mod !== undefined && this.unlocked(mod, this.completed(userId));
+    return mod !== undefined && LearningService.inTraining(mod, this.added(userId)) && this.unlocked(mod, this.completed(userId));
+  }
+
+  /**
+   * Adds an optional module to the learner's training, or removes it. Mandatory
+   * modules cannot be removed: the boot-time check guarantees no mandatory module
+   * depends on an optional one, so a removal never locks anything else.
+   * Progress is kept: adding the module back restores it.
+   */
+  chooseModule(userId: string, moduleId: string, add: boolean, ip: string | null): { id: string; added: boolean } {
+    const mod = this.curriculum.modules.get(moduleId);
+    if (!mod) throw notFound('Module not found');
+    if (!mod.optional) throw badRequest('This module is part of every training and cannot be removed');
+    const res = add
+      ? this.db
+          .prepare('INSERT INTO module_choices (user_id, module_id, added_at) VALUES (?, ?, ?) ON CONFLICT (user_id, module_id) DO NOTHING')
+          .run(userId, mod.id, Date.now())
+      : this.db.prepare('DELETE FROM module_choices WHERE user_id = ? AND module_id = ?').run(userId, mod.id);
+    if (Number(res.changes) > 0) {
+      this.audit.record({ action: 'module.select', outcome: 'success', actorId: userId, target: mod.id, ip, details: { added: add } });
+    }
+    return { id: mod.id, added: add };
   }
 
   /** The whole catalogue with this user's progress. Quiz answers are never part of it. */
   overview(userId: string) {
     const done = this.completed(userId);
+    const added = this.added(userId);
     let completed = 0;
     let total = 0;
     const paths = this.curriculum.paths.map((p) => ({
@@ -77,9 +113,13 @@ export class LearningService {
       summary: p.summary,
       level: p.level,
       modules: p.modules.map((m) => {
+        const inTraining = LearningService.inTraining(m, added);
         const lessons = m.lessons.map((l) => {
-          total++;
-          if (done.has(l.id)) completed++;
+          // Progress counts the learner's own training: an optional module left out is not "unfinished".
+          if (inTraining) {
+            total++;
+            if (done.has(l.id)) completed++;
+          }
           return { id: l.id, title: l.title, minutes: l.minutes, hasQuiz: l.quiz.length > 0, completed: done.has(l.id) };
         });
         return {
@@ -87,6 +127,9 @@ export class LearningService {
           title: m.title,
           summary: m.summary,
           prerequisites: m.prerequisites,
+          optional: m.optional,
+          requirements: m.requirements ?? {},
+          added: inTraining,
           unlocked: this.unlocked(m, done),
           completed: LearningService.moduleDone(m, done),
           lessons,
