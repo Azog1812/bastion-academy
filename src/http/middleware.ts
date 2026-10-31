@@ -115,7 +115,7 @@ export function notFoundHandler(_req: Request, _res: Response, next: NextFunctio
  * Single exit point for errors. Clients get a stable, minimal JSON shape
  * (RFC 9457-style); details stay in the server logs, keyed by request id.
  */
-export function errorHandler(log: Logger) {
+export function errorHandler(log: Logger, onIntegrityFailure: () => void = () => undefined) {
   // Express recognises error handlers by their 4-argument signature.
   return (err: unknown, req: Request, res: Response, _next: NextFunction): void => {
     let status = 500;
@@ -142,6 +142,7 @@ export function errorHandler(log: Logger) {
             : { error: 'malformed_body', message: 'Malformed JSON body' };
     } else if (err instanceof DecryptionError) {
       log.error({ reqId: req.id, err: { name: err.name } }, 'ciphertext integrity failure — possible tampering');
+      onIntegrityFailure();
     }
 
     if (status >= 500) log.error({ reqId: req.id, err }, 'unhandled error');

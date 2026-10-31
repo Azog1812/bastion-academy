@@ -1,0 +1,110 @@
+# Alerting rules for Bastion. Each alert names the runbook section that says what
+# to do (docs/runbook.md), and each one is unit-tested: deploy/prometheus/alerts.test.yml,
+# run in CI with `promtool test rules`. An alert nobody has tested is an alert that
+# will not fire on the day it matters.
+groups:
+  - name: bastion-security
+    rules:
+      - alert: BastionRefreshTokenReuse
+        # A rotated refresh token was presented again: someone holds a stolen copy.
+        # One occurrence is enough; the family is already revoked by the API.
+        expr: increase(bastion_audit_events_total{action="auth.refresh_reuse_detected"}[5m]) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: Refresh token replay detected (likely token theft)
+          runbook: docs/runbook.md#alert-authrefresh_reuse_detected
+
+      - alert: BastionCredentialStuffing
+        # Many failed logins across the platform: a password spray or a stuffing
+        # list. Per-account lockout does not see it when every attempt hits a new account.
+        expr: sum(increase(bastion_audit_events_total{action="auth.login",outcome="failure"}[5m])) > 50
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $value | humanize }} failed logins in 5 minutes"
+          runbook: docs/runbook.md#alert-bastioncredentialstuffing
+
+      - alert: BastionAccountLockouts
+        expr: sum(increase(bastion_audit_events_total{action="auth.lockout"}[15m])) > 5
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $value | humanize }} accounts locked in 15 minutes (brute force, or lockout used as a DoS)"
+          runbook: docs/runbook.md#alert-bastioncredentialstuffing
+
+      - alert: BastionMfaBruteForce
+        expr: sum(increase(bastion_audit_events_total{action="auth.mfa",outcome="failure"}[10m])) > 20
+        labels:
+          severity: warning
+        annotations:
+          summary: Many wrong second-factor codes (someone holds passwords and is guessing codes)
+          runbook: docs/runbook.md#alert-bastioncredentialstuffing
+
+      - alert: BastionAuthorizationProbing
+        # authz.denied is recorded when a user asks for another user's object or an admin route.
+        expr: sum(increase(bastion_audit_events_total{action="authz.denied"}[10m])) > 20
+        labels:
+          severity: warning
+        annotations:
+          summary: Repeated authorization denials (IDOR or privilege probing)
+          runbook: docs/runbook.md#alert-repeated-authzdenied
+
+      - alert: BastionCiphertextTampering
+        expr: increase(bastion_integrity_failures_total[5m]) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: A ciphertext failed authentication, the database was modified outside the API
+          runbook: docs/runbook.md#alert-ciphertext-integrity-failure--possible-tampering-in-logs
+
+      - alert: BastionSharedFlag
+        # A learner submitted a flag derived for another learner: copied answers.
+        expr: increase(bastion_audit_events_total{action="challenge.flag_shared"}[1h]) > 0
+        labels:
+          severity: info
+        annotations:
+          summary: A challenge flag was shared between learners
+          runbook: docs/runbook.md#alert-bastionsharedflag
+
+  - name: bastion-availability
+    rules:
+      - alert: BastionDown
+        expr: up{job="bastion"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: Prometheus cannot scrape Bastion (down, or the metrics token is wrong)
+          runbook: docs/runbook.md#alert-bastiondown
+
+      - alert: BastionHighErrorRate
+        expr: |
+          sum(rate(http_requests_total{status=~"5.."}[5m]))
+            / sum(rate(http_requests_total[5m])) > 0.05
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $value | humanizePercentage }} of requests fail with a 5xx"
+          runbook: docs/runbook.md#alert-bastionhigherrorrate
+
+      - alert: BastionEventLoopBlocked
+        # Every request waits when the event loop is blocked; often a large body or synchronous work.
+        expr: nodejs_eventloop_delay_p99_seconds > 0.5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Event loop delay p99 above 500 ms
+          runbook: docs/runbook.md#alert-bastionhigherrorrate
+
+      - alert: BastionMetricsCardinality
+        # Should never fire: label values come from closed sets. If it does, a label is fed by input.
+        expr: increase(bastion_metrics_series_dropped_total[15m]) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: A metric reached its series cap, samples are being dropped
+          runbook: docs/runbook.md#alert-bastionmetricscardinality

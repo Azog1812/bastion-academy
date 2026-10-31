@@ -23,6 +23,9 @@ describe('configuration fails closed', () => {
     ['empty key ring', { ENCRYPTION_KEYS: ' , ' }, 'at least one'],
     ['active key not in ring', { ACTIVE_KEY_ID: 'k9' }, 'ACTIVE_KEY_ID'],
     ['weak scrypt in production', { NODE_ENV: 'production' }, 'SCRYPT_LOG_N'],
+    ['metrics port without a token', { METRICS_PORT: '9464' }, 'METRICS_TOKEN'],
+    ['metrics on the API port', { METRICS_PORT: '3000', METRICS_TOKEN: randomBytes(32).toString('base64') }, 'must differ from PORT'],
+    ['placeholder metrics token', { METRICS_PORT: '9464', METRICS_TOKEN: 'prometheus-scrape-token-please-change' }, 'standard base64'],
   ])('refuses to start with a %s', (_name, override, message) => {
     expect(() => loadConfig(testEnv(override))).toThrow(message);
   });

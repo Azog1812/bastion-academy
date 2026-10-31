@@ -1,0 +1,151 @@
+# Unit tests for alerts.yml: promtool test rules deploy/prometheus/alerts.test.yml
+# Each test feeds synthetic series and states which alerts must (and must not) fire.
+rule_files:
+  - alerts.yml
+
+evaluation_interval: 1m
+
+tests:
+  - name: a single refresh token replay pages at once
+    interval: 1m
+    input_series:
+      - series: 'bastion_audit_events_total{action="auth.refresh_reuse_detected",outcome="denied"}'
+        values: "0 0 1 1 1 1 1 1 1 1 1 1"
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: BastionRefreshTokenReuse
+        exp_alerts: []
+      - eval_time: 3m
+        alertname: BastionRefreshTokenReuse
+        exp_alerts:
+          - exp_labels: { severity: critical, action: auth.refresh_reuse_detected, outcome: denied }
+            exp_annotations:
+              summary: Refresh token replay detected (likely token theft)
+              runbook: docs/runbook.md#alert-authrefresh_reuse_detected
+      # The counter stops moving: the alert resolves once the event leaves the 5-minute window.
+      - eval_time: 11m
+        alertname: BastionRefreshTokenReuse
+        exp_alerts: []
+
+  - name: a password spray fires, normal failed logins do not
+    interval: 1m
+    input_series:
+      # 20 failures per minute for 15 minutes: 100 per 5 minutes.
+      - series: 'bastion_audit_events_total{action="auth.login",outcome="failure"}'
+        values: "0+20x15"
+    alert_rule_test:
+      # Above threshold from minute 3, but `for: 5m` waits for it to last.
+      - eval_time: 5m
+        alertname: BastionCredentialStuffing
+        exp_alerts: []
+      - eval_time: 12m
+        alertname: BastionCredentialStuffing
+        exp_alerts:
+          - exp_labels: { severity: warning }
+            exp_annotations:
+              summary: 100 failed logins in 5 minutes
+              runbook: docs/runbook.md#alert-bastioncredentialstuffing
+
+  - name: a few typos a minute stay quiet
+    interval: 1m
+    input_series:
+      - series: 'bastion_audit_events_total{action="auth.login",outcome="failure"}'
+        values: "0+2x30"
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: BastionCredentialStuffing
+        exp_alerts: []
+
+  - name: lockouts, MFA guessing and IDOR probing
+    interval: 1m
+    input_series:
+      - series: 'bastion_audit_events_total{action="auth.lockout",outcome="denied"}'
+        values: "0+1x15"
+      - series: 'bastion_audit_events_total{action="auth.mfa",outcome="failure"}'
+        values: "0+3x15"
+      - series: 'bastion_audit_events_total{action="authz.denied",outcome="denied"}'
+        values: "0+3x15"
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: BastionAccountLockouts
+        exp_alerts:
+          - exp_labels: { severity: warning }
+            exp_annotations:
+              summary: 10 accounts locked in 15 minutes (brute force, or lockout used as a DoS)
+              runbook: docs/runbook.md#alert-bastioncredentialstuffing
+      - eval_time: 10m
+        alertname: BastionMfaBruteForce
+        exp_alerts:
+          - exp_labels: { severity: warning }
+            exp_annotations:
+              summary: Many wrong second-factor codes (someone holds passwords and is guessing codes)
+              runbook: docs/runbook.md#alert-bastioncredentialstuffing
+      - eval_time: 10m
+        alertname: BastionAuthorizationProbing
+        exp_alerts:
+          - exp_labels: { severity: warning }
+            exp_annotations:
+              summary: Repeated authorization denials (IDOR or privilege probing)
+              runbook: docs/runbook.md#alert-repeated-authzdenied
+
+  - name: tampering, shared flags and cardinality fire on the first event
+    interval: 1m
+    input_series:
+      - series: "bastion_integrity_failures_total"
+        values: "0 0 1 1 1"
+      - series: 'bastion_audit_events_total{action="challenge.flag_shared",outcome="denied"}'
+        values: "0 0 1 1 1"
+      - series: "bastion_metrics_series_dropped_total"
+        values: "0 0 0 0 0"
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: BastionCiphertextTampering
+        exp_alerts:
+          - exp_labels: { severity: critical }
+            exp_annotations:
+              summary: A ciphertext failed authentication, the database was modified outside the API
+              runbook: docs/runbook.md#alert-ciphertext-integrity-failure--possible-tampering-in-logs
+      - eval_time: 3m
+        alertname: BastionSharedFlag
+        exp_alerts:
+          - exp_labels: { severity: info, action: challenge.flag_shared, outcome: denied }
+            exp_annotations:
+              summary: A challenge flag was shared between learners
+              runbook: docs/runbook.md#alert-bastionsharedflag
+      - eval_time: 3m
+        alertname: BastionMetricsCardinality
+        exp_alerts: []
+
+  - name: availability
+    interval: 1m
+    input_series:
+      - series: 'up{job="bastion",instance="bastion:9464"}'
+        values: "1 1 0 0 0 0 0"
+      # 10 % of requests fail with a 500 for 20 minutes.
+      - series: 'http_requests_total{method="GET",route="/v1/notes",status="200"}'
+        values: "0+90x20"
+      - series: 'http_requests_total{method="GET",route="/v1/notes",status="500"}'
+        values: "0+10x20"
+      - series: "nodejs_eventloop_delay_p99_seconds"
+        values: "0.01x20"
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: BastionDown
+        exp_alerts: []
+      - eval_time: 5m
+        alertname: BastionDown
+        exp_alerts:
+          - exp_labels: { severity: critical, job: bastion, instance: "bastion:9464" }
+            exp_annotations:
+              summary: Prometheus cannot scrape Bastion (down, or the metrics token is wrong)
+              runbook: docs/runbook.md#alert-bastiondown
+      - eval_time: 18m
+        alertname: BastionHighErrorRate
+        exp_alerts:
+          - exp_labels: { severity: warning }
+            exp_annotations:
+              summary: 10% of requests fail with a 5xx
+              runbook: docs/runbook.md#alert-bastionhigherrorrate
+      - eval_time: 18m
+        alertname: BastionEventLoopBlocked
+        exp_alerts: []

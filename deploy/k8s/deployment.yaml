@@ -41,6 +41,10 @@ spec:
           ports:
             - name: http
               containerPort: 3000
+            # Prometheus only (ADR 0011): not in the Service, so the ingress never routes to it,
+            # and the NetworkPolicy admits only the monitoring namespace.
+            - name: metrics
+              containerPort: 9464
           env:
             # Secrets are mounted as files, not exposed as environment variables.
             - name: JWT_SECRET_FILE
@@ -51,6 +55,12 @@ spec:
               value: /run/secrets/bastion/FLAG_HMAC_KEY
             - name: ENCRYPTION_KEYS_FILE
               value: /run/secrets/bastion/ENCRYPTION_KEYS
+            - name: METRICS_TOKEN_FILE
+              value: /run/secrets/bastion/METRICS_TOKEN
+            - name: METRICS_PORT
+              value: "9464"
+            - name: METRICS_HOST
+              value: 0.0.0.0
             - name: ACTIVE_KEY_ID
               valueFrom:
                 configMapKeyRef: { name: bastion-config, key: ACTIVE_KEY_ID }

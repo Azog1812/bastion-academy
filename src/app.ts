@@ -17,6 +17,8 @@ import { LearningService } from './services/learning-service.js';
 import { MfaService } from './services/mfa-service.js';
 import { httpLabRunner, LabService, type LabRunnerClient } from './services/lab-service.js';
 import { NoteService } from './services/note-service.js';
+import { createMetrics, type AppMetrics } from './metrics.js';
+import { httpMetrics } from './http/metrics.js';
 
 export interface AppOptions {
   config: Config;
@@ -33,6 +35,8 @@ export interface AppOptions {
 
 export interface App {
   app: Express;
+  /** Served by server.ts on METRICS_PORT, never by `app`. */
+  metrics: AppMetrics;
   services: {
     auth: AuthService;
     notes: NoteService;
@@ -52,7 +56,10 @@ export function createApp({ config, db, logger, curriculum, rateLimits, web, lab
     quiz: config.RATE_LIMIT_QUIZ,
   };
 
-  const audit = new AuditLog(db, config.AUDIT_HMAC_KEY);
+  const metrics = createMetrics(db);
+  const audit = new AuditLog(db, config.AUDIT_HMAC_KEY, (e) => {
+    metrics.auditEvents.inc({ action: e.action, outcome: e.outcome });
+  });
   const signer = createTokenSigner({
     secret: config.JWT_SECRET,
     issuer: config.JWT_ISSUER,
@@ -78,6 +85,7 @@ export function createApp({ config, db, logger, curriculum, rateLimits, web, lab
   app.set('etag', false);
   app.set('query parser', 'simple'); // no nested objects in query strings (parameter pollution)
 
+  app.use(httpMetrics(metrics));
   app.use(requestId);
   app.use(
     pinoHttp({
@@ -144,7 +152,11 @@ export function createApp({ config, db, logger, curriculum, rateLimits, web, lab
     }));
 
   app.use(notFoundHandler);
-  app.use(errorHandler(logger));
+  app.use(
+    errorHandler(logger, () => {
+      metrics.integrityFailures.inc();
+    }),
+  );
 
-  return { app, services: { auth, notes, learning, challenges, labs, mfa, audit } };
+  return { app, metrics, services: { auth, notes, learning, challenges, labs, mfa, audit } };
 }

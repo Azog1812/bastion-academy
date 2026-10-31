@@ -106,6 +106,14 @@ const schema = z
     /** Lab starts per account per 15 minutes: each start creates containers and networks. */
     RATE_LIMIT_LAB: z.coerce.number().int().min(1).default(10),
     LOCKOUT_SECONDS: z.coerce.number().int().min(60).max(86_400).default(900),
+
+    /**
+     * Prometheus metrics (ADR 0011). Off unless a port is set; served on their own
+     * listener, never on the API port, and only to a bearer of METRICS_TOKEN.
+     */
+    METRICS_PORT: z.coerce.number().int().min(1).max(65535).optional(),
+    METRICS_HOST: z.string().default('127.0.0.1'),
+    METRICS_TOKEN: base64Key(32).optional(),
   })
   .superRefine((cfg, ctx) => {
     if (!cfg.ENCRYPTION_KEYS.has(cfg.ACTIVE_KEY_ID)) {
@@ -114,6 +122,12 @@ const schema = z
     if (cfg.LAB_RUNNER_URL !== undefined && !cfg.LAB_RUNNER_TOKEN) {
       ctx.addIssue({ code: 'custom', path: ['LAB_RUNNER_TOKEN'], message: 'is required when LAB_RUNNER_URL is set' });
     }
+    if (cfg.METRICS_PORT !== undefined && !cfg.METRICS_TOKEN) {
+      ctx.addIssue({ code: 'custom', path: ['METRICS_TOKEN'], message: 'is required when METRICS_PORT is set' });
+    }
+    if (cfg.METRICS_PORT === cfg.PORT) {
+      ctx.addIssue({ code: 'custom', path: ['METRICS_PORT'], message: 'must differ from PORT: metrics never share the API listener' });
+    }
     if (cfg.NODE_ENV === 'production' && cfg.SCRYPT_LOG_N < 17) {
       ctx.addIssue({ code: 'custom', path: ['SCRYPT_LOG_N'], message: 'must be >= 17 in production' });
     }
@@ -121,7 +135,7 @@ const schema = z
 
 export type Config = Readonly<z.output<typeof schema>>;
 
-const FILE_SECRETS = ['JWT_SECRET', 'AUDIT_HMAC_KEY', 'FLAG_HMAC_KEY', 'ENCRYPTION_KEYS', 'LAB_RUNNER_TOKEN'] as const;
+const FILE_SECRETS = ['JWT_SECRET', 'AUDIT_HMAC_KEY', 'FLAG_HMAC_KEY', 'ENCRYPTION_KEYS', 'LAB_RUNNER_TOKEN', 'METRICS_TOKEN'] as const;
 
 /**
  * Secrets can be provided as files (`JWT_SECRET_FILE=/run/secrets/jwt`), the

@@ -61,3 +61,30 @@ jobs:
           name: coverage
           path: coverage/
           retention-days: 14
+
+  alert-rules:
+    name: Alert rules (promtool)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    env:
+      # Same image and digest as the prometheus service in docker-compose.yml: keep them in sync.
+      PROMETHEUS_IMAGE: prom/prometheus:v3.15.1@sha256:fa3302279710be2f21a8301ec17a8b4f2301fd829bd113839b3b6b02b6f191a2
+    steps:
+      - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Syntax of the rules and of the scrape config, then the alert unit tests:
+      # each alert must fire on the attack it is written for, and stay quiet otherwise.
+      - name: promtool check and test
+        run: |
+          run() { docker run --rm --network none -v "$PWD/deploy/prometheus:/rules:ro" -w /rules --entrypoint promtool "$PROMETHEUS_IMAGE" "$@"; }
+          run check rules alerts.yml
+          run check config --syntax-only prometheus.yml
+          run test rules alerts.test.yml

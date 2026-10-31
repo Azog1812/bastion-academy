@@ -1,0 +1,18 @@
+# Prometheus for the local stack: docker compose --profile observability up -d
+# UI on http://127.0.0.1:9090 (Alerts tab). See docs/adr/0011-observability.md.
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  - /etc/prometheus/alerts.yml
+
+scrape_configs:
+  - job_name: bastion
+    # The platform serves metrics on a separate port, never on the API port, and
+    # only to a bearer of METRICS_TOKEN (mounted as a compose secret, not an env var).
+    authorization:
+      type: Bearer
+      credentials_file: /run/secrets/metrics_token
+    static_configs:
+      - targets: ["bastion:9464"]
