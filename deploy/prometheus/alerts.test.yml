@@ -162,3 +162,51 @@ tests:
       - eval_time: 18m
         alertname: BastionEventLoopBlocked
         exp_alerts: []
+
+  # The alerting pipeline (ADR 0018).
+  - name: the watchdog always fires, so its absence means the pipeline is broken
+    interval: 1m
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: Watchdog
+        exp_alerts:
+          - exp_labels: { severity: none }
+            exp_annotations:
+              summary: Always firing while Prometheus evaluates rules and reaches Alertmanager
+              runbook: docs/runbook.md#alert-watchdog-stops-or-alerting-pipeline-alerts
+
+  - name: losing Alertmanager pages after 5 minutes, a brief restart does not
+    interval: 1m
+    input_series:
+      - series: prometheus_notifications_alertmanagers_discovered
+        values: "1 0 0 1 1 0 0 0 0 0 0 0"
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: AlertmanagerUnreachable
+        exp_alerts: []
+      - eval_time: 11m
+        alertname: AlertmanagerUnreachable
+        exp_alerts:
+          - exp_labels: { severity: critical }
+            exp_annotations:
+              summary: Prometheus has no Alertmanager to send alerts to
+              runbook: docs/runbook.md#alert-watchdog-stops-or-alerting-pipeline-alerts
+
+  - name: a receiver refusing deliveries fires per integration
+    interval: 1m
+    input_series:
+      - series: 'alertmanager_notifications_failed_total{integration="email",reason="other"}'
+        values: "0 0 0 2 4 4 4"
+      - series: 'alertmanager_notifications_failed_total{integration="webhook",reason="other"}'
+        values: "0 0 0 0 0 0 0"
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: AlertmanagerNotificationsFailing
+        exp_alerts: []
+      - eval_time: 5m
+        alertname: AlertmanagerNotificationsFailing
+        exp_alerts:
+          - exp_labels: { severity: critical, integration: email }
+            exp_annotations:
+              summary: "Alertmanager cannot deliver through email"
+              runbook: docs/runbook.md#alert-watchdog-stops-or-alerting-pipeline-alerts

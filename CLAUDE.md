@@ -46,7 +46,8 @@ set -a && . ./.env && set +a && NODE_ENV=development npm start
 semgrep scan --config .semgrep/ --metrics=off --error src
 docker compose --profile labs build   # lab images (v5), once
 docker compose up --build    # platform + lab runner + lab gateway, same hardening as prod
-docker compose --profile observability up -d   # + Prometheus on 127.0.0.1:9090 (ADR 0011)
+docker compose --profile observability up -d   # + Prometheus 127.0.0.1:9090, Alertmanager (no port), Grafana 127.0.0.1:3001 (ADR 0011, 0018)
+deploy/alertmanager/routes.test.sh   # amtool routing of every alert + live inhibition test (also in CI)
 docker compose --profile wazuh up -d   # once: real Wazuh (~4 GiB), then started/stopped from the UI (ADR 0013)
 test/wazuh-real/run.sh       # Wazuh challenges: Bastion's evaluator vs the real wazuh-logtest (Docker, offline)
 test/e2e/passkeys-browser.sh # passkeys in real Chromium (virtual authenticator); needs bastion:local + lab-xss-stored images
@@ -131,10 +132,12 @@ content/                 curriculum as code: index.json (levels, path order), <p
 test/unit, test/security, test/helpers.ts (setup(), newUser(), auditActions())
 deploy/k8s (kustomize), deploy/policies (Kyverno signed-image policy),
 deploy/prometheus (scrape config, alerts.yml, alerts.test.yml for promtool),
+deploy/alertmanager (routing by severity, inhibition, routes.test.sh), deploy/grafana (provisioned
+             data sources + Bastion overview dashboard, read-only),
 deploy/wazuh (offline certs.sh, users.sh without demo accounts, indexer/manager/dashboard config,
              bastion_rules.xml: rules for Bastion's own audit log, ids 100200-100299)
 docs/  threat-model · security-controls (OWASP API Top 10 + ASVS 4.0.3) · security-pipeline ·
-       adr/0001-0017 · runbook · openapi.yaml (used by DAST)
+       adr/0001-0018 · runbook · openapi.yaml (used by DAST)
 ```
 
 ## Security invariants — never break these
@@ -205,7 +208,10 @@ docs/  threat-model · security-controls (OWASP API Top 10 + ASVS 4.0.3) · secu
 17. **Metrics never widen the attack surface** (ADR 0011). Served only by the separate
     listener on `METRICS_PORT` with the bearer `METRICS_TOKEN`, never by the API app;
     label values come from closed sets (route patterns, `AUDIT_ACTIONS`, status codes),
-    never from request data (no ids, e-mails, IPs). A new alert gets a `promtool` test.
+    never from request data (no ids, e-mails, IPs). A new alert gets a `promtool` test, a
+    severity the routes know and a runbook section (`observability-config.test.ts`).
+    Alertmanager never publishes a port (its API silences alerts): Grafana, behind a login,
+    is the way in (ADR 0018). Dashboards are provisioned from git, never edited in the UI.
 18. **Shared environments are started, never created** (ADR 0013). Compose creates them from
     reviewed configuration; the runner may only inspect, start and stop the container names
     of `src/labs/environments.ts`, from an id checked with `z.enum`. The platform gates them
@@ -285,8 +291,8 @@ If a CI job is renamed, update the ruleset's required checks in the same change 
    use row-level security as a second IDOR barrier.
 5. ~~**Observability**: Prometheus metrics, alerting rules matching `docs/runbook.md`~~
    (done 31 Oct 2026, ADR 0011). Real Wazuh from the UI done (ADR 0013), Wazuh rule challenges
-   done (ADR 0014), Bastion's audit log in Wazuh done (ADR 0015). Next: Alertmanager routing,
-   Grafana dashboard.
+   done (ADR 0014), Bastion's audit log in Wazuh done (ADR 0015), ~~Alertmanager routing,
+   Grafana dashboard~~ (done 1 Nov 2026, ADR 0018).
 6. **Signed commits** (SSH/GPG) and a release workflow with semantic versioning.
 7. **Fuzzing** of the HTTP layer (e.g. schemathesis against `docs/openapi.yaml`) in CI.
 8. Interview prep: a mock technical interview on this repo (threat model, ADRs, auth-service).

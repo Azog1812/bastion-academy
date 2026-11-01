@@ -46,6 +46,7 @@ async function main(): Promise<number> {
         `WAZUH_ADMIN_PASSWORD=${wazuhPassword()}`,
         `WAZUH_DASHBOARD_PASSWORD=${wazuhPassword()}`,
         `WAZUH_API_PASSWORD=${wazuhPassword()}`,
+        `GRAFANA_ADMIN_PASSWORD=${b64(24)}`,
         `ENCRYPTION_KEYS=k1:${b64(32)}`,
         'ACTIVE_KEY_ID=k1',
         '',

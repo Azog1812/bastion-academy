@@ -63,14 +63,25 @@ about the certificate: it comes from the private CA made at setup (`wazuh-certs`
 - **Checking the rules after an edit or a Wazuh upgrade**: `test/wazuh-real/run.sh`
   (offline, in the pinned image); CI runs it too.
 
-## Observability (ADR 0011)
+## Observability (ADR 0011, 0018)
 
 ```bash
-docker compose --profile observability up -d   # Prometheus on http://127.0.0.1:9090
+docker compose --profile observability up -d   # Prometheus http://127.0.0.1:9090, Grafana http://127.0.0.1:3001
 ```
 
-- **Alerts tab**: the eleven rules of `deploy/prometheus/alerts.yml`; each section
-  below named after an alert says what to do.
+- **Grafana** (`admin`, password `GRAFANA_ADMIN_PASSWORD` from `.env`; an old `.env`
+  lacks it: add a line from `node dist/cli.js gen-secrets`). Home is the *Bastion -
+  overview* dashboard, provisioned from `deploy/grafana` and read-only in the UI: change
+  the JSON in git. **Alerting > Alert groups** (data source *Alertmanager*) shows the
+  routed alerts per receiver; **Alerting > Silences** mutes one, with a comment and an end
+  date. Alertmanager has no port on the host on purpose: a silence hides an attack, so
+  making one requires a Grafana login.
+- **Alerts tab** in Prometheus: the rules of `deploy/prometheus/alerts.yml`; each
+  section below named after an alert says what to do.
+- **Routing** (`deploy/alertmanager/alertmanager.yml`): critical → `pager` (no delay,
+  repeated hourly), warning → `secops`, info → `trainers` (daily batch), `Watchdog` →
+  `watchdog`. Receivers deliver nowhere on a local install; add an integration with a
+  `*_file` secret, then run `deploy/alertmanager/routes.test.sh`.
 - **Target `bastion` is down** while the API answers: the token differs between the
   platform and Prometheus (both read `METRICS_TOKEN` from `.env`); `docker compose up -d`
   after editing `.env` restarts both.
@@ -160,3 +171,15 @@ a full disk or a corrupted database shows up in `/readyz`.
 A metric reached its series cap and drops samples. It should never happen: labels come
 from closed sets. Find the metric with too many series
 (`count by (__name__)({__name__=~".+"})`) and fix the label that takes request input.
+
+## Alert: Watchdog stops, or alerting-pipeline alerts
+`Watchdog` fires all the time on purpose (dead man's switch): if its receiver stops
+getting it, alerts are not flowing and **no other alert would reach you either**.
+- `AlertmanagerUnreachable`: Prometheus has no Alertmanager. `docker compose --profile
+  observability ps alertmanager`, then its logs (a config error stops it at start:
+  `deploy/alertmanager/routes.test.sh` runs `amtool check-config`).
+- `AlertmanagerNotificationsFailing{integration=...}`: a receiver refuses deliveries
+  (wrong SMTP password, revoked webhook). Fix the secret file the integration reads;
+  meanwhile, watch alerts in Grafana: they are routed, only the delivery fails.
+- Neither fires but Grafana shows no alerts: Prometheus is down too (`BastionDown` cannot
+  fire without it). Check `docker compose ps` first.

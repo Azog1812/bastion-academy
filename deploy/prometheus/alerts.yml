@@ -80,6 +80,16 @@ groups:
 
   - name: bastion-availability
     rules:
+      # Dead man's switch (ADR 0018): always firing. If it stops reaching its receiver,
+      # the alerting pipeline itself is broken, and no other alert would reach anyone.
+      - alert: Watchdog
+        expr: vector(1)
+        labels:
+          severity: none
+        annotations:
+          summary: Always firing while Prometheus evaluates rules and reaches Alertmanager
+          runbook: docs/runbook.md#alert-watchdog-stops-or-alerting-pipeline-alerts
+
       - alert: BastionDown
         expr: up{job="bastion"} == 0
         for: 2m
@@ -118,3 +128,25 @@ groups:
         annotations:
           summary: A metric reached its series cap, samples are being dropped
           runbook: docs/runbook.md#alert-bastionmetricscardinality
+
+  # The pipeline that carries every other alert. Seen in Prometheus and Grafana even when
+  # Alertmanager is the part that is broken.
+  - name: alerting-pipeline
+    rules:
+      - alert: AlertmanagerUnreachable
+        expr: prometheus_notifications_alertmanagers_discovered < 1
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: Prometheus has no Alertmanager to send alerts to
+          runbook: docs/runbook.md#alert-watchdog-stops-or-alerting-pipeline-alerts
+
+      - alert: AlertmanagerNotificationsFailing
+        # A receiver (mail, chat, webhook) refuses deliveries: alerts are routed but nobody hears them.
+        expr: sum by (integration) (increase(alertmanager_notifications_failed_total[10m])) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: "Alertmanager cannot deliver through {{ $labels.integration }}"
+          runbook: docs/runbook.md#alert-watchdog-stops-or-alerting-pipeline-alerts
