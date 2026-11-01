@@ -78,8 +78,11 @@ async function main(): Promise<number> {
     case 'recover-account': {
       if (!arg) throw new Error('usage: recover-account <email>');
       const { temporaryPassword } = await recoverAccount(db, audit, arg, config.SCRYPT_LOG_N);
-      console.log(`${arg}: second factors and sessions removed. Temporary password (shown once, change it at first login):`);
-      console.log(temporaryPassword);
+      // The message goes to stderr and the password alone to stdout, the CLI's output channel
+      // (as gen-secrets): `recover-account x > file` captures it without the prose, and it is
+      // never written to a log. Shown once; only its scrypt hash is stored.
+      console.error(`${arg}: second factors and sessions removed. Temporary password below (shown once, change it at first login).`);
+      process.stdout.write(`${temporaryPassword}\n`);
       return 0;
     }
     case 'verify-audit': {
