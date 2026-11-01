@@ -4,6 +4,7 @@ import { loadConfig } from './config.js';
 import { openDatabase } from './db.js';
 import { MfaService } from './services/mfa-service.js';
 import { NoteService } from './services/note-service.js';
+import { recoverAccount } from './services/recovery.js';
 
 /**
  * Operator CLI. Privileged actions (granting admin, rotating keys) are
@@ -13,6 +14,7 @@ import { NoteService } from './services/note-service.js';
  *   node dist/cli.js gen-secrets
  *   node dist/cli.js promote <email>
  *   node dist/cli.js rotate-keys
+ *   node dist/cli.js recover-account <email>
  *   node dist/cli.js verify-audit
  */
 
@@ -32,7 +34,7 @@ function wazuhPassword(): string {
   }
 }
 
-function main(): number {
+async function main(): Promise<number> {
   if (command === 'gen-secrets') {
     process.stdout.write(
       [
@@ -73,20 +75,33 @@ function main(): number {
       console.log(`re-wrapped ${rewrapped} data keys and ${resealed} MFA secrets under ${config.ACTIVE_KEY_ID}; old keys can now be retired`);
       return 0;
     }
+    case 'recover-account': {
+      if (!arg) throw new Error('usage: recover-account <email>');
+      const { temporaryPassword } = await recoverAccount(db, audit, arg, config.SCRYPT_LOG_N);
+      // The message goes to stderr and the password alone to stdout, the CLI's output channel
+      // (as gen-secrets): `recover-account x > file` captures it without the prose, and it is
+      // never written to a log. Shown once; only its scrypt hash is stored.
+      console.error(`${arg}: second factors and sessions removed. Temporary password below (shown once, change it at first login).`);
+      process.stdout.write(`${temporaryPassword}\n`);
+      return 0;
+    }
     case 'verify-audit': {
       const result = audit.verify();
       console.log(JSON.stringify(result));
       return result.valid ? 0 : 2;
     }
     default:
-      console.error('commands: gen-secrets | promote <email> | rotate-keys | verify-audit');
+      console.error('commands: gen-secrets | promote <email> | rotate-keys | recover-account <email> | verify-audit');
       return 64;
   }
 }
 
-try {
-  process.exitCode = main();
-} catch (err) {
-  console.error(err instanceof Error ? err.message : err);
-  process.exitCode = 1;
-}
+main().then(
+  (code) => {
+    process.exitCode = code;
+  },
+  (err: unknown) => {
+    console.error(err instanceof Error ? err.message : err);
+    process.exitCode = 1;
+  },
+);

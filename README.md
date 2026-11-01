@@ -193,11 +193,12 @@ admin route, and the alert shows up in the dashboard (`rule.groups: bastion`).
 | `GET /v1/curriculum` | Levels, paths, modules and lessons, with your progress and which modules are unlocked |
 | `GET /v1/lessons/{id}` | A lesson (Markdown) and its quiz questions, never their answers |
 | `POST /v1/lessons/{id}/complete` | Submit your quiz answers; graded on the server |
-| `POST /v1/session/{login,mfa,refresh,logout}` | Browser sessions: refresh token in an HttpOnly cookie |
+| `POST /v1/session/{login,mfa,passkey,refresh,logout}` | Browser sessions: refresh token in an HttpOnly cookie |
 | `GET /v1/challenges[/{id}]` · `POST /v1/challenges/{id}/submit` | Challenges: your personal artifact, then your personal flag |
 | `GET /v1/scoreboard` · `PUT /v1/me/profile` | Opt-in scoreboard under a pseudonym |
 | `POST /v1/me/mfa/{setup,enable,disable}` · `POST /v1/auth/mfa` | TOTP second factor and recovery codes |
 | `GET/POST /v1/me/passkeys` · `POST /v1/me/passkeys/options` · `DELETE /v1/me/passkeys/{id}` · `POST /v1/auth/mfa/passkey/options` | Passkeys (WebAuthn) as a phishing-resistant second factor |
+| `POST /v1/auth/passkey/options` · `POST /v1/auth/passkey` | Passwordless login with a discoverable, user-verified passkey |
 
 How it is secured ([ADR 0006](docs/adr/0006-curriculum-as-code.md), [ADR 0007](docs/adr/0007-web-front-end.md)):
 
@@ -226,6 +227,11 @@ How it is secured ([ADR 0006](docs/adr/0006-curriculum-as-code.md), [ADR 0007](d
   signature counter (audited, Wazuh level 12). Tested with a software authenticator playing
   the attacker, and end to end in Chromium with its virtual authenticator. Open the local
   install at `http://localhost:3000` (an IP address cannot be an RP ID).
+- **Passwordless login** ([ADR 0017](docs/adr/0017-passwordless-passkey-login.md)): a
+  discoverable passkey with user verification replaces password and second factor (AAL2).
+  The options name no account (nothing to enumerate), the user handle must own the key,
+  failures never feed the lockout (no "lock anyone" button), and recovery never bypasses a
+  factor: another passkey, or password plus a code, or the operator CLI on the host.
 - **XSS needs two independent failures.** The UI never builds HTML from strings
   (ESLint bans every HTML sink, Markdown is rendered node by node), and the page CSP
   enforces **Trusted Types** with no policy allowed, so any such sink throws in the
@@ -316,7 +322,7 @@ generic errors with correlation ids · secret redaction in logs · secrets read 
 files rather than env vars · socket timeouts · privileged operations only via an
 operator CLI, never over HTTP.
 
-**299 tests, ~99 % line coverage** — most of them are *abuse cases*, not happy paths.
+**386 tests, ~98 % line coverage** — most of them are *abuse cases*, not happy paths.
 
 ### Supply chain & infrastructure
 
@@ -410,7 +416,7 @@ dependencies, single replica) and how to move to PostgreSQL. Known, accepted ris
 (registration enumeration, lockout-as-DoS, HS256…) are listed in the
 [threat model](docs/threat-model.md#5-accepted-risks) rather than hidden.
 
-**Roadmap:** passwordless passkey login · external KMS (Vault Transit) for KEKs · PostgreSQL +
+**Roadmap:** external KMS (Vault Transit) for KEKs · PostgreSQL +
 Redis for horizontal scaling · signed commits.
 
 ## Security

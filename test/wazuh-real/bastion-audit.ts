@@ -33,7 +33,10 @@ const CASES: [AuditEvent, string][] = [
   [{ action: 'auth.lockout', outcome: 'denied', ...USER, details: { failures: 10, seconds: 900 } }, '100204'],
   [{ action: 'challenge.flag_shared', outcome: 'denied', ...USER, target: 'lab-sqli-connexion', details: { owner: 'u-other' } }, '100205'],
   [{ action: 'admin.promote', outcome: 'success', actorId: null, target: USER.actorId }, '100206'],
+  [{ action: 'admin.account_recovery', outcome: 'success', actorId: null, target: USER.actorId, details: { via: 'cli', passkeys: 2, totp: 1, recoveryCodes: 10 } }, '100206'],
   [{ action: 'mfa.recovery_code_used', outcome: 'success', ...USER }, '100207'],
+  // Passwordless login (ADR 0017): a success is routine; failures join the auth.login ones below.
+  [{ action: 'auth.login', outcome: 'success', ...USER, details: { method: 'passkey' } }, '100200'],
   // Passkeys (ADR 0016): a new key is routine, a removed one weakens the account, a clone pages.
   [{ action: 'passkey.register', outcome: 'success', ...USER, target: 'a3c1e7d2-0000-4000-8000-000000000002', details: { alg: -7 } }, '100200'],
   [{ action: 'passkey.delete', outcome: 'success', ...USER, target: 'a3c1e7d2-0000-4000-8000-000000000002' }, '100207'],

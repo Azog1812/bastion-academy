@@ -110,6 +110,23 @@ const assertionSchema = z
   })
   .strict();
 
+/** Passwordless login (ADR 0017): the same assertion, plus the user handle the authenticator stored. */
+export const passwordlessLoginSchema = z
+  .object({
+    passkey: z
+      .object({
+        id: b64url(1400),
+        type: z.literal('public-key'),
+        response: z
+          .object({ clientDataJSON: b64url(4096), authenticatorData: b64url(4096), signature: b64url(1400), userHandle: b64url(88) })
+          .strict(),
+      })
+      .strict(),
+  })
+  .strict();
+
+export const emptyBodySchema = z.object({}).strict();
+
 export const passkeyCredentialSchema = z
   .object({
     id: b64url(1400),

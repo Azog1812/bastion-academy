@@ -7,7 +7,7 @@ import { transaction, type Database } from '../db.js';
 import { badRequest, conflict, unauthorized } from '../errors.js';
 import { passwordProblem } from '../security/password-policy.js';
 import type { MfaService, SecondFactor } from './mfa-service.js';
-import type { AssertionResponse, PasskeyService } from './passkey-service.js';
+import type { AssertionResponse, DiscoverableAssertionResponse, PasskeyService } from './passkey-service.js';
 
 interface UserRow {
   id: string;
@@ -52,6 +52,8 @@ export interface RequestContext {
 /** Same message for "unknown e-mail", "wrong password" and "account locked": no account enumeration. */
 const INVALID_CREDENTIALS = 'Invalid e-mail or password';
 const INVALID_MFA = 'Invalid or expired verification code';
+/** One message for every passwordless failure: which check failed is audited, not told. */
+const INVALID_PASSKEY = 'Passkey not recognised';
 
 const MFA_CHALLENGE_TTL_MS = 5 * 60 * 1000;
 /** Per challenge. With ±1 step, 5 tries give a 1.5e-5 chance of guessing a 6-digit code; then the password is needed again. */
@@ -193,6 +195,47 @@ export class AuthService {
     this.db.prepare('DELETE FROM mfa_challenges WHERE token_hash = ?').run(hash);
     this.db.prepare('UPDATE users SET failed_logins = 0, locked_until = 0 WHERE id = ?').run(user.id);
     this.audit.record({ action: 'auth.mfa', outcome: 'success', actorId: user.id, ip: ctx.ip, details: { factor } });
+    return this.issue(user, randomUUID());
+  }
+
+  /** Challenge for a passwordless login (ADR 0017). */
+  passwordlessOptions() {
+    return this.passkeys.passwordlessOptions();
+  }
+
+  /**
+   * Passwordless login (ADR 0017): one user-verified passkey assertion replaces password
+   * *and* second factor. The passkey is itself multi-factor (the device it is on, plus the
+   * PIN or biometric the authenticator checked), NIST SP 800-63B "multi-factor
+   * cryptographic authenticator", AAL2 and phishing-resistant.
+   *
+   * The password lockout does not apply, on purpose: it exists to stop online guessing of
+   * a password or a code, and a signature cannot be guessed. A learner whose account is
+   * locked by someone hammering their password still gets in with their passkey (this
+   * shrinks the "lockout as targeted DoS" accepted risk), and the lock is neither lifted
+   * nor reset: the attacker stays locked out. For the same reason a failed assertion does
+   * not count as a failed login: the user handle comes from the request, so counting
+   * would hand anyone a way to lock any account.
+   */
+  async loginWithPasskey(cred: DiscoverableAssertionResponse, ctx: RequestContext): Promise<TokenPair> {
+    const result = this.passkeys.verifyPasswordless(cred);
+    if ('reason' in result) {
+      if (result.reason === 'clone') {
+        this.audit.record({ action: 'passkey.clone_detected', outcome: 'denied', actorId: result.userId ?? null, target: result.passkeyId ?? null, ip: ctx.ip });
+      }
+      // actorId only once a real credential of that account was found: a forged handle names nobody.
+      this.audit.record({
+        action: 'auth.login',
+        outcome: 'failure',
+        actorId: result.passkeyId === undefined ? null : (result.userId ?? null),
+        ip: ctx.ip,
+        details: { method: 'passkey', reason: result.reason },
+      });
+      throw unauthorized(INVALID_PASSKEY);
+    }
+    const user = this.db.prepare('SELECT * FROM users WHERE id = ?').get(result.userId) as UserRow | undefined;
+    if (!user) throw unauthorized(INVALID_PASSKEY);
+    this.audit.record({ action: 'auth.login', outcome: 'success', actorId: user.id, ip: ctx.ip, details: { method: 'passkey' } });
     return this.issue(user, randomUUID());
   }
 

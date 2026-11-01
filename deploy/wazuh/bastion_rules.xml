@@ -72,7 +72,7 @@
   <!-- Operator actions (CLI only, never over HTTP): worth seeing, not worth paging. -->
   <rule id="100206" level="8">
     <if_sid>100200</if_sid>
-    <action type="osmatch">^admin.promote$|^admin.key_rotation$</action>
+    <action type="osmatch">^admin.promote$|^admin.key_rotation$|^admin.account_recovery$</action>
     <description>Bastion: privileged operation $(action)</description>
   </rule>
 

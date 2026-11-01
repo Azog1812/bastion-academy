@@ -116,6 +116,17 @@ export class SoftAuthenticator {
     return { id: b64u(this.credentialId), type: 'public-key', response: { clientDataJSON: b64u(clientDataJSON), attestationObject: b64u(attestationObject) } };
   }
 
+  /** The user handle stored with a discoverable credential (the page's user.id at registration). */
+  userHandle: string | undefined;
+
+  /** navigator.credentials.get() without allowCredentials: the authenticator also returns the user handle. */
+  discover(challenge: string, o: Options & { tamperSignature?: boolean; keepCounter?: boolean; userHandle?: string } = {}) {
+    const a = this.assert(challenge, o);
+    const userHandle = o.userHandle ?? this.userHandle;
+    if (userHandle === undefined) throw new Error('no user handle: register through the page options first');
+    return { ...a, response: { ...a.response, userHandle } };
+  }
+
   /** The response to navigator.credentials.get(). Each call counts up, as a security key does. */
   assert(challenge: string, o: Options & { tamperSignature?: boolean; keepCounter?: boolean } = {}) {
     if (!o.keepCounter && this.counter > 0) this.counter++;

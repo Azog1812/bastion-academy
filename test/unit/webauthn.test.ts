@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { CborError, decodeCbor } from '../../src/crypto/cbor.js';
-import { CloneWarning, verifyAssertion, verifyRegistration, WebAuthnError, type RelyingParty } from '../../src/crypto/webauthn.js';
+import { CloneWarning, UserVerificationRequired, verifyAssertion, verifyRegistration, WebAuthnError, type RelyingParty } from '../../src/crypto/webauthn.js';
 import { encodeCbor, SoftAuthenticator, type KeyKind } from '../webauthn-authenticator.js';
 
 const rp: RelyingParty = { id: 'localhost', origins: ['http://localhost:3000'] };
@@ -67,6 +67,20 @@ describe('WebAuthn relying party (ADR 0016)', () => {
     expect(() => enrol(a, { flags: 0x40 })).toThrow(/presence/);
     const reg = enrol(a);
     expect(() => login(a, { publicKey: reg.publicKey, alg: reg.alg, signCount: 0 }, { flags: 0x00 })).toThrow(/presence/);
+  });
+
+  it('requires user verification only when the passkey is the only factor (ADR 0017)', () => {
+    const a = new SoftAuthenticator();
+    const reg = enrol(a);
+    const stored = { publicKey: reg.publicKey, alg: reg.alg, signCount: 0 };
+    const challenge = fresh();
+    const r = a.assert(challenge.toString('base64url'), { flags: 0x01 });
+    const args = [rp, challenge, stored, b(r.response.clientDataJSON), b(r.response.authenticatorData), b(r.response.signature)] as const;
+    // Second factor: presence is enough, the password was the other factor.
+    expect(verifyAssertion(...args)).toMatchObject({ userVerified: false });
+    // Passwordless: refused, with its own error class (audited as such).
+    expect(() => verifyAssertion(...args, true)).toThrow(UserVerificationRequired);
+    expect(login(a, stored, { flags: 0x05 })).toMatchObject({ userVerified: true });
   });
 
   it('detects a cloned authenticator through its signature counter', () => {
