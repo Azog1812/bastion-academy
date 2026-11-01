@@ -37,7 +37,7 @@ from first principles up to the level expected by major industry certifications.
 | **v3: foundations** | Learning paths → modules → lessons, progress tracking, web front-end, built on Bastion's auth core | ✅ API, web UI, all six levels shipped |
 | **v4: challenges** | Per-user HMAC flags (unshareable), scoreboard, anti-cheat, TOTP MFA | ✅ Shipped: 11 challenges (levels 1 to 3), opt-in scoreboard, TOTP + recovery codes · **passkeys** (WebAuthn, [ADR 0016](docs/adr/0016-passkeys.md)) |
 | **v5: isolated labs** | One vulnerable container per learner: no egress, TTL, sandboxed runtime, quotas | ✅ Shipped: 10 labs (SQLi, IDOR, mass assignment, JWT `alg:none`, SSRF, path traversal, command injection, stored XSS with a headless-browser victim, a three-flaw chain, a race condition), lab runner + gateway, optional gVisor |
-| **v6: blue team** | Level 5 path (logging, SIEM, detection engineering, incident response, forensics) and detection challenges | ✅ Shipped: 6 lessons, 5 detection challenges graded on precision **and** recall · real Wazuh from the UI and 2 Wazuh XML rule challenges ([ADR 0013](docs/adr/0013-shared-environments.md), [0014](docs/adr/0014-wazuh-rule-challenges.md)) · Observability shipped (Prometheus, tested alerts, [ADR 0011](docs/adr/0011-observability.md)) · AI tutor: planned |
+| **v6: blue team** | Level 5 path (logging, SIEM, detection engineering, incident response, forensics) and detection challenges | ✅ Shipped: 6 lessons, 5 detection challenges graded on precision **and** recall · real Wazuh from the UI and 2 Wazuh XML rule challenges ([ADR 0013](docs/adr/0013-shared-environments.md), [0014](docs/adr/0014-wazuh-rule-challenges.md)) · Observability shipped (Prometheus, tested alerts, [ADR 0011](docs/adr/0011-observability.md); Alertmanager routing + Grafana, [ADR 0018](docs/adr/0018-alert-routing-and-dashboards.md)) · AI tutor: planned |
 
 The platform is designed to **run locally** (`git clone` + Docker). There is no public
 hosted instance yet.
@@ -178,8 +178,10 @@ docker compose up --build             # platform + lab runner + lab gateway, all
 ```
 
 **With monitoring**: `docker compose --profile observability up -d` adds Prometheus on
-**http://127.0.0.1:9090**. Replay a refresh token and watch `BastionRefreshTokenReuse`
-fire in the *Alerts* tab ([ADR 0011](docs/adr/0011-observability.md)).
+**http://127.0.0.1:9090** and Grafana on **http://127.0.0.1:3001** (`admin`,
+`GRAFANA_ADMIN_PASSWORD` from `.env`). Replay a refresh token and watch
+`BastionRefreshTokenReuse` fire in the *Alerts* tab, then reach the `pager` receiver in
+Grafana's *Alerting* ([ADR 0011](docs/adr/0011-observability.md), [ADR 0018](docs/adr/0018-alert-routing-and-dashboards.md)).
 
 **With a real Wazuh** (optional module, ~4 GiB of RAM): `docker compose --profile wazuh up -d`
 once, then learners start and stop it from the module card; dashboard on
@@ -330,7 +332,7 @@ operator CLI, never over HTTP.
 | Container | Distroless, UID 65532, no shell (asserted in CI), smoke-tested with `--read-only --cap-drop ALL`, Trivy gate |
 | DAST | OWASP ZAP API scan **authenticated with a real token**, driven by the OpenAPI spec |
 | Release | Push of the exact scanned image → **cosign keyless signature** → signed **CycloneDX SBOM** → **SLSA provenance** → self-verification |
-| Monitoring | Prometheus metrics on a **separate, token-protected listener**, labels from closed sets only (no personal data, no cardinality DoS), **12 alerts unit-tested with `promtool`** in CI and linked to the [runbook](docs/runbook.md); the audit log itself in **Wazuh**, with rules checked in the real `wazuh-logtest` ([ADR 0015](docs/adr/0015-audit-log-to-siem.md)) |
+| Monitoring | Prometheus metrics on a **separate, token-protected listener**, labels from closed sets only (no personal data, no cardinality DoS), **15 alerts unit-tested with `promtool`** in CI and linked to the [runbook](docs/runbook.md), **routed by severity in Alertmanager** (routing and inhibition tested with `amtool` and a live instance, silences only behind Grafana's login, Watchdog dead man's switch, [ADR 0018](docs/adr/0018-alert-routing-and-dashboards.md)); the audit log itself in **Wazuh**, with rules checked in the real `wazuh-logtest` ([ADR 0015](docs/adr/0015-audit-log-to-siem.md)) |
 | Runtime | Kubernetes PSS *restricted*, default-deny NetworkPolicy with **no egress**, no SA token, secrets as 0400 files, **Kyverno rejects unsigned images** |
 | Pipeline itself | `permissions: {}`, every action **SHA-pinned**, `--ignore-scripts`, `persist-credentials: false`, harden-runner, OpenSSF Scorecard |
 

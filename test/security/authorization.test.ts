@@ -149,7 +149,7 @@ describe('operator CLI', () => {
   it('generates fresh, valid secrets', () => {
     // Run tsx through the current node binary: spawning `npx` directly fails on Windows (npx.cmd).
     const out = execFileSync(process.execPath, ['--import', 'tsx', 'src/cli.ts', 'gen-secrets'], { encoding: 'utf8' });
-    expect(out).toMatch(/^JWT_SECRET=.+\nAUDIT_HMAC_KEY=.+\nFLAG_HMAC_KEY=.+\nLAB_RUNNER_TOKEN=.+\nMETRICS_TOKEN=.+\nWAZUH_ADMIN_PASSWORD=.+\nWAZUH_DASHBOARD_PASSWORD=.+\nWAZUH_API_PASSWORD=.+\nENCRYPTION_KEYS=k1:.+\nACTIVE_KEY_ID=k1\n$/);
+    expect(out).toMatch(/^JWT_SECRET=.+\nAUDIT_HMAC_KEY=.+\nFLAG_HMAC_KEY=.+\nLAB_RUNNER_TOKEN=.+\nMETRICS_TOKEN=.+\nWAZUH_ADMIN_PASSWORD=.+\nWAZUH_DASHBOARD_PASSWORD=.+\nWAZUH_API_PASSWORD=.+\nGRAFANA_ADMIN_PASSWORD=.+\nENCRYPTION_KEYS=k1:.+\nACTIVE_KEY_ID=k1\n$/);
     // Every generated secret is accepted by the configuration it is meant for.
     const env = Object.fromEntries(out.trim().split('\n').map((l) => [l.slice(0, l.indexOf('=')), l.slice(l.indexOf('=') + 1)]));
     expect(() => loadConfig({ ...env, LAB_RUNNER_URL: 'http://lab-runner:4000', METRICS_PORT: '9464' })).not.toThrow();
@@ -157,5 +157,7 @@ describe('operator CLI', () => {
     const wazuh = ['WAZUH_ADMIN_PASSWORD', 'WAZUH_DASHBOARD_PASSWORD', 'WAZUH_API_PASSWORD'].map((k) => env[k] ?? '');
     for (const p of wazuh) expect(p).toMatch(/^(?=.*[A-Z])(?=.*[a-z])(?=.*[0-9])(?=.*[.-])[A-Za-z0-9.-]{24}$/);
     expect(new Set(wazuh).size).toBe(3);
+    // Grafana's admin (ADR 0018): 192 random bits, never a default.
+    expect(Buffer.from(env.GRAFANA_ADMIN_PASSWORD ?? '', 'base64')).toHaveLength(24);
   });
 });

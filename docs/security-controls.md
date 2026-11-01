@@ -123,6 +123,10 @@ Standards: **OWASP API Security Top 10 (2023)** and **OWASP ASVS 4.0.3** (Level 
 | No personal data in telemetry (GDPR data minimisation, ASVS 8.3.x) | Labels from closed sets: route patterns, audit actions, status codes; no user id, e-mail or IP | `observability.test.ts` › route pattern, personal data |
 | Resource exhaustion (OWASP API4:2023) | Per-metric series cap, drops counted and alerted | `metrics.test.ts` › cardinality |
 | Alerts that work | `promtool test rules` in CI: each alert fires on its attack and not on normal traffic; counters exported at 0 so the first event alerts | `deploy/prometheus/alerts.test.yml`, `observability.test.ts` › regression |
+| Alerts reach the right people (ADR 0018) | Alertmanager routes by severity (pager / secops / trainers), inhibits symptoms of an outage or of a reported cause, never critical alerts; tested with `amtool` and a live instance in CI | `deploy/alertmanager/routes.test.sh` |
+| Detection cannot be silently disabled (MITRE T1562) | Alertmanager (silences API, no auth) publishes no port; silences only through Grafana after login; Watchdog dead man's switch and pipeline alerts (`AlertmanagerUnreachable`, `AlertmanagerNotificationsFailing`) | `alerts.test.yml`, ADR 0018 |
+| No default credentials, no telemetry (CIS 4.7, ASVS 2.5.4) | Grafana: password from a compose secret (`__FILE`), anonymous/sign-up off, `admin/admin` refused (checked on the live stack); analytics, update checks, news, Gravatar, external snapshots, plugin catalogue off | `docker-compose.yml`, ADR 0018 |
+| Dashboards and alerts match what exists | Every metric, audit action and runbook link of the alerts and dashboard checked against the real exports, the closed lists and `docs/runbook.md` | `observability-config.test.ts` |
 
 ## Detection challenges (v6, ADR 0010) — evaluating learner input safely
 

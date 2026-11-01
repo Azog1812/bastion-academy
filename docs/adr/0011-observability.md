@@ -77,7 +77,7 @@ action × outcome pair, and every label-less counter, is exported at 0 from star
   `127.0.0.1:9090`, with a 7-day retention. Its root filesystem is not read-only:
   Compose copies an environment-sourced secret into the container, which a
   read-only root refuses. It runs as `nobody` without capabilities, so little is lost.
-- Not done yet: Alertmanager routing (e-mail, chat), Grafana dashboards, tracing.
+- Alertmanager routing and Grafana dashboards: ADR 0018. Not done: tracing.
   Counters live in memory: they restart at 0 with the process, which Prometheus'
   `increase()` handles as a counter reset.
 - Learners do not see these metrics; a lesson on monitoring and a Wazuh module are the

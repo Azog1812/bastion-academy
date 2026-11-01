@@ -7,6 +7,12 @@ global:
 rule_files:
   - /etc/prometheus/alerts.yml
 
+# Routing, grouping and silences are Alertmanager's job (deploy/alertmanager, ADR 0018).
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["alertmanager:9093"]
+
 scrape_configs:
   - job_name: bastion
     # The platform serves metrics on a separate port, never on the API port, and
@@ -16,3 +22,8 @@ scrape_configs:
       credentials_file: /run/secrets/metrics_token
     static_configs:
       - targets: ["bastion:9464"]
+
+  # Its own health (notifications_failed_total), reached on the internal network only.
+  - job_name: alertmanager
+    static_configs:
+      - targets: ["alertmanager:9093"]

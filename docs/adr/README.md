@@ -21,3 +21,4 @@ Format: context → decision → consequences.
 | [0014](0014-wazuh-rule-challenges.md) | Wazuh rule challenges: learner XML read by a closed parser (no DTD, no entities), OS_Match only, Wazuh's rule tree |
 | [0015](0015-audit-log-to-siem.md) | Bastion's audit log copied as JSON lines to a read-only volume, watched by the real Wazuh with rules checked in CI |
 | [0016](0016-passkeys.md) | Passkeys (WebAuthn) as a phishing-resistant second factor, verified on node:crypto with a bounded CBOR decoder |
+| [0018](0018-alert-routing-and-dashboards.md) | Alertmanager routing and inhibition, Grafana dashboard, silences behind a login, all tested as code |
