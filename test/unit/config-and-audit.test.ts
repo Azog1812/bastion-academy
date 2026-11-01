@@ -8,7 +8,7 @@ import { testEnv } from '../helpers.js';
 describe('configuration fails closed', () => {
   it('loads a valid configuration and freezes it', () => {
     const cfg = loadConfig(testEnv());
-    expect(cfg.ENCRYPTION_KEYS.get('k1')).toHaveLength(32);
+    expect(cfg.ENCRYPTION_KEYS?.get('k1')).toHaveLength(32);
     expect(Object.isFrozen(cfg)).toBe(true);
   });
 

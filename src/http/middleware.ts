@@ -3,7 +3,7 @@ import type { NextFunction, Request, RequestHandler, Response } from 'express';
 import type { Logger } from 'pino';
 import { ZodError, type ZodType } from 'zod';
 import type { AuditLog } from '../audit.js';
-import { DecryptionError } from '../crypto/envelope.js';
+import { DecryptionError, KmsUnavailable } from '../crypto/envelope.js';
 import { InvalidTokenError, type Role, type TokenSigner } from '../crypto/tokens.js';
 import { forbidden, HttpError, unauthorized } from '../errors.js';
 import type { AuthService } from '../services/auth-service.js';
@@ -140,6 +140,12 @@ export function errorHandler(log: Logger, onIntegrityFailure: () => void = () =>
           : err.status === 415
             ? { error: 'unsupported_media_type', message: 'Unsupported body encoding' }
             : { error: 'malformed_body', message: 'Malformed JSON body' };
+    } else if (err instanceof KmsUnavailable) {
+      // An outage, not tampering: 503 and a warning, never the integrity alert (ADR 0019).
+      status = 503;
+      body = { error: 'unavailable', message: 'The key service is unavailable, try again shortly' };
+      res.setHeader('Retry-After', '30');
+      log.warn({ reqId: req.id, reason: err.message }, 'key service unavailable');
     } else if (err instanceof DecryptionError) {
       log.error({ reqId: req.id, err: { name: err.name } }, 'ciphertext integrity failure — possible tampering');
       onIntegrityFailure();

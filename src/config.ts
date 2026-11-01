@@ -10,6 +10,7 @@ import { z } from 'zod';
  */
 
 const BASE64 = /^[A-Za-z0-9+/]+={0,2}$/;
+const VAULT_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 /**
  * A secret key: standard base64 of random bytes. Placeholders are recognised by
@@ -80,8 +81,31 @@ const schema = z
     /** Derives each learner's challenge flags. A leak lets someone compute every flag, nothing more: kept apart for that reason. */
     FLAG_HMAC_KEY: base64Key(32),
 
-    ENCRYPTION_KEYS: keyRing,
-    ACTIVE_KEY_ID: z.string().min(1),
+    /**
+     * Where the KEKs live (ADR 0019). `local`: the key ring below, in this process.
+     * `vault`: Vault/OpenBao Transit; the key ring then only opens rows written before
+     * the move, until `rotate-keys` has re-wrapped them.
+     */
+    KMS_PROVIDER: z.enum(['local', 'vault']).default('local'),
+    ENCRYPTION_KEYS: keyRing.optional(),
+    ACTIVE_KEY_ID: z.string().min(1).optional(),
+    VAULT_ADDR: z
+      .url({ protocol: /^https?$/ })
+      .transform((v) => v.replace(/\/+$/, ''))
+      .optional(),
+    /** AppRole (preferred): exchanged for 1-hour tokens whose policy covers one Transit key (deploy/vault). */
+    // Vault's ids are UUID-shaped random values without an RFC 4122 version: shape only.
+    VAULT_ROLE_ID: z.string().regex(VAULT_ID, 'must be a Vault AppRole id').optional(),
+    VAULT_SECRET_ID: z.string().regex(VAULT_ID, 'must be a Vault AppRole id').optional(),
+    /** Or a static token, for tests and simple setups. */
+    VAULT_TOKEN: z
+      .string()
+      .min(20)
+      .max(512)
+      .regex(/^[A-Za-z0-9._-]+$/, 'must be a Vault token')
+      .optional(),
+    VAULT_TRANSIT_MOUNT: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,63}$/).default('transit'),
+    VAULT_TRANSIT_KEY: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,63}$/).default('bastion-kek'),
 
     /** log2(N) for scrypt. OWASP minimum is N=2^17 (r=8, p=1). Lowered only in tests. */
     SCRYPT_LOG_N: z.coerce.number().int().min(10).max(20).default(17),
@@ -140,8 +164,30 @@ const schema = z
     AUDIT_EXPORT_FILE: z.string().min(1).optional(),
   })
   .superRefine((cfg, ctx) => {
-    if (!cfg.ENCRYPTION_KEYS.has(cfg.ACTIVE_KEY_ID)) {
+    if (cfg.KMS_PROVIDER === 'local' && !cfg.ENCRYPTION_KEYS) {
+      ctx.addIssue({ code: 'custom', path: ['ENCRYPTION_KEYS'], message: 'is required with KMS_PROVIDER=local' });
+    }
+    if (cfg.ENCRYPTION_KEYS && (!cfg.ACTIVE_KEY_ID || !cfg.ENCRYPTION_KEYS.has(cfg.ACTIVE_KEY_ID))) {
       ctx.addIssue({ code: 'custom', path: ['ACTIVE_KEY_ID'], message: 'must reference a key in ENCRYPTION_KEYS' });
+    }
+    if (cfg.KMS_PROVIDER === 'vault') {
+      if (!cfg.VAULT_ADDR) ctx.addIssue({ code: 'custom', path: ['VAULT_ADDR'], message: 'is required with KMS_PROVIDER=vault' });
+      const approle = cfg.VAULT_ROLE_ID !== undefined || cfg.VAULT_SECRET_ID !== undefined;
+      if (approle && (!cfg.VAULT_ROLE_ID || !cfg.VAULT_SECRET_ID)) {
+        ctx.addIssue({ code: 'custom', path: ['VAULT_SECRET_ID'], message: 'AppRole needs both VAULT_ROLE_ID and VAULT_SECRET_ID' });
+      }
+      if (approle === (cfg.VAULT_TOKEN !== undefined)) {
+        ctx.addIssue({ code: 'custom', path: ['VAULT_TOKEN'], message: 'set either VAULT_TOKEN or VAULT_ROLE_ID + VAULT_SECRET_ID with KMS_PROVIDER=vault' });
+      }
+      const url = cfg.VAULT_ADDR ? new URL(cfg.VAULT_ADDR) : undefined;
+      // The token and every DEK cross this link. Plain http only to a single-label host (a
+      // container name on a private network, as for the lab runner), never across a network.
+      if (url && cfg.NODE_ENV === 'production' && url.protocol === 'http:' && url.hostname.includes('.')) {
+        ctx.addIssue({ code: 'custom', path: ['VAULT_ADDR'], message: 'must be https, except to a container name on a private network' });
+      }
+      if (url && (url.pathname !== '/' || url.search !== '' || url.username !== '')) {
+        ctx.addIssue({ code: 'custom', path: ['VAULT_ADDR'], message: 'scheme://host[:port] only' });
+      }
     }
     for (const origin of cfg.WEBAUTHN_ORIGINS) {
       let url: URL | undefined;
@@ -180,7 +226,7 @@ const schema = z
 
 export type Config = Readonly<z.output<typeof schema>>;
 
-const FILE_SECRETS = ['JWT_SECRET', 'AUDIT_HMAC_KEY', 'FLAG_HMAC_KEY', 'ENCRYPTION_KEYS', 'LAB_RUNNER_TOKEN', 'METRICS_TOKEN'] as const;
+const FILE_SECRETS = ['JWT_SECRET', 'AUDIT_HMAC_KEY', 'FLAG_HMAC_KEY', 'ENCRYPTION_KEYS', 'LAB_RUNNER_TOKEN', 'METRICS_TOKEN', 'VAULT_TOKEN', 'VAULT_ROLE_ID', 'VAULT_SECRET_ID'] as const;
 
 /**
  * Secrets can be provided as files (`JWT_SECRET_FILE=/run/secrets/jwt`), the

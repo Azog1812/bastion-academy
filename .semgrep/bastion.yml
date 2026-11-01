@@ -86,6 +86,9 @@ rules:
           - pattern: $A.hash === $B
           - pattern: $A === $B.hash
           - pattern: $TOKEN === $EXPECTED_TOKEN
+      # A presence check compares with a public constant: no secret byte to time.
+      - pattern-not: $TOKEN === null
+      - pattern-not: $TOKEN === undefined
       - metavariable-regex:
           metavariable: $TOKEN
           regex: (?i).*(secret|token|signature|hmac).*

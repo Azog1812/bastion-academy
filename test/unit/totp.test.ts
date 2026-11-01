@@ -12,6 +12,7 @@ import {
   verifyTotp,
 } from '../../src/crypto/totp.js';
 import { DecryptionError, openSecret, sealSecret } from '../../src/crypto/envelope.js';
+import { LocalKms } from '../../src/crypto/kms.js';
 
 const RFC_SECRET = Buffer.from('12345678901234567890');
 
@@ -85,15 +86,15 @@ describe('recovery codes', () => {
 });
 
 describe('sealed account secrets', () => {
-  const ring = { keys: new Map([['k1', randomBytes(32)], ['k2', randomBytes(32)]]), activeKeyId: 'k1' };
+  const ring = new LocalKms({ keys: new Map([['k1', randomBytes(32)], ['k2', randomBytes(32)]]), activeKeyId: 'k1' });
 
-  it('opens only with the same purpose/owner binding', () => {
+  it('opens only with the same purpose/owner binding', async () => {
     const secret = randomBytes(20);
-    const { keyId, blob } = sealSecret(ring, secret, 'bastion:totp-secret:v1:alice');
-    expect(openSecret(ring, keyId, blob, 'bastion:totp-secret:v1:alice').equals(secret)).toBe(true);
+    const { keyId, blob } = await sealSecret(ring, secret, 'bastion:totp-secret:v1:alice');
+    expect((await openSecret(ring, keyId, blob, 'bastion:totp-secret:v1:alice')).equals(secret)).toBe(true);
     // Alice's sealed seed copied into Bob's row does not open.
-    expect(() => openSecret(ring, keyId, blob, 'bastion:totp-secret:v1:bob')).toThrow(DecryptionError);
-    expect(() => openSecret(ring, 'k2', blob, 'bastion:totp-secret:v1:alice')).toThrow(DecryptionError);
-    expect(() => openSecret(ring, keyId, blob.subarray(0, 20), 'bastion:totp-secret:v1:alice')).toThrow(DecryptionError);
+    await expect(openSecret(ring, keyId, blob, 'bastion:totp-secret:v1:bob')).rejects.toThrow(DecryptionError);
+    await expect(openSecret(ring, 'k2', blob, 'bastion:totp-secret:v1:alice')).rejects.toThrow(DecryptionError);
+    await expect(openSecret(ring, keyId, blob.subarray(0, 20), 'bastion:totp-secret:v1:alice')).rejects.toThrow(DecryptionError);
   });
 });

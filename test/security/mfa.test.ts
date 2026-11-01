@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { randomBytes } from 'node:crypto';
 import { MfaService } from '../../src/services/mfa-service.js';
+import { LocalKms } from '../../src/crypto/kms.js';
 import { base32Decode, hotp, totpStep } from '../../src/crypto/totp.js';
 import { auditActions, newUser, setup, STRONG_PASSWORD, type Session, type TestContext } from '../helpers.js';
 
@@ -205,11 +206,11 @@ describe('MFA key rotation (CLI)', () => {
     const t = setup();
     const s = await newUser(t);
     const { secret } = await enrol(t, s);
-    const keys = new Map([...t.config.ENCRYPTION_KEYS, ['k2', randomBytes(32)]]);
-    const rotated = new MfaService(t.db, { keys, activeKeyId: 'k2' }, t.services.audit, 'Bastion Academy');
-    expect(rotated.rotateKeys()).toBe(1);
-    expect(rotated.rotateKeys()).toBe(0); // idempotent
+    const keys = new Map([...(t.config.ENCRYPTION_KEYS ?? []), ['k2', randomBytes(32)]]);
+    const rotated = new MfaService(t.db, new LocalKms({ keys, activeKeyId: 'k2' }), t.services.audit, 'Bastion Academy');
+    expect(await rotated.rotateKeys()).toBe(1);
+    expect(await rotated.rotateKeys()).toBe(0); // idempotent
     expect(t.db.prepare('SELECT key_id FROM user_mfa WHERE user_id = ?').get(s.id)).toEqual({ key_id: 'k2' });
-    expect(rotated.verify(s.id, code(secret, STEP + 1), null)).toBe('totp');
+    expect(await rotated.verify(s.id, code(secret, STEP + 1), null)).toBe('totp');
   });
 });

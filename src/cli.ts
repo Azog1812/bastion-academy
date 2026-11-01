@@ -3,6 +3,7 @@ import { AuditLog } from './audit.js';
 import { loadConfig } from './config.js';
 import { openDatabase } from './db.js';
 import { MfaService } from './services/mfa-service.js';
+import { kmsFromConfig } from './crypto/kms-config.js';
 import { NoteService } from './services/note-service.js';
 import { recoverAccount } from './services/recovery.js';
 
@@ -68,11 +69,19 @@ async function main(): Promise<number> {
       return 0;
     }
     case 'rotate-keys': {
-      const ring = { keys: config.ENCRYPTION_KEYS, activeKeyId: config.ACTIVE_KEY_ID };
-      const { rewrapped } = new NoteService(db, ring, audit).rotateKeys();
-      const resealed = new MfaService(db, ring, audit, config.MFA_ISSUER).rotateKeys();
-      audit.record({ action: 'admin.key_rotation', outcome: 'success', details: { activeKeyId: config.ACTIVE_KEY_ID, rewrapped, resealed } });
-      console.log(`re-wrapped ${rewrapped} data keys and ${resealed} MFA secrets under ${config.ACTIVE_KEY_ID}; old keys can now be retired`);
+      // With Vault (ADR 0019), this also moves rows from the local ring to Vault, and
+      // re-wraps rows of older Vault key versions inside Vault (DEKs never come out).
+      const { kms, vault } = kmsFromConfig(config);
+      // With Vault, a new key version first; the rows then follow it with rewrap (inside Vault).
+      if (vault) {
+        await vault.check();
+        await vault.rotateKey();
+      }
+      const activeKeyId = await kms.activeKeyId();
+      const { rewrapped } = await new NoteService(db, kms, audit).rotateKeys();
+      const resealed = await new MfaService(db, kms, audit, config.MFA_ISSUER).rotateKeys();
+      audit.record({ action: 'admin.key_rotation', outcome: 'success', details: { activeKeyId, rewrapped, resealed } });
+      console.log(`re-wrapped ${String(rewrapped)} data keys and ${String(resealed)} MFA secrets under ${activeKeyId}; old keys can now be retired`);
       return 0;
     }
     case 'recover-account': {

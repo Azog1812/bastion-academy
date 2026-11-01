@@ -1,0 +1,75 @@
+name: Vault KMS
+
+# KEKs in Vault Transit (ADR 0019), end to end against the real Vault of
+# docker-compose.vault.yml: migration from the local ring with rotate-keys, rotation
+# inside Vault, the AppRole policy denying export/config/deletion, and a sealed Vault
+# answering 503 rather than raising the tampering alert. The unit tests use a stand-in;
+# this proves the stand-in tells the truth. Runs when something it checks changes.
+on:
+  push:
+    branches: [main]
+    paths:
+      - src/crypto/**
+      - src/services/note-service.ts
+      - src/services/mfa-service.ts
+      - src/config.ts
+      - src/cli.ts
+      - src/server.ts
+      - deploy/vault/**
+      - docker-compose.yml
+      - docker-compose.vault.yml
+      - Dockerfile
+      - test/vault-real/**
+      - .github/workflows/vault.yml
+  pull_request:
+    paths:
+      - src/crypto/**
+      - src/services/note-service.ts
+      - src/services/mfa-service.ts
+      - src/config.ts
+      - src/cli.ts
+      - src/server.ts
+      - deploy/vault/**
+      - docker-compose.yml
+      - docker-compose.vault.yml
+      - Dockerfile
+      - test/vault-real/**
+      - .github/workflows/vault.yml
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  vault:
+    name: KEKs in the real Vault
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci --ignore-scripts
+      - run: npm run build
+
+      - name: Build the platform image
+        run: docker build -t bastion:local .
+
+      # Vault image and digest come from docker-compose.vault.yml.
+      - name: Local ring → Vault, rotation, policy, sealed Vault
+        run: bash test/vault-real/run.sh

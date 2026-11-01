@@ -43,6 +43,7 @@ export function setup(
     web?: AppOptions['web'];
     labRunner?: AppOptions['labRunner'];
     environmentRunner?: AppOptions['environmentRunner'];
+    kms?: AppOptions['kms'];
   } = {},
 ): TestContext {
   const config = loadConfig(testEnv(opts.env));
@@ -55,6 +56,7 @@ export function setup(
     ...(opts.web ? { web: opts.web } : {}),
     ...(opts.labRunner ? { labRunner: opts.labRunner } : {}),
     ...(opts.environmentRunner ? { environmentRunner: opts.environmentRunner } : {}),
+    ...(opts.kms ? { kms: opts.kms } : {}),
     rateLimits: { global: 10_000, auth: 10_000, refresh: 10_000, quiz: 10_000, ...opts.rateLimits },
   });
   return { config, db, app, services, metrics, http: request(app) };
