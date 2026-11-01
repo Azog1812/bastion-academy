@@ -182,7 +182,7 @@ export class AuthService {
     }
 
     const factor: SecondFactor | null =
-      typeof proof === 'string' ? this.mfa.verify(user.id, proof, ctx.ip) : this.passkeys.verifyLogin(user.id, hash, proof.passkey, ctx.ip) ? 'passkey' : null;
+      typeof proof === 'string' ? await this.mfa.verify(user.id, proof, ctx.ip) : this.passkeys.verifyLogin(user.id, hash, proof.passkey, ctx.ip) ? 'passkey' : null;
     if (!factor) {
       // Wrong codes feed the same progressive lockout as wrong passwords.
       this.registerFailure(user, ctx, 'auth.mfa');

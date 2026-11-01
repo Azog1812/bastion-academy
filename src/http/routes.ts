@@ -231,7 +231,7 @@ export function buildRouter(d: RouteDeps): Router {
     handler(async (req, res) => {
       const { password } = parse(reauthSchema, req.body);
       const { email } = await d.auth.confirmPassword(uid(req), password, ctx(req));
-      res.json(d.mfa.setup(uid(req), email, ctx(req).ip));
+      res.json(await d.mfa.setup(uid(req), email, ctx(req).ip));
     }),
   );
 
@@ -239,9 +239,9 @@ export function buildRouter(d: RouteDeps): Router {
     '/me/mfa/enable',
     requireAuth,
     authLimiter,
-    handler((req, res) => {
+    handler(async (req, res) => {
       const { code } = parse(mfaCodeSchema, req.body);
-      res.json({ recoveryCodes: d.mfa.enable(uid(req), code, ctx(req).ip) });
+      res.json({ recoveryCodes: await d.mfa.enable(uid(req), code, ctx(req).ip) });
     }),
   );
 
@@ -253,7 +253,7 @@ export function buildRouter(d: RouteDeps): Router {
       const { password, code } = parse(mfaDisableSchema, req.body);
       await d.auth.confirmPassword(uid(req), password, ctx(req));
       // Both factors: a hijacked session alone, or a stolen password alone, cannot remove MFA.
-      if (!d.mfa.verify(uid(req), code, ctx(req).ip)) {
+      if (!(await d.mfa.verify(uid(req), code, ctx(req).ip))) {
         d.audit.record({ action: 'mfa.disable', outcome: 'failure', actorId: uid(req), ip: ctx(req).ip });
         throw unauthorized('Invalid verification code');
       }
@@ -306,7 +306,7 @@ export function buildRouter(d: RouteDeps): Router {
       if (!d.passkeys.isOwn(uid(req), id)) throw notFound('Passkey not found');
       // Removing the last second factor is disabling MFA: password AND a code, as for TOTP.
       const last = !d.mfa.isEnabled(uid(req)) && d.passkeys.count(uid(req)) === 1;
-      if (last && (code === undefined || !d.mfa.verify(uid(req), code, ctx(req).ip))) {
+      if (last && (code === undefined || !(await d.mfa.verify(uid(req), code, ctx(req).ip)))) {
         d.audit.record({ action: 'passkey.delete', outcome: 'failure', actorId: uid(req), target: id, ip: ctx(req).ip, details: { reason: 'last_factor' } });
         throw unauthorized('This is your last second factor: enter a recovery code to remove it');
       }
@@ -341,17 +341,17 @@ export function buildRouter(d: RouteDeps): Router {
   r.get(
     '/notes',
     requireAuth,
-    handler((req, res) => {
+    handler(async (req, res) => {
       const { limit, offset } = parse(paginationSchema, req.query);
-      res.json({ ...d.notes.list(uid(req), limit, offset), limit, offset });
+      res.json({ ...(await d.notes.list(uid(req), limit, offset)), limit, offset });
     }),
   );
 
   r.post(
     '/notes',
     requireAuth,
-    handler((req, res) => {
-      const note = d.notes.create(uid(req), parse(createNoteSchema, req.body), ctx(req).ip);
+    handler(async (req, res) => {
+      const note = await d.notes.create(uid(req), parse(createNoteSchema, req.body), ctx(req).ip);
       res.status(201).location(`/v1/notes/${note.id}`).json(note);
     }),
   );
@@ -359,19 +359,19 @@ export function buildRouter(d: RouteDeps): Router {
   r.get(
     '/notes/:id',
     requireAuth,
-    handler((req, res) => {
+    handler(async (req, res) => {
       const { id } = parse(noteIdSchema, req.params);
-      res.json(d.notes.get(uid(req), id, ctx(req).ip));
+      res.json(await d.notes.get(uid(req), id, ctx(req).ip));
     }),
   );
 
   r.put(
     '/notes/:id',
     requireAuth,
-    handler((req, res) => {
+    handler(async (req, res) => {
       const { id } = parse(noteIdSchema, req.params);
       const { version, ...content } = parse(updateNoteSchema, req.body);
-      res.json(d.notes.update(uid(req), id, version, content, ctx(req).ip));
+      res.json(await d.notes.update(uid(req), id, version, content, ctx(req).ip));
     }),
   );
 

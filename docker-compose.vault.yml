@@ -1,0 +1,74 @@
+# KEKs in Vault Transit (ADR 0019), on top of the main file:
+#   docker compose -f docker-compose.yml -f docker-compose.vault.yml up -d
+#   docker compose -f docker-compose.yml -f docker-compose.vault.yml exec bastion node dist/cli.js rotate-keys   # move existing rows into Vault
+#
+#   bastion ──kms (internal)──► vault:8200   (AppRole, 1-hour tokens, one Transit key)
+#
+# Vault publishes no port: only the platform and the setup job reach it. The local ring
+# (ENCRYPTION_KEYS in .env) stays configured so rows written before the move still open;
+# once `rotate-keys` has run, it can be removed from .env.
+services:
+  vault:
+    image: hashicorp/vault:2.2.1@sha256:962a92876e168d68eaaa24b0b8b49bbce1cb63024060a67bba95cd158a366fc2
+    # The image's entrypoint drops privileges with su-exec, which needs capabilities;
+    # starting as the vault user directly needs none.
+    user: "100:1000"
+    entrypoint: ["vault", "server", "-config=/vault/config/vault.hcl"]
+    volumes:
+      - ./deploy/vault/vault.hcl:/vault/config/vault.hcl:ro
+      - vault-data:/vault/file
+    networks: [kms]
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    mem_limit: 256m
+    cpus: 0.5
+    restart: unless-stopped
+
+  # Initialises once, unseals at every start, then exits (deploy/vault/init.sh).
+  vault-init:
+    image: hashicorp/vault:2.2.1@sha256:962a92876e168d68eaaa24b0b8b49bbce1cb63024060a67bba95cd158a366fc2
+    entrypoint: ["sh", "/setup/init.sh"]
+    user: "0:0" # chown of the AppRole files to the platform's uid
+    volumes:
+      - ./deploy/vault/init.sh:/setup/init.sh:ro
+      - ./deploy/vault/bastion-policy.hcl:/setup/bastion-policy.hcl:ro
+      - vault-keys:/vault-keys # the unseal key: this container only
+      - vault-approle:/approle
+    networks: [kms]
+    read_only: true
+    tmpfs:
+      - /tmp:size=8m
+    cap_drop: [ALL]
+    cap_add: [CHOWN]
+    security_opt:
+      - no-new-privileges:true
+    depends_on: [vault]
+    restart: "no"
+
+  bastion:
+    environment:
+      KMS_PROVIDER: vault
+      VAULT_ADDR: http://vault:8200
+      VAULT_ROLE_ID_FILE: /run/vault/role_id
+      VAULT_SECRET_ID_FILE: /run/vault/secret_id
+    volumes:
+      - vault-approle:/run/vault:ro
+    networks: [default, lab-control, metrics, kms]
+    depends_on:
+      vault-init:
+        condition: service_completed_successfully
+
+networks:
+  # Platform and setup job ↔ Vault. No route out, nothing else joins it.
+  kms:
+    internal: true
+
+volumes:
+  vault-data:
+  vault-keys:
+  vault-approle:
