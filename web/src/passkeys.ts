@@ -80,6 +80,30 @@ export async function getAssertion(o: RequestOptions) {
   };
 }
 
+/**
+ * Passwordless login (ADR 0017): no allowCredentials, so the browser lists the passkeys
+ * stored for this site and returns the chosen one with its user handle.
+ */
+export async function getDiscoverableAssertion(o: RequestOptions) {
+  const cred = (await navigator.credentials.get({
+    publicKey: { challenge: fromB64u(o.challenge), rpId: o.rpId, timeout: o.timeout, userVerification: o.userVerification, allowCredentials: [] },
+  })) as PublicKeyCredential | null;
+  if (!cred) throw new Error('Connexion annulée');
+  const r = cred.response as AuthenticatorAssertionResponse;
+  // A passkey that is not discoverable carries no user handle: it can only be a second factor.
+  if (!r.userHandle) return null;
+  return {
+    id: cred.id,
+    type: 'public-key',
+    response: {
+      clientDataJSON: toB64u(r.clientDataJSON),
+      authenticatorData: toB64u(r.authenticatorData),
+      signature: toB64u(r.signature),
+      userHandle: toB64u(r.userHandle),
+    },
+  };
+}
+
 /** The WebAuthn API fails with DOMExceptions whose messages are in English and technical. */
 export function webauthnMessage(err: unknown): string | null {
   if (!(err instanceof DOMException)) return null;
@@ -106,7 +130,7 @@ export async function passkeysCard(me: Me, onRecoveryCodes: (codes: string[]) =>
     h(
       'p',
       { class: 'hint' },
-      "Une passkey (clé de sécurité, téléphone, Windows Hello…) remplace le code à 6 chiffres. Elle résiste à l'hameçonnage : elle ne signe que pour ce site, donc une fausse page n'en tire rien.",
+      "Une passkey (clé de sécurité, téléphone, Windows Hello…) remplace le code à 6 chiffres, et peut même remplacer le mot de passe : « Se connecter avec une passkey » sur la page de connexion. Elle résiste à l'hameçonnage : elle ne signe que pour ce site, donc une fausse page n'en tire rien.",
     ),
   );
   if (!passkeysSupported()) {

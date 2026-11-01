@@ -49,6 +49,7 @@ export const AUDIT_ACTIONS = [
   'admin.audit_verify',
   'admin.promote',
   'admin.key_rotation',
+  'admin.account_recovery',
 ] as const;
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];

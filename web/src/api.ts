@@ -97,6 +97,14 @@ export async function completeMfa(mfaToken: string, proof: { code: string } | { 
 /** Passkey challenge for the pending MFA step (ADR 0016). */
 export const passkeyLoginOptions = <T>(mfaToken: string): Promise<T> => call<T>('POST', '/v1/auth/mfa/passkey/options', { mfaToken }, false);
 
+/** Passwordless login (ADR 0017): a challenge that names no account, then a discoverable passkey. */
+export const passwordlessOptions = <T>(): Promise<T> => call<T>('POST', '/v1/auth/passkey/options', {}, false);
+
+export async function loginWithPasskey(passkey: unknown): Promise<void> {
+  const r = await call<{ accessToken: string }>('POST', '/v1/session/passkey', { passkey }, false);
+  accessToken = r.accessToken;
+}
+
 export async function register(email: string, password: string): Promise<LoginStep> {
   await call('POST', '/v1/auth/register', { email, password }, false);
   return login(email, password);

@@ -101,6 +101,39 @@ paths:
         "400": { $ref: "#/components/responses/ValidationError" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "429": { $ref: "#/components/responses/RateLimited" }
+  /v1/auth/passkey/options:
+    post:
+      tags: [auth]
+      summary: WebAuthn request options for a passwordless login
+      description: >-
+        A single-use challenge (5 minutes) that names no account (empty allowCredentials,
+        userVerification required), so nothing here reveals whether an e-mail exists (ADR 0017).
+        At most 10 000 challenges are pending at once, across all clients.
+      security: []
+      requestBody:
+        required: false
+        content: { application/json: { schema: { type: object, additionalProperties: false } } }
+      responses:
+        "200": { description: PublicKeyCredentialRequestOptions (base64url fields), content: { application/json: { schema: { type: object } } } }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { description: Too many sign-ins pending, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+  /v1/auth/passkey:
+    post:
+      tags: [auth]
+      summary: Passwordless login with a discoverable passkey
+      description: >-
+        One user-verified assertion replaces the password and the second factor. The user
+        handle names the account and the credential must belong to it. Every failure answers
+        the same 401; failures do not feed the password lockout, and the lockout does not
+        block a valid passkey (ADR 0017).
+      security: []
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/PasswordlessLogin" } } } }
+      responses:
+        "200": { description: Authenticated, content: { application/json: { schema: { $ref: "#/components/schemas/TokenPair" } } } }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "429": { $ref: "#/components/responses/RateLimited" }
   /v1/auth/refresh:
     post:
       tags: [auth]
@@ -139,6 +172,18 @@ paths:
       summary: Browser variant of /v1/auth/mfa; sets the refresh cookie on success
       security: []
       requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/MfaLogin" } } } }
+      responses:
+        "200": { description: Logged in, content: { application/json: { schema: { $ref: "#/components/schemas/AccessToken" } } } }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { description: Cross-origin request refused, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "429": { $ref: "#/components/responses/RateLimited" }
+  /v1/session/passkey:
+    post:
+      tags: [session]
+      summary: Browser variant of /v1/auth/passkey; sets the refresh cookie on success
+      security: []
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/PasswordlessLogin" } } } }
       responses:
         "200": { description: Logged in, content: { application/json: { schema: { $ref: "#/components/schemas/AccessToken" } } } }
         "400": { $ref: "#/components/responses/ValidationError" }
@@ -828,6 +873,27 @@ components:
                     clientDataJSON: { type: string, maxLength: 4096 }
                     authenticatorData: { type: string, maxLength: 4096 }
                     signature: { type: string, maxLength: 1400 }
+    PasswordlessLogin:
+      type: object
+      additionalProperties: false
+      required: [passkey]
+      properties:
+        passkey:
+          type: object
+          additionalProperties: false
+          required: [id, type, response]
+          properties:
+            id: { type: string, maxLength: 1400 }
+            type: { type: string, enum: [public-key] }
+            response:
+              type: object
+              additionalProperties: false
+              required: [clientDataJSON, authenticatorData, signature, userHandle]
+              properties:
+                clientDataJSON: { type: string, maxLength: 4096 }
+                authenticatorData: { type: string, maxLength: 4096 }
+                signature: { type: string, maxLength: 1400 }
+                userHandle: { type: string, maxLength: 88, description: The account id the authenticator stored at registration (base64url) }
     PasskeyCredential:
       type: object
       additionalProperties: false
