@@ -23,6 +23,8 @@ import { CborError, decodeCbor, decodeCborPrefix, type CborValue } from './cbor.
 export class WebAuthnError extends Error {}
 /** The signature counter went backwards: the credential may have been cloned. */
 export class CloneWarning extends WebAuthnError {}
+/** A valid signature, but no PIN or biometric was checked: not enough to log in with the passkey alone. */
+export class UserVerificationRequired extends WebAuthnError {}
 
 export interface RelyingParty {
   id: string;
@@ -177,11 +179,18 @@ export function verifyAssertion(
   clientDataJSON: Uint8Array,
   authenticatorData: Uint8Array,
   signature: Uint8Array,
+  /**
+   * Passwordless login (ADR 0017): the passkey is then the only factor, so the
+   * authenticator must have checked a PIN or biometric itself (UV flag). Without it, a
+   * stolen security key alone would open the account.
+   */
+  requireUserVerification = false,
 ): { signCount: number; userVerified: boolean } {
   clientData(clientDataJSON, 'webauthn.get', challenge, rp);
   const auth = parseAuthenticatorData(authenticatorData);
   if (!same(auth.rpIdHash, sha256(Buffer.from(rp.id)))) throw new WebAuthnError('assertion for another RP ID');
   if (!(auth.flags & FLAG_UP)) throw new WebAuthnError('user presence flag not set');
+  if (requireUserVerification && !(auth.flags & FLAG_UV)) throw new UserVerificationRequired('user verification required');
   if (auth.credential) throw new WebAuthnError('unexpected attested credential data in an assertion');
 
   const key = createPublicKey({ key: Buffer.from(credential.publicKey), format: 'der', type: 'spki' });

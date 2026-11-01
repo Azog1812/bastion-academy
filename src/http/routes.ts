@@ -24,6 +24,7 @@ import {
   moduleChoiceSchema,
   moduleIdSchema,
   environmentIdSchema,
+  emptyBodySchema,
   mfaCodeSchema,
   mfaDisableSchema,
   mfaLoginSchema,
@@ -31,6 +32,7 @@ import {
   passkeyIdSchema,
   passkeyOptionsLoginSchema,
   passkeyRegisterSchema,
+  passwordlessLoginSchema,
   noteIdSchema,
   paginationSchema,
   profileSchema,
@@ -130,6 +132,26 @@ export function buildRouter(d: RouteDeps): Router {
     }),
   );
 
+  // Passwordless login with a discoverable passkey (ADR 0017). No account is named, so
+  // nothing here can tell whether an e-mail exists.
+  r.post(
+    '/auth/passkey/options',
+    authLimiter,
+    handler((req, res) => {
+      parse(emptyBodySchema, req.body ?? {});
+      res.json(d.auth.passwordlessOptions());
+    }),
+  );
+
+  r.post(
+    '/auth/passkey',
+    authLimiter,
+    handler(async (req, res) => {
+      const { passkey } = parse(passwordlessLoginSchema, req.body);
+      res.json(await d.auth.loginWithPasskey(passkey, ctx(req)));
+    }),
+  );
+
   r.post(
     '/auth/refresh',
     refreshLimiter,
@@ -168,6 +190,16 @@ export function buildRouter(d: RouteDeps): Router {
     handler(async (req, res) => {
       const body = parse(mfaLoginSchema, req.body);
       sendBrowserLogin(res, await d.auth.completeMfa(body.mfaToken, 'code' in body ? body.code : { passkey: body.passkey }, ctx(req)), d.refreshTtlSeconds);
+    }),
+  );
+
+  r.post(
+    '/session/passkey',
+    sameOriginOnly,
+    authLimiter,
+    handler(async (req, res) => {
+      const { passkey } = parse(passwordlessLoginSchema, req.body);
+      sendBrowserLogin(res, await d.auth.loginWithPasskey(passkey, ctx(req)), d.refreshTtlSeconds);
     }),
   );
 

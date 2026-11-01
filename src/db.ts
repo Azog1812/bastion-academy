@@ -168,6 +168,16 @@ const MIGRATIONS: readonly string[] = [
     expires_at      INTEGER NOT NULL
   ) STRICT, WITHOUT ROWID;
   `,
+  // v7: passwordless passkey login (ADR 0017). The challenge is issued before anyone is
+  // identified, so it has no user: a table of its own rather than a nullable user_id that
+  // every query on webauthn_challenges would then have to remember to exclude.
+  `
+  CREATE TABLE webauthn_login_challenges (
+    challenge_hash  TEXT PRIMARY KEY,
+    expires_at      INTEGER NOT NULL
+  ) STRICT, WITHOUT ROWID;
+  CREATE INDEX webauthn_login_challenges_expiry ON webauthn_login_challenges(expires_at);
+  `,
 ];
 
 export type Database = DatabaseSync;

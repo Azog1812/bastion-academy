@@ -6,7 +6,9 @@ import {
   passkeyLoginOptions,
   isLoggedIn,
   login,
+  loginWithPasskey,
   logout,
+  passwordlessOptions,
   register,
   restoreSession,
   type Completion,
@@ -21,7 +23,7 @@ import { environmentPanel } from './environments.js';
 import { h, renderBlocks } from './dom.js';
 import { parseMarkdown } from './markdown.js';
 import { alert, errorMessage, onSubmit, show } from './ui.js';
-import { getAssertion, passkeysSupported, webauthnMessage, type RequestOptions } from './passkeys.js';
+import { getAssertion, getDiscoverableAssertion, passkeysSupported, webauthnMessage, type RequestOptions } from './passkeys.js';
 
 /**
  * Single-page app with hash routes (#/, #/connexion, #/lecon/<id>): the
@@ -101,6 +103,31 @@ function passkeyButton(mfaToken: string, status: HTMLElement): HTMLElement {
   return b;
 }
 
+/** Passwordless (ADR 0017): no e-mail, no password; the passkey checks a PIN or biometric itself. */
+function passwordlessButton(status: HTMLElement): HTMLElement {
+  const b = h('button', { type: 'button', class: 'secondary' }, 'Se connecter avec une passkey');
+  b.addEventListener('click', () => {
+    b.disabled = true;
+    status.replaceChildren();
+    void (async () => {
+      try {
+        const assertion = await getDiscoverableAssertion(await passwordlessOptions<RequestOptions>());
+        if (!assertion) {
+          status.replaceChildren(alert('Cette passkey ne sert que de second facteur : connecte-toi avec ton mot de passe.'));
+          return;
+        }
+        await loginWithPasskey(assertion);
+        location.hash = '#/';
+      } catch (err) {
+        status.replaceChildren(alert(webauthnMessage(err) ?? errorMessage(err)));
+      } finally {
+        b.disabled = false;
+      }
+    })();
+  });
+  return b;
+}
+
 const afterLogin = (step: LoginStep): void => {
   if (step.done) location.hash = '#/';
   else mfaView(step.mfaToken);
@@ -130,6 +157,7 @@ function authView(mode: 'login' | 'register'): void {
       : null,
     status,
     submit,
+    mode === 'login' && passkeysSupported() ? passwordlessButton(status) : null,
     h(
       'p',
       { class: 'hint' },

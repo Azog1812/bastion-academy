@@ -37,7 +37,7 @@ explain the *why* (threat, standard, trade-off), not only the *what*.
 npm ci --ignore-scripts      # never run install scripts
 npm run lint                 # ESLint strictTypeChecked + security plugin + custom SQL rules
 npm run typecheck            # tsc strict, noUncheckedIndexedAccess, exactOptionalPropertyTypes
-npm test                     # vitest (335 tests)
+npm test                     # vitest (386 tests)
 npm run test:coverage        # thresholds: lines/statements/functions 90 %, branches 80 %
 npm run check                # lint + typecheck + coverage
 npm run build && node dist/cli.js gen-secrets > .env   # local secrets (gitignored)
@@ -78,9 +78,13 @@ src/
   crypto/webauthn.ts     WebAuthn RP checks (origin, RP ID, challenge, UP, signature, counter) on
                          node:crypto; crypto/cbor.ts: strict bounded CBOR decoder (ADR 0016)
   services/passkey-service  passkeys as a second factor: single-use challenges bound to user,
-                         purpose and MFA step; user_id-scoped queries; counter compare-and-set
+                         purpose and MFA step; user_id-scoped queries; counter compare-and-set;
+                         passwordless login (ADR 0017): user-less challenges (own table, global
+                         cap), user handle must own the credential, UV required
+  services/recovery.ts   operator-only account recovery (CLI recover-account): every factor and
+                         session removed, temporary password printed once
   security/              NIST 800-63B password policy + SecLists blocklist (generated file)
-  services/auth-service  register/login (→ tokens or MFA challenge)/completeMfa/refresh/logout/
+  services/auth-service  register/login (→ tokens or MFA challenge)/completeMfa/loginWithPasskey/refresh/logout/
                          logoutEverywhere/changePassword/confirmPassword/profile
   services/mfa-service   TOTP seed sealed under the KEK ring (sealSecret, AAD per user),
                          last_step compare-and-set (no replay), recovery codes, rotateKeys()
@@ -107,7 +111,7 @@ src/
                          fail closed (ADR 0006)
   http/middleware.ts     requestId, noStore, requireJson, authenticate, requireRole, errorHandler
   http/schemas.ts        all zod schemas are .strict() (mass-assignment protection)
-  http/routes.ts         /v1/auth/*, /v1/session/*, /v1/me*, /v1/me/mfa/*, /v1/me/passkeys*, /v1/notes*,
+  http/routes.ts         /v1/auth/* (incl. passkey[/options]), /v1/session/* (incl. passkey), /v1/me*, /v1/me/mfa/*, /v1/me/passkeys*, /v1/notes*,
                          /v1/curriculum, /v1/lessons/:id[/complete], /v1/challenges*,
                          /v1/challenges/:id/lab (POST start, DELETE stop), /v1/environments[/:id/start|stop],
                          /v1/scoreboard, /v1/admin/audit*
@@ -181,6 +185,10 @@ docs/  threat-model · security-controls (OWASP API Top 10 + ASVS 4.0.3) · secu
     and bound to user, purpose and MFA step; CBOR parsed by `crypto/cbor.ts` only (bounded);
     Ed25519/ES256/RS256 only; counter compare-and-set, a stale one refused and audited;
     removing the last second factor needs password + code; no new dependency for WebAuthn.
+    Passwordless (ADR 0017): user verification required, credential looked up by
+    `user_id = <user handle>` (never by credential id alone), one 401 for every failure,
+    failed assertions never feed the lockout, pending challenges capped. Account recovery
+    never bypasses a factor over HTTP: the only reset is the operator CLI.
 15. **Labs stay boxed** (ADR 0009). Only the lab runner holds the Docker socket; the
     platform and gateway never do. The runner takes a catalog lab id, a hex instance id,
     a flag and a bounded TTL, nothing else: image, command, mounts, ports and limits come
@@ -275,8 +283,8 @@ If a CI job is renamed, update the ruleset's required checks in the same change 
 ## Roadmap (suggested order, highest interview value first)
 
 1. ~~Base images pinned by digest~~ (done 29 Oct 2026).
-2. ~~**MFA**: TOTP~~ (done in v4, ADR 0008), ~~passkeys~~ (done 1 Nov 2026, ADR 0016). Next:
-   passwordless passkey login (discoverable credentials, account recovery design).
+2. ~~**MFA**: TOTP~~ (done in v4, ADR 0008), ~~passkeys~~ (done 1 Nov 2026, ADR 0016),
+   ~~passwordless passkey login + account recovery~~ (done 1 Nov 2026, ADR 0017).
 3. **External KMS for KEKs** (Vault Transit or a cloud KMS): only `wrapDek`/`unwrapDek` change;
    add a local Vault in docker-compose for demos.
 4. **PostgreSQL + Redis** (rate-limit store, multiple replicas) behind the same service layer;

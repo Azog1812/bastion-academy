@@ -99,6 +99,20 @@ docker compose --profile observability up -d   # Prometheus http://127.0.0.1:909
 3. Re-wrap old data keys and re-seal TOTP seeds: `node dist/cli.js rotate-keys` (note content is never decrypted).
 4. Remove `k1` from the ring. Deploy. Destroy `k1`.
 
+## A learner lost the password and every second factor (ADR 0017)
+
+Check who is asking first: this removes the account's protection, so it is exactly what a
+social engineer asks for. Then, on the host:
+
+```bash
+node dist/cli.js recover-account <email>
+```
+
+Every passkey, the TOTP seed, recovery codes and sessions are removed; a temporary password
+is printed once (never logged). Hand it over out of band; the learner changes it and
+enrols factors again. The audit entry `admin.account_recovery` raises Wazuh rule 100206.
+A learner who still has the password and a code, or another passkey, does not need this.
+
 ## Rotating the JWT key
 Replace `JWT_SECRET` and redeploy. Every access token becomes invalid (users refresh
 transparently; refresh tokens are not JWTs and stay valid).

@@ -3,6 +3,7 @@ import type { AuditLog } from '../audit.js';
 import {
   CloneWarning,
   COSE_ALGS,
+  UserVerificationRequired,
   verifyAssertion,
   verifyRegistration,
   WebAuthnError,
@@ -10,7 +11,7 @@ import {
   type RelyingParty,
 } from '../crypto/webauthn.js';
 import type { Database } from '../db.js';
-import { badRequest, conflict, notFound } from '../errors.js';
+import { badRequest, conflict, notFound, unavailable } from '../errors.js';
 
 /** What the page passes back from navigator.credentials.create() / .get(), base64url-encoded. */
 export interface RegistrationResponse {
@@ -21,9 +22,24 @@ export interface AssertionResponse {
   id: string;
   response: { clientDataJSON: string; authenticatorData: string; signature: string };
 }
+/** Passwordless login: the authenticator also says whose credential it is (the user handle). */
+export interface DiscoverableAssertionResponse {
+  id: string;
+  response: AssertionResponse['response'] & { userHandle: string };
+}
+
+/** Why a passwordless login failed: audited, never shown (the client gets one message). */
+export type PasswordlessFailure = 'challenge' | 'user_handle' | 'unknown_credential' | 'user_verification' | 'assertion' | 'clone' | 'race';
 
 const CHALLENGE_TTL_MS = 5 * 60 * 1000;
 const MAX_PASSKEYS = 10;
+/**
+ * Passwordless challenges are handed out before anyone is identified, so the per-address
+ * rate limit is the only per-client brake. This global cap bounds what a botnet spread
+ * over many addresses can make the database hold (5 minutes of challenges).
+ */
+const MAX_PENDING_LOGIN_CHALLENGES = 10_000;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 const sha256 = (data: Uint8Array | string) => createHash('sha256').update(data).digest('hex');
 const b64u = (b: Uint8Array) => Buffer.from(b).toString('base64url');
@@ -191,6 +207,64 @@ export class PasskeyService {
         return false;
       }
       if (err instanceof WebAuthnError) return false;
+      throw err;
+    }
+  }
+
+  /**
+   * Options for a passwordless login (ADR 0017): no account is named, so allowCredentials
+   * is empty and the authenticator offers the discoverable passkeys it holds for this RP
+   * ID. Nothing here depends on an e-mail address: there is nothing to enumerate.
+   */
+  passwordlessOptions() {
+    const now = this.now();
+    this.db.prepare('DELETE FROM webauthn_login_challenges WHERE expires_at <= ?').run(now);
+    const { n } = this.db.prepare('SELECT COUNT(*) AS n FROM webauthn_login_challenges').get() as { n: number };
+    if (n >= MAX_PENDING_LOGIN_CHALLENGES) throw unavailable('Too many passkey sign-ins in progress, try again in a minute');
+    const challenge = randomBytes(32);
+    this.db.prepare('INSERT INTO webauthn_login_challenges (challenge_hash, expires_at) VALUES (?, ?)').run(sha256(challenge), now + CHALLENGE_TTL_MS);
+    return { challenge: b64u(challenge), rpId: this.rp.id, timeout: CHALLENGE_TTL_MS, userVerification: 'required', allowCredentials: [] };
+  }
+
+  /**
+   * Verifies a passwordless assertion. The user handle names the account (W3C §7.2: the
+   * credential must belong to it), and the lookup is scoped by that user id, so a valid
+   * key of account A presented with B's handle finds nothing. User verification is
+   * required: the passkey is the only factor here.
+   */
+  verifyPasswordless(cred: DiscoverableAssertionResponse): { userId: string } | { reason: PasswordlessFailure; userId?: string; passkeyId?: string } {
+    const clientDataJSON = fromB64u(cred.response.clientDataJSON);
+    const challenge = claimedChallenge(clientDataJSON);
+    // Consumed whatever happens next: a challenge never answers twice.
+    const taken = this.db
+      .prepare('DELETE FROM webauthn_login_challenges WHERE challenge_hash = ? RETURNING expires_at')
+      .get(sha256(challenge)) as { expires_at: number } | undefined;
+    if (!taken || taken.expires_at <= this.now()) return { reason: 'challenge' };
+
+    const userId = fromB64u(cred.response.userHandle).toString('utf8');
+    if (!UUID.test(userId)) return { reason: 'user_handle' };
+    const row = this.db
+      .prepare('SELECT id, public_key, alg, sign_count FROM passkeys WHERE user_id = ? AND credential_id = ?')
+      .get(userId, fromB64u(cred.id)) as PasskeyRow | undefined;
+    if (!row || !(COSE_ALGS as readonly number[]).includes(row.alg)) return { reason: 'unknown_credential' };
+    try {
+      const { signCount } = verifyAssertion(
+        this.rp,
+        challenge,
+        { publicKey: row.public_key, alg: row.alg as CoseAlg, signCount: row.sign_count },
+        clientDataJSON,
+        fromB64u(cred.response.authenticatorData),
+        fromB64u(cred.response.signature),
+        true,
+      );
+      const updated = this.db
+        .prepare('UPDATE passkeys SET sign_count = ?, last_used_at = ? WHERE id = ? AND user_id = ? AND sign_count = ?')
+        .run(signCount, this.now(), row.id, userId, row.sign_count);
+      return Number(updated.changes) === 1 ? { userId } : { reason: 'race', userId, passkeyId: row.id };
+    } catch (err) {
+      if (err instanceof CloneWarning) return { reason: 'clone', userId, passkeyId: row.id };
+      if (err instanceof UserVerificationRequired) return { reason: 'user_verification', userId, passkeyId: row.id };
+      if (err instanceof WebAuthnError) return { reason: 'assertion', userId, passkeyId: row.id };
       throw err;
     }
   }

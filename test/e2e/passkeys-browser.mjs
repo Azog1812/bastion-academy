@@ -116,6 +116,13 @@ try {
   await waitFor(`location.hash === '#/' && document.body.innerText.includes('Compte')`, 'the catalogue after the passkey');
   const signCount = (await send('WebAuthn.getCredentials', { authenticatorId }, s)).credentials[0].signCount;
   step(`logged in with the passkey (authenticator counter now ${signCount})`);
+
+  // Passwordless (ADR 0017): no e-mail, no password; the discoverable credential names the account.
+  await evaluate(`[...document.querySelectorAll('button')].find((b) => b.textContent === 'Déconnexion').click()`);
+  await waitFor(`[...document.querySelectorAll('button')].some((b) => b.textContent === 'Se connecter avec une passkey')`, 'the passwordless button');
+  await evaluate(`[...document.querySelectorAll('button')].find((b) => b.textContent === 'Se connecter avec une passkey').click()`);
+  await waitFor(`location.hash === '#/' && document.body.innerText.includes('Compte')`, 'the catalogue after a passwordless login');
+  step('logged in without e-mail or password: the passkey alone, with user verification');
   process.stdout.write('OK: passkeys work end to end in a real browser\n');
 } catch (err) {
   process.stdout.write(`FAILED: ${err.message}\n`);

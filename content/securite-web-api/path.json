@@ -421,6 +421,17 @@
                 "Le port est différent"
               ],
               "answer": [0]
+            },
+            {
+              "id": "sans-mot-de-passe",
+              "prompt": "Pour se connecter avec une passkey seule, sans mot de passe, que vérifie Bastion en plus du second facteur classique ?",
+              "choices": [
+                "Le drapeau user verified : l'authentificateur a vérifié un PIN ou une biométrie",
+                "Que la clé appartient au compte désigné par le user handle",
+                "Que l'adresse e-mail saisie existe",
+                "Que l'échec compte dans le verrouillage du compte"
+              ],
+              "answer": [0, 1]
             }
           ]
         }

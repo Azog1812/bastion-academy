@@ -62,6 +62,42 @@ chaque longueur annoncée contre les octets restants **avant** d'allouer, et
 plafonne la profondeur et le nombre d'éléments. Un en-tête qui annonce 2⁶⁴ octets
 échoue immédiatement.
 
+## Se connecter sans mot de passe
+
+Une passkey peut aussi remplacer le mot de passe **et** le second facteur
+(ADR 0017). Le bouton « Se connecter avec une passkey » demande un défi qui ne
+nomme aucun compte : le navigateur propose les passkeys qu'il garde pour ce site,
+et l'authentificateur renvoie le *user handle*, l'identifiant de compte enregistré
+avec la clé. Trois règles rendent ce raccourci sûr :
+
+```ts
+// La clé doit appartenir au compte que le user handle désigne.
+.prepare('SELECT ... FROM passkeys WHERE user_id = ? AND credential_id = ?').get(userId, ...)
+// Seule, la passkey doit avoir vérifié un code PIN ou une biométrie.
+if (requireUserVerification && !(auth.flags & FLAG_UV)) throw new UserVerificationRequired(...)
+```
+
+- Ta clé valide présentée avec l'identifiant d'un autre compte ne trouve **rien**.
+- Le drapeau *user verified* (UV) est exigé : sans lui, une clé USB trouvée par
+  terre suffirait à entrer. Avec lui, la passkey réunit deux facteurs (ce que tu
+  possèdes, et ton PIN ou ton empreinte) : c'est ce que le NIST appelle un
+  authentificateur cryptographique multifacteur.
+- Chaque échec reçoit la même réponse, `Passkey not recognised`, et **ne compte pas**
+  comme un échec de connexion : le user handle vient de la requête, donc compter
+  donnerait à n'importe qui un bouton pour verrouiller n'importe quel compte.
+  Inversement, un compte verrouillé par quelqu'un qui devine le mot de passe
+  reste ouvert à sa passkey : une signature ne se devine pas.
+
+## La récupération de compte, le maillon faible
+
+Une connexion forte ne vaut que ce que vaut le chemin qui la contourne. Chez
+Bastion, une passkey perdue se remplace avec une autre passkey, ou avec le mot de
+passe **plus** un code TOTP ou un code de secours. Tout perdu ? Seul l'opérateur,
+sur la machine, peut réinitialiser le compte (`node dist/cli.js recover-account`) :
+tous les facteurs et toutes les sessions sont supprimés, y compris la passkey
+qu'un attaquant aurait pu ajouter. Jamais de lien par e-mail ni de question
+secrète : le compte serait alors aussi faible que la boîte mail.
+
 ## Ce que Bastion ne vérifie pas, exprès
 
 L'**attestation** (quel modèle d'authentificateur a créé la clé) n'est pas
@@ -75,8 +111,11 @@ administration peut, elle, exiger des authentificateurs certifiés.
    IP ne peut pas être un RP ID), page **Compte**, et ajoute une passkey.
 2. Déconnecte-toi, reconnecte-toi : après le mot de passe, choisis « Utiliser une
    passkey ».
-3. Lis `test/security/passkeys.test.ts` : chaque attaque de ces deux leçons y est
-   jouée par un authentificateur logiciel, et refusée.
+3. Déconnecte-toi encore et choisis « Se connecter avec une passkey », sans saisir
+   d'e-mail.
+4. Lis `test/security/passkeys.test.ts` et `test/security/passkey-login.test.ts` :
+   chaque attaque de ces deux leçons y est jouée par un authentificateur logiciel,
+   et refusée.
 
 ## À retenir
 

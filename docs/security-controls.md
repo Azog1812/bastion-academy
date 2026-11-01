@@ -43,6 +43,9 @@ Standards: **OWASP API Security Top 10 (2023)** and **OWASP ASVS 4.0.3** (Level 
 | 2.8.5 | Reuse of an OTP is logged and refused | Refused; failures audited as `auth.mfa:failure` and fed to the lockout |
 | 2.8.7 | OTP seeds protected | Sealed with AES-256-GCM under the KEK ring, AAD-bound to the user; re-sealed on key rotation |
 | 2.5.x / 2.6.x | Recovery codes | 10 × 80-bit, shown once, stored hashed, single use, each use audited |
+| 2.5.6 / 2.5.7 | Account recovery does not bypass factors | Lost passkeys: password + TOTP or recovery code. Everything lost: operator CLI `recover-account` on the host only (all factors and sessions removed, audited `admin.account_recovery`); no e-mail link, no questions, nothing over HTTP (ADR 0017) |
+| 2.9.x + NIST 800-63B §5.1.9 | Passkey as the only factor (passwordless) | Discoverable credential, `userVerification: required` and UV flag checked on the server (multi-factor cryptographic authenticator, AAL2); the user handle must own the credential, scoped `user_id` lookup (ADR 0017) |
+| 2.2.1 | Passwordless login is not a lockout or enumeration oracle | Options name no account; one 401 for every failure; failed assertions do not feed the lockout; pending challenges capped globally (10 000) |
 
 ### V3 Session management
 | ID | Requirement (summary) | How |
