@@ -1,5 +1,5 @@
 import type { AuditLog } from '../audit.js';
-import { openSecret, sealSecret, type KeyRing } from '../crypto/envelope.js';
+import { openSecret, rewrapSecret, sealSecret, type Kms } from '../crypto/envelope.js';
 import {
   base32Encode,
   generateRecoveryCodes,
@@ -39,7 +39,7 @@ const aad = (userId: string) => `bastion:totp-secret:v1:${userId}`;
 export class MfaService {
   constructor(
     private readonly db: Database,
-    private readonly ring: KeyRing,
+    private readonly kms: Kms,
     private readonly audit: AuditLog,
     private readonly issuer: string,
     private readonly now: () => number = Date.now,
@@ -90,11 +90,11 @@ export class MfaService {
   }
 
   /** Starts (or restarts) enrolment. The seed is returned once, for the authenticator app. */
-  setup(userId: string, account: string, ip: string | null): { secret: string; otpauthUri: string } {
+  async setup(userId: string, account: string, ip: string | null): Promise<{ secret: string; otpauthUri: string }> {
     if (this.isEnabled(userId)) throw conflict('Two-factor authentication is already enabled');
     const secret = generateTotpSecret();
     try {
-      const { keyId, blob } = sealSecret(this.ring, secret, aad(userId));
+      const { keyId, blob } = await sealSecret(this.kms, secret, aad(userId));
       this.db
         .prepare(
           `INSERT INTO user_mfa (user_id, key_id, secret, enabled_at, last_step, created_at) VALUES (?, ?, ?, NULL, 0, ?)
@@ -109,11 +109,11 @@ export class MfaService {
   }
 
   /** Confirms enrolment with a first valid code and returns the recovery codes (shown once). */
-  enable(userId: string, code: string, ip: string | null): string[] {
+  async enable(userId: string, code: string, ip: string | null): Promise<string[]> {
     const row = this.row(userId);
     if (!row) throw badRequest('Start the two-factor setup first');
     if (row.enabled_at !== null) throw conflict('Two-factor authentication is already enabled');
-    if (this.claimTotp(userId, row, code) === null) {
+    if ((await this.claimTotp(userId, row, code)) === null) {
       this.audit.record({ action: 'mfa.enable', outcome: 'failure', actorId: userId, ip });
       throw badRequest('Invalid code: check the time on your phone and try the next code');
     }
@@ -129,10 +129,10 @@ export class MfaService {
   }
 
   /** Checks a TOTP code or a recovery code, and consumes it. Recovery codes also stand in for passkeys. */
-  verify(userId: string, code: string, ip: string | null): SecondFactor | null {
+  async verify(userId: string, code: string, ip: string | null): Promise<SecondFactor | null> {
     const row = this.row(userId);
     const trimmed = code.trim();
-    if (/^\d{6}$/.test(trimmed)) return row && row.enabled_at !== null && this.claimTotp(userId, row, trimmed) !== null ? 'totp' : null;
+    if (/^\d{6}$/.test(trimmed)) return row && row.enabled_at !== null && (await this.claimTotp(userId, row, trimmed)) !== null ? 'totp' : null;
     if (!isRecoveryCodeFormat(trimmed) || !this.hasAnyFactor(userId)) return null;
 
     const used = this.db
@@ -153,34 +153,34 @@ export class MfaService {
     this.audit.record({ action: 'mfa.disable', outcome: 'success', actorId: userId, ip });
   }
 
-  /** Operator key rotation: re-seal every seed under the active KEK. */
-  rotateKeys(): number {
-    const rows = this.db.prepare('SELECT user_id, key_id, secret FROM user_mfa WHERE key_id != ?').all(this.ring.activeKeyId) as {
+  /** Operator key rotation: re-wrap every seed under the active KEK (inside Vault when it is Vault). */
+  async rotateKeys(): Promise<number> {
+    const rows = this.db.prepare('SELECT user_id, key_id, secret FROM user_mfa WHERE key_id != ?').all(await this.kms.activeKeyId()) as {
       user_id: string;
       key_id: string;
       secret: Uint8Array;
     }[];
+    let resealed = 0;
     for (const r of rows) {
-      const secret = openSecret(this.ring, r.key_id, Buffer.from(r.secret), aad(r.user_id));
-      try {
-        const { keyId, blob } = sealSecret(this.ring, secret, aad(r.user_id));
-        this.db.prepare('UPDATE user_mfa SET key_id = ?, secret = ? WHERE user_id = ?').run(keyId, blob, r.user_id);
-      } finally {
-        secret.fill(0);
-      }
+      const { keyId, wrapped } = await rewrapSecret(this.kms, r.key_id, Buffer.from(r.secret), aad(r.user_id));
+      // Compare-and-set: a seed replaced by a new setup during the rotation is left alone.
+      const updated = this.db.prepare('UPDATE user_mfa SET key_id = ?, secret = ? WHERE user_id = ? AND secret = ?').run(keyId, wrapped, r.user_id, r.secret);
+      resealed += Number(updated.changes);
     }
-    return rows.length;
+    return resealed;
   }
 
-  private claimTotp(userId: string, row: MfaRow, code: string): number | null {
-    const secret = openSecret(this.ring, row.key_id, Buffer.from(row.secret), aad(userId));
+  private async claimTotp(userId: string, row: MfaRow, code: string): Promise<number | null> {
+    const secret = await openSecret(this.kms, row.key_id, Buffer.from(row.secret), aad(userId));
     try {
       const step = verifyTotp(secret, code, this.now(), row.last_step);
       if (step === null) return null;
-      // Compare-and-set: if another request consumed this step (or a later one) first, this one loses.
+      // Compare-and-set (invariant 5): if another request consumed this step (or a later one)
+      // first, this one loses. The seed is compared too: the KMS call above is an await, and a
+      // new setup in the meantime must not let a code of the old seed confirm the new one.
       const claimed = this.db
-        .prepare('UPDATE user_mfa SET last_step = ? WHERE user_id = ? AND last_step < ?')
-        .run(step, userId, step);
+        .prepare('UPDATE user_mfa SET last_step = ? WHERE user_id = ? AND last_step < ? AND secret = ?')
+        .run(step, userId, step, row.secret);
       return Number(claimed.changes) === 1 ? step : null;
     } finally {
       secret.fill(0);

@@ -5,13 +5,26 @@ import { openDatabase } from './db.js';
 import { loadCurriculum } from './curriculum/catalog.js';
 import { createLogger } from './logger.js';
 import { metricsListener } from './http/metrics.js';
+import { kmsFromConfig } from './crypto/kms-config.js';
 
 const config = loadConfig();
 const logger = createLogger(config.LOG_LEVEL);
 const db = openDatabase(config.DATABASE_PATH);
 // Invalid content stops the boot, like invalid config: fail closed.
 const curriculum = loadCurriculum();
-const { app, services, metrics, siem } = createApp({ config, db, logger, curriculum });
+const { kms, vault } = kmsFromConfig(config);
+// Fail closed (ADR 0019): with Vault, refuse to serve until the key exists and is safe
+// (derived, not exportable, not deletable) and the token works. The orchestrator restarts us.
+if (vault) {
+  try {
+    const { latestVersion } = await vault.check();
+    logger.info({ kms: 'vault', key: config.VAULT_TRANSIT_KEY, version: latestVersion }, 'key service ready');
+  } catch (err) {
+    logger.fatal({ reason: err instanceof Error ? err.message : 'unknown' }, 'key service check failed, refusing to start');
+    process.exit(1);
+  }
+}
+const { app, services, metrics, siem } = createApp({ config, db, logger, curriculum, kms });
 
 // Expired labs are destroyed even if nobody comes back to stop them (the runner reaps on its own too).
 const labReaper = setInterval(() => {
@@ -28,7 +41,7 @@ labReaper.unref();
 
 const server = app.listen(config.PORT, config.HOST, () => {
   logger.info(
-    { port: config.PORT, keyId: config.ACTIVE_KEY_ID, lessons: curriculum.lessons.size, labs: config.LAB_RUNNER_URL ? 'on' : 'off' },
+    { port: config.PORT, kms: config.KMS_PROVIDER, keyId: config.ACTIVE_KEY_ID, lessons: curriculum.lessons.size, labs: config.LAB_RUNNER_URL ? 'on' : 'off' },
     'bastion listening',
   );
 });

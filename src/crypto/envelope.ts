@@ -1,12 +1,15 @@
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
+import { DecryptionError, type Kms } from './kms.js';
+
+export { DecryptionError, KmsUnavailable, type KeyRing, type Kms } from './kms.js';
 
 /**
  * Envelope encryption (the model used by AWS KMS, GCP KMS, Vault Transit):
  *
  *   - every note gets its own random 256-bit Data Encryption Key (DEK);
  *   - the note is encrypted with the DEK using AES-256-GCM (authenticated);
- *   - the DEK is itself encrypted ("wrapped") with a Key Encryption Key (KEK)
- *     taken from a versioned key ring.
+ *   - the DEK is itself encrypted ("wrapped") with a Key Encryption Key (KEK),
+ *     held by a KMS (kms.ts): the local key ring, or Vault Transit (ADR 0019).
  *
  * Why it matters:
  *   - a database dump alone reveals nothing (KEKs never touch the DB);
@@ -14,39 +17,29 @@ import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
  *   - the Additional Authenticated Data (AAD) binds each ciphertext to its
  *     note id and owner id: copying user A's ciphertext into user B's row,
  *     or swapping two rows, makes decryption fail instead of leaking data.
+ *     The DEK is bound to its note the same way, by the wrap context.
  */
 
 const ALGO = 'aes-256-gcm';
 const IV_LEN = 12; // 96-bit nonce, NIST SP 800-38D recommendation for GCM
 const TAG_LEN = 16;
-
-export interface KeyRing {
-  readonly keys: ReadonlyMap<string, Buffer>;
-  readonly activeKeyId: string;
-}
+const DEK_LEN = 32;
 
 export interface Sealed {
   keyId: string;
-  wrappedDek: Buffer; // iv || tag || encrypted DEK
+  wrappedDek: Buffer;
   iv: Buffer;
   tag: Buffer;
   ciphertext: Buffer;
 }
 
-export class DecryptionError extends Error {
-  constructor() {
-    super('Integrity check failed');
-    this.name = 'DecryptionError';
-  }
+export interface SealedNote extends Sealed {
+  noteId: string;
+  ownerId: string;
 }
 
-function contentAad(noteId: string, ownerId: string): Buffer {
-  return Buffer.from(`bastion:note-content:v1:${noteId}:${ownerId}`);
-}
-
-function dekAad(noteId: string, keyId: string): Buffer {
-  return Buffer.from(`bastion:note-dek:v1:${noteId}:${keyId}`);
-}
+const contentAad = (noteId: string, ownerId: string) => Buffer.from(`bastion:note-content:v1:${noteId}:${ownerId}`);
+const dekContext = (noteId: string) => `bastion:note-dek:v1:${noteId}`;
 
 function gcmEncrypt(key: Buffer, plaintext: Buffer, aad: Buffer) {
   const iv = randomBytes(IV_LEN);
@@ -68,70 +61,59 @@ function gcmDecrypt(key: Buffer, iv: Buffer, tag: Buffer, ciphertext: Buffer, aa
   }
 }
 
-function kek(ring: KeyRing, keyId: string): Buffer {
-  const key = ring.keys.get(keyId);
-  if (!key) throw new DecryptionError();
-  return key;
-}
-
-function wrapDek(ring: KeyRing, dek: Buffer, noteId: string): { keyId: string; wrappedDek: Buffer } {
-  const keyId = ring.activeKeyId;
-  const { iv, tag, ciphertext } = gcmEncrypt(kek(ring, keyId), dek, dekAad(noteId, keyId));
-  return { keyId, wrappedDek: Buffer.concat([iv, tag, ciphertext]) };
-}
-
-function unwrapDek(ring: KeyRing, keyId: string, wrapped: Buffer, noteId: string): Buffer {
-  if (wrapped.length !== IV_LEN + TAG_LEN + 32) throw new DecryptionError();
-  const iv = wrapped.subarray(0, IV_LEN);
-  const tag = wrapped.subarray(IV_LEN, IV_LEN + TAG_LEN);
-  const ct = wrapped.subarray(IV_LEN + TAG_LEN);
-  return gcmDecrypt(kek(ring, keyId), iv, tag, ct, dekAad(noteId, keyId));
-}
-
-export function seal(ring: KeyRing, plaintext: string, noteId: string, ownerId: string): Sealed {
-  const dek = randomBytes(32);
+export async function seal(kms: Kms, plaintext: string, noteId: string, ownerId: string): Promise<Sealed> {
+  const dek = randomBytes(DEK_LEN);
   try {
     const { iv, tag, ciphertext } = gcmEncrypt(dek, Buffer.from(plaintext, 'utf8'), contentAad(noteId, ownerId));
-    return { ...wrapDek(ring, dek, noteId), iv, tag, ciphertext };
+    const { keyId, wrapped } = await kms.wrap(dek, dekContext(noteId));
+    return { keyId, wrappedDek: wrapped, iv, tag, ciphertext };
   } finally {
     dek.fill(0); // best-effort: shorten the DEK's lifetime in memory
   }
 }
 
-export function open(ring: KeyRing, sealed: Sealed, noteId: string, ownerId: string): string {
-  const dek = unwrapDek(ring, sealed.keyId, sealed.wrappedDek, noteId);
+/** Opens a page of notes with one KMS round trip (Vault batch), all or nothing. */
+export async function openMany(kms: Kms, notes: readonly SealedNote[]): Promise<string[]> {
+  const deks = await kms.unwrap(notes.map((n) => ({ keyId: n.keyId, wrapped: n.wrappedDek, context: dekContext(n.noteId) })));
   try {
-    return gcmDecrypt(dek, sealed.iv, sealed.tag, sealed.ciphertext, contentAad(noteId, ownerId)).toString('utf8');
+    return notes.map((n, i) => {
+      const dek = deks[i];
+      if (dek?.length !== DEK_LEN) throw new DecryptionError();
+      return gcmDecrypt(dek, n.iv, n.tag, n.ciphertext, contentAad(n.noteId, n.ownerId)).toString('utf8');
+    });
   } finally {
-    dek.fill(0);
+    for (const d of deks) d.fill(0);
   }
+}
+
+export async function open(kms: Kms, sealed: Sealed, noteId: string, ownerId: string): Promise<string> {
+  const [plaintext] = await openMany(kms, [{ ...sealed, noteId, ownerId }]);
+  if (plaintext === undefined) throw new DecryptionError();
+  return plaintext;
 }
 
 /** Key rotation: re-wrap a DEK under the active KEK without touching the content. */
-export function rewrap(ring: KeyRing, keyId: string, wrappedDek: Buffer, noteId: string) {
-  const dek = unwrapDek(ring, keyId, wrappedDek, noteId);
-  try {
-    return wrapDek(ring, dek, noteId);
-  } finally {
-    dek.fill(0);
-  }
+export function rewrap(kms: Kms, keyId: string, wrappedDek: Buffer, noteId: string) {
+  return kms.rewrap({ keyId, wrapped: wrappedDek, context: dekContext(noteId) });
 }
 
 /**
- * Small account secrets (TOTP seeds) are sealed directly under the active KEK:
- * no per-item DEK is needed for 20 bytes, but the same rules hold. The AAD
- * names the purpose and the owner, so a sealed blob copied to another user's
- * row, or reused for another purpose, fails to open.
+ * Small account secrets (TOTP seeds) are wrapped directly by the KMS: no per-item DEK is
+ * needed for 20 bytes, but the same rules hold. The context names the purpose and the
+ * owner, so a sealed blob copied to another user's row, or reused for another purpose,
+ * fails to open.
  */
-export function sealSecret(ring: KeyRing, secret: Buffer, aad: string): { keyId: string; blob: Buffer } {
-  const keyId = ring.activeKeyId;
-  const { iv, tag, ciphertext } = gcmEncrypt(kek(ring, keyId), secret, Buffer.from(`${aad}:${keyId}`));
-  return { keyId, blob: Buffer.concat([iv, tag, ciphertext]) };
+export async function sealSecret(kms: Kms, secret: Buffer, aad: string): Promise<{ keyId: string; blob: Buffer }> {
+  const { keyId, wrapped } = await kms.wrap(secret, aad);
+  return { keyId, blob: wrapped };
 }
 
-export function openSecret(ring: KeyRing, keyId: string, blob: Buffer, aad: string): Buffer {
-  if (blob.length <= IV_LEN + TAG_LEN) throw new DecryptionError();
-  const iv = blob.subarray(0, IV_LEN);
-  const tag = blob.subarray(IV_LEN, IV_LEN + TAG_LEN);
-  return gcmDecrypt(kek(ring, keyId), iv, tag, blob.subarray(IV_LEN + TAG_LEN), Buffer.from(`${aad}:${keyId}`));
+export async function openSecret(kms: Kms, keyId: string, blob: Buffer, aad: string): Promise<Buffer> {
+  const [secret] = await kms.unwrap([{ keyId, wrapped: blob, context: aad }]);
+  if (!secret) throw new DecryptionError();
+  return secret;
+}
+
+export function rewrapSecret(kms: Kms, keyId: string, blob: Buffer, aad: string) {
+  return kms.rewrap({ keyId, wrapped: blob, context: aad });
 }

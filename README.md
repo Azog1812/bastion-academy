@@ -293,6 +293,7 @@ flowchart LR
 | Threat | Control | Proven by |
 |---|---|---|
 | Database dump / leaked backup | **Envelope encryption**: one AES-256-GCM key per note, wrapped by a rotating KEK that never touches the DB | [`envelope.test.ts`](test/unit/envelope.test.ts) |
+| Database *and* the platform's secrets stolen | **KEKs in Vault Transit** (optional overlay): the KEK never leaves Vault, a derived key per note, AppRole with 1-hour tokens, a policy that forbids export and deletion, rotation inside Vault ([ADR 0019](docs/adr/0019-vault-transit-kms.md)) | [`kms-vault.test.ts`](test/security/kms-vault.test.ts), [`test/vault-real`](test/vault-real/run.sh) |
 | Ciphertext swapped between users by a DB-level attacker | Owner id and note id bound in the **AAD** → decryption fails | [`authorization.test.ts`](test/security/authorization.test.ts) |
 | IDOR / BOLA (OWASP API #1) | Owner id inside every SQL query; foreign and missing notes are indistinguishable (404); probing is audited | [`authorization.test.ts`](test/security/authorization.test.ts) |
 | Brute force & credential stuffing | Per-IP rate limit, **progressive lockout** with atomic counters, breached-password blocklist | [`authentication.test.ts`](test/security/authentication.test.ts) |
@@ -376,7 +377,7 @@ Or run the whole battery: `npm test`. With Docker: `docker compose up --build`
 ```
 src/
   config.ts            fail-closed configuration (zod), secrets from files
-  crypto/              envelope encryption · scrypt · JWT + refresh tokens · TOTP · WebAuthn + CBOR
+  crypto/              envelope encryption · KMS (local ring / Vault Transit) · scrypt · JWT + refresh tokens · TOTP · WebAuthn + CBOR
   services/            auth (lockout, rotation, revocation) · notes (owner-scoped) ·
                        learning (progress, server-side gating) · mfa ·
                        challenges (per-learner flags, scoreboard)
@@ -410,7 +411,7 @@ dependencies, single replica) and how to move to PostgreSQL. Known, accepted ris
 (registration enumeration, lockout-as-DoS, HS256…) are listed in the
 [threat model](docs/threat-model.md#5-accepted-risks) rather than hidden.
 
-**Roadmap:** passwordless passkey login · external KMS (Vault Transit) for KEKs · PostgreSQL +
+**Roadmap:** passwordless passkey login · PostgreSQL +
 Redis for horizontal scaling · signed commits.
 
 ## Security

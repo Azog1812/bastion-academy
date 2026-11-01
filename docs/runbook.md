@@ -82,11 +82,40 @@ docker compose --profile observability up -d   # Prometheus on http://127.0.0.1:
   the platform and Prometheus together.
 
 ## Rotating the encryption key (KEK)
+**With Vault** (ADR 0019): `node dist/cli.js rotate-keys` adds a new Transit key version and
+has Vault re-wrap every DEK and TOTP seed (no DEK leaves Vault). Old versions still decrypt;
+retiring them (`min_decryption_version`) needs an admin token, never Bastion's.
+
+**With the local ring:**
 1. Generate a new key: `openssl rand -base64 32`.
 2. Add it to the ring and make it active: `ENCRYPTION_KEYS=k1:<old>,k2:<new>`, `ACTIVE_KEY_ID=k2`. Deploy.
    New notes now use `k2`; old notes still open with `k1`.
 3. Re-wrap old data keys and re-seal TOTP seeds: `node dist/cli.js rotate-keys` (note content is never decrypted).
 4. Remove `k1` from the ring. Deploy. Destroy `k1`.
+
+## Vault (ADR 0019)
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.vault.yml up -d
+docker compose -f docker-compose.yml -f docker-compose.vault.yml exec bastion /nodejs/bin/node dist/cli.js rotate-keys
+```
+
+- **First start**: `vault-init` initialises Vault, creates the Transit key (derived, not
+  exportable, not deletable), the `bastion` policy and AppRole, then revokes the root token.
+  Its log ends with `root token revoked`. Later starts only unseal.
+- **Moving an existing install**: keep `ENCRYPTION_KEYS`/`ACTIVE_KEY_ID` in `.env`, start
+  with the overlay, run `rotate-keys` once (every row goes under `vault:bastion-kek:vN`),
+  then remove the ring from `.env` and restart.
+- **Notes answer 503** ("key service unavailable"): Vault is sealed or down. Check the
+  `vault` service; after a Vault restart, `up -d` runs `vault-init` again, which unseals.
+  This is not tampering: `BastionCiphertextTampering` stays quiet.
+- **The platform refuses to start** with `key service check failed`: the Transit key is
+  missing or unsafe (exportable, deletable, not derived), or the AppRole login fails. The
+  message names the property.
+- **Who used the key**: Vault's audit log is its container log (`logs vault`), one line per
+  request, secrets HMAC-ed.
+- **Lost `vault-keys` volume**: the unseal key is gone and Vault cannot be opened. Back it
+  up like the database, separately from it.
 
 ## Rotating the JWT key
 Replace `JWT_SECRET` and redeploy. Every access token becomes invalid (users refresh

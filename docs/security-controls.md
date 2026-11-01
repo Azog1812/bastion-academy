@@ -41,7 +41,7 @@ Standards: **OWASP API Security Top 10 (2023)** and **OWASP ASVS 4.0.3** (Level 
 | 2.8.3 | Approved algorithms for OTP | HOTP/TOTP RFC 4226/6238, HMAC-SHA1 (keyed; SHA-1 collisions do not apply), checked against RFC test vectors |
 | 2.8.4 | A time-based OTP can be used only once in its validity period | Last accepted step stored, compare-and-set update |
 | 2.8.5 | Reuse of an OTP is logged and refused | Refused; failures audited as `auth.mfa:failure` and fed to the lockout |
-| 2.8.7 | OTP seeds protected | Sealed with AES-256-GCM under the KEK ring, AAD-bound to the user; re-sealed on key rotation |
+| 2.8.7 | OTP seeds protected | Sealed with AES-256-GCM under the KEK ring (or wrapped by Vault Transit), bound to the user; re-sealed on key rotation |
 | 2.5.x / 2.6.x | Recovery codes | 10 × 80-bit, shown once, stored hashed, single use, each use audited |
 
 ### V3 Session management
@@ -83,8 +83,10 @@ Standards: **OWASP API Security Top 10 (2023)** and **OWASP ASVS 4.0.3** (Level 
 | 6.2.5 | No insecure modes (ECB, unauthenticated CBC) | GCM only; Semgrep `bastion-weak-crypto` |
 | 6.2.6 | Nonces unique | 96-bit random IV per encryption, fresh DEK per record |
 | 6.3.1 | CSPRNG for random values | `crypto.randomBytes` / `randomUUID`; Semgrep bans `Math.random` |
-| 6.4.1 | Key management, keys isolated from data | KEKs in secret store, never in DB |
-| 6.4.2 | Key rotation without re-encrypting data | `rotate-keys` re-wraps DEKs and re-seals TOTP seeds |
+| 6.4.1 | Key management, keys isolated from data | KEKs in secret store, never in DB; or in Vault Transit, never in the platform (ADR 0019) |
+| 6.4.2 | Key rotation without re-encrypting data | `rotate-keys` re-wraps DEKs and re-seals TOTP seeds; with Vault, a new key version and `rewrap` inside Vault (no DEK leaves it) |
+| 6.4.x / NIST SP 800-57 | KEK protected by a key management system, least privilege, auditable use | Vault policy: encrypt/decrypt/rewrap on one key only, no export/backup/config/delete (checked on the real Vault); AppRole with 1-hour tokens; Vault audit device logs every use; boot refuses an exportable or deletable key |
+| 6.2.1 | A KMS outage does not look like tampering | `KmsUnavailable` → 503 + `Retry-After`; `DecryptionError` alone feeds the integrity alert |
 | 6.4.x | Key separation | One key per purpose: JWT, audit chain, flags, KEK ring; HMAC inputs domain-separated (`bastion:<purpose>:v1:`) |
 
 ### V7 Errors and logging

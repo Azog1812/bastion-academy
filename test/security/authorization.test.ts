@@ -135,13 +135,14 @@ describe('data at rest', () => {
     const { alice, noteId } = await aliceWithNote(t);
     const { randomBytes } = await import('node:crypto');
     const { NoteService } = await import('../../src/services/note-service.js');
-    const ring = { keys: new Map([...t.config.ENCRYPTION_KEYS, ['k2', randomBytes(32)]]), activeKeyId: 'k2' };
-    expect(new NoteService(t.db, ring, t.services.audit).rotateKeys()).toEqual({ rewrapped: 1 });
+    const { LocalKms } = await import('../../src/crypto/kms.js');
+    const ring = new LocalKms({ keys: new Map([...(t.config.ENCRYPTION_KEYS ?? []), ['k2', randomBytes(32)]]), activeKeyId: 'k2' });
+    expect(await new NoteService(t.db, ring, t.services.audit).rotateKeys()).toEqual({ rewrapped: 1 });
     const row = t.db.prepare('SELECT key_id FROM notes WHERE id = ?').get(noteId) as { key_id: string };
     expect(row.key_id).toBe('k2');
     // The running app (k1 only) can no longer open it: proof the DEK really moved to k2.
     await t.http.get(`/v1/notes/${noteId}`).set(alice.auth).expect(500);
-    expect(new NoteService(t.db, ring, t.services.audit).get(alice.id, noteId, null).body).toBe("alice's secret");
+    expect((await new NoteService(t.db, ring, t.services.audit).get(alice.id, noteId, null)).body).toBe("alice's secret");
   });
 });
 

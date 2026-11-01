@@ -11,7 +11,7 @@ changes (the PR template asks for it).
 | Note contents | Users' private data — the core confidentiality promise | `notes.ciphertext` (AES-256-GCM) |
 | Credentials | Account takeover | `users.password_hash` (scrypt) |
 | Refresh tokens | Long-lived session (7 days) | `refresh_tokens.token_hash` (SHA-256 only); in browsers, an HttpOnly `__Host-` cookie |
-| Key ring (KEKs) | Decrypts every note | Secret store → mounted file, never in the DB |
+| Key ring (KEKs) | Decrypts every note | Secret store → mounted file, never in the DB; with Vault (ADR 0019) the KEK never leaves Vault, the platform holds only AppRole credentials and 1-hour tokens |
 | JWT signing key | Forge any identity, including admin | Secret store → mounted file |
 | Audit HMAC key | Forge or hide audit history | Secret store → mounted file |
 | Flag HMAC key | Compute every learner's flags (forge scores only) | Secret store → mounted file |
@@ -110,6 +110,8 @@ browser ─► lab-gateway :8088 ──(per-instance internal network)──► 
 | **I**nformation disclosure | Scoreboard | Learner enumeration or e-mail harvesting | Opt-in pseudonyms only; response carries pseudonym + score, no id or e-mail; a shared flag gets the same answer as a wrong one (no oracle on other accounts) | `challenges.test.ts` › scoreboard |
 | **I**nformation disclosure | Accounts | User enumeration via login messages or timing | Identical 401 for unknown user / bad password / locked; dummy scrypt hash for unknown users | `authentication.test.ts` › enumeration |
 | **I**nformation disclosure | Database dump | Backup or snapshot leaks | Envelope encryption: KEKs never stored with data; refresh tokens stored as hashes | `authorization.test.ts` › raw dump |
+| **I**nformation disclosure | Database *and* platform files (host backup, container escape, leaked `.env`) | Offline decryption of every note with the KEKs from the environment | With Vault (ADR 0019): KEKs stay in Vault, unwrapping needs a live AppRole login (revocable, logged by Vault's audit device); the policy forbids export, backup, key config and deletion; boot refuses an exportable or deletable key | `kms-vault.test.ts`, `test/vault-real/run.sh` |
+| **T**ampering / **D**enial of service | Vault Transit | A DEK moved to another note; a row pointing at another key version; a redirect stealing the token; Vault sealed or down | Derived key per note context; key id must match the ciphertext's version; no redirects, 5-s timeout; outage → 503, never the tampering alert; one batch call per page | `kms-vault.test.ts` |
 | **I**nformation disclosure | Errors & logs | Stack traces, SQL, secrets in logs | Central error handler with generic messages; logger-level redaction of secrets | `input-and-transport.test.ts` |
 | **I**nformation disclosure | Secrets in env | `/proc/<pid>/environ`, crash dumps | Secrets mounted as read-only files (`*_FILE`), mode 0400 | `config-and-audit.test.ts` |
 | **D**enial of service | API | Request floods | Global + per-route rate limits | `authentication.test.ts` › rate limit |
@@ -188,6 +190,8 @@ capability set is zero).
 | Wazuh reads only future lines (`only-future-events`): what is written while it is stopped never becomes an alert | The database keeps every entry and `seq` shows the gap; a local SIEM that sleeps by design (ADR 0013) | Hosting: an always-on SIEM, or a reader that resumes from the last `seq` |
 | One shared Wazuh per installation: any learner with the module can stop it while another uses it | Local install, one learner in practice; every start and stop is audited with the actor. | Hosting: leases or one tenant-scoped Wazuh per class |
 | The Wazuh manager keeps its default capabilities (s6 starts as root and drops to the `wazuh` user) | Upstream image design; no-new-privileges, an `internal` network with no route out, no published port and a memory cap remain. | A rootless upstream image, or a per-capability allow-list once tested |
+| The Vault unseal key sits in a volume on the same host as the data (local Vault, ADR 0019) | Local install: the learner is the operator; the volume is mounted by the setup job only, and the root token is revoked after setup | Hosting: auto-unseal through a cloud KMS or an HSM |
+| Bastion ↔ Vault in plain http on the internal `kms` network | Single-host network with no route out, as for the lab runner; config refuses http to anything but a container name in production | Hosting: TLS on Vault's listener, `VAULT_ADDR=https://` |
 | Scoreboard computed over all users on each request | Fine at local-install scale; one indexed aggregate query. | Hosting with many learners → cache or materialised scores |
 | Unfixed OS CVEs in the base images (mostly glibc, libstdc++, zlib; medium/low) | No upstream patch exists. Distroless removes the shell and tools most exploits need, the container runs non-root on a read-only FS with no egress, and Trivy only raises alerts for fixable CVEs (full list in the SBOM). | A fix is published: the digest-pinned base image is bumped by Dependabot and Trivy flags it |
 | Single-maintainer project: PRs are not reviewed by a second person (Scorecard *Code-Review*) | Every change still goes through a PR with 11 required CI checks (ruleset `protect-main`). | A second maintainer joins |

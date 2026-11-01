@@ -47,6 +47,8 @@ semgrep scan --config .semgrep/ --metrics=off --error src
 docker compose --profile labs build   # lab images (v5), once
 docker compose up --build    # platform + lab runner + lab gateway, same hardening as prod
 docker compose --profile observability up -d   # + Prometheus on 127.0.0.1:9090 (ADR 0011)
+docker compose -f docker-compose.yml -f docker-compose.vault.yml up -d   # KEKs in Vault Transit (ADR 0019)
+test/vault-real/run.sh       # real Vault: ring → Vault migration, rotation, policy denials, sealed → 503
 docker compose --profile wazuh up -d   # once: real Wazuh (~4 GiB), then started/stopped from the UI (ADR 0013)
 test/wazuh-real/run.sh       # Wazuh challenges: Bastion's evaluator vs the real wazuh-logtest (Docker, offline)
 test/e2e/passkeys-browser.sh # passkeys in real Chromium (virtual authenticator); needs bastion:local + lab-xss-stored images
@@ -68,8 +70,11 @@ src/
                          AUDIT_ACTIONS is the closed list (also the metrics label set)
   metrics.ts             Prometheus text format on node: built-ins (counter, histogram, scrape-time
                          gauges), series cap, counters exported at 0 (ADR 0011)
-  crypto/envelope.ts     AES-256-GCM, per-note DEK wrapped by KEK from key ring; AAD binds
-                         content→(noteId, ownerId) and DEK→(noteId, keyId); rewrap() for rotation
+  crypto/envelope.ts     AES-256-GCM, per-note DEK wrapped by the KMS; AAD binds content→(noteId,
+                         ownerId), the wrap context binds DEK→noteId; openMany() = one KMS call per page
+  crypto/kms.ts          Kms interface (ADR 0019): LocalKms (key ring, byte-compatible with v2 rows),
+                         VaultTransitKms (fetch, derived key, AppRole, no redirects, batch, boot check),
+                         CompositeKms (wrap with active, unwrap by key id: migration); kms-config.ts
   crypto/password.ts     scrypt N=2^17 r=8 p=1, self-describing format, needsRehash, dummy hash
   crypto/tokens.ts       JWT HS256 (typ at+jwt, alg allow-list, iss/aud/exp/jti), opaque refresh
                          tokens stored as SHA-256
@@ -130,7 +135,7 @@ deploy/prometheus (scrape config, alerts.yml, alerts.test.yml for promtool),
 deploy/wazuh (offline certs.sh, users.sh without demo accounts, indexer/manager/dashboard config,
              bastion_rules.xml: rules for Bastion's own audit log, ids 100200-100299)
 docs/  threat-model · security-controls (OWASP API Top 10 + ASVS 4.0.3) · security-pipeline ·
-       adr/0001-0016 · runbook · openapi.yaml (used by DAST)
+       adr/0001-0019 · runbook · openapi.yaml (used by DAST)
 ```
 
 ## Security invariants — never break these
@@ -150,7 +155,9 @@ docs/  threat-model · security-controls (OWASP API Top 10 + ASVS 4.0.3) · secu
    trusted from the JWT alone.
 7. **Errors never leak internals**: throw `HttpError` helpers from `errors.ts`; everything
    else becomes a generic 500 with `requestId`. `DecryptionError` stays generic.
-8. **Config fails closed**: never add an insecure default for a secret.
+8. **Config fails closed**: never add an insecure default for a secret. With Vault, the
+   platform refuses to start unless the Transit key is derived, not exportable, not
+   deletable; a KMS outage is `KmsUnavailable` (503), never `DecryptionError` (tampering).
 9. **No privilege escalation over HTTP**: admin promotion and key rotation are CLI-only.
 10. **Audit every security-relevant event** (`AuditAction` union in `audit.ts`). The SIEM
     copy (ADR 0015) is one `JSON.stringify` per line (no log injection), never the record,
@@ -271,8 +278,8 @@ If a CI job is renamed, update the ruleset's required checks in the same change 
 1. ~~Base images pinned by digest~~ (done 29 Oct 2026).
 2. ~~**MFA**: TOTP~~ (done in v4, ADR 0008), ~~passkeys~~ (done 1 Nov 2026, ADR 0016). Next:
    passwordless passkey login (discoverable credentials, account recovery design).
-3. **External KMS for KEKs** (Vault Transit or a cloud KMS): only `wrapDek`/`unwrapDek` change;
-   add a local Vault in docker-compose for demos.
+3. ~~**External KMS for KEKs**~~ (done 1 Nov 2026, ADR 0019: Vault Transit, docker-compose.vault.yml).
+   Next: auto-unseal and TLS for a hosted Vault, a cloud KMS implementation of `Kms`.
 4. **PostgreSQL + Redis** (rate-limit store, multiple replicas) behind the same service layer;
    use row-level security as a second IDOR barrier.
 5. ~~**Observability**: Prometheus metrics, alerting rules matching `docs/runbook.md`~~
