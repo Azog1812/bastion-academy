@@ -153,8 +153,7 @@ export class NoteService {
       .prepare('SELECT id, key_id, wrapped_dek FROM notes WHERE key_id != ?')
       .all(await this.kms.activeKeyId()) as unknown as Pick<NoteRow, 'id' | 'key_id' | 'wrapped_dek'>[];
     // Operator-only maintenance task (CLI), intentionally spans all owners.
-    // nosemgrep: bastion-note-query-without-owner
-    const stmt = this.db.prepare('UPDATE notes SET key_id = ?, wrapped_dek = ? WHERE id = ? AND key_id = ? AND wrapped_dek = ?');
+    const stmt = this.db.prepare('UPDATE notes SET key_id = ?, wrapped_dek = ? WHERE id = ? AND key_id = ? AND wrapped_dek = ?'); // nosemgrep: bastion-note-query-without-owner
     let rewrapped = 0;
     for (const r of rows) {
       const { keyId, wrapped } = await rewrap(this.kms, r.key_id, Buffer.from(r.wrapped_dek), r.id);
