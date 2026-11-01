@@ -21,6 +21,10 @@ export GRAFANA_ADMIN_PASSWORD=unused-here
 # The main file with the image under test and throwaway secrets; paths stay relative to the repository.
 sed -e "s|image: bastion:local|image: $APP_IMAGE|" -e "s|env_file: .env|env_file: $(host "$work")/e2e.env|" docker-compose.yml > "$work/compose.yml"
 node dist/cli.js gen-secrets > "$work/e2e.env"
+# The compose files interpolate some of them (METRICS_TOKEN...): no .env is read from the repo.
+set -a
+. "$work/e2e.env"
+set +a
 local_dc() { docker compose -p $P --project-directory . -f "$(host "$work/compose.yml")" "$@"; }
 vault_dc() { docker compose -p $P --project-directory . -f "$(host "$work/compose.yml")" -f docker-compose.vault.yml "$@"; }
 cleanup() { vault_dc down -v >/dev/null 2>&1 || true; rm -rf "$work"; }
@@ -38,7 +42,7 @@ field() { node -e 'const b=JSON.parse(require("fs").readFileSync(process.argv[1]
 sql() { vault_dc exec -T bastion /nodejs/bin/node -e "const {DatabaseSync}=require('node:sqlite');const db=new DatabaseSync('/data/bastion.db',{readOnly:true});console.log(JSON.stringify(db.prepare(process.argv[1]).all()))" "$1" 2>/dev/null; }
 
 # 1. Local ring.
-local_dc up -d --no-build bastion >/dev/null 2>&1
+local_dc up -d --no-build bastion >"$work/up.log" 2>&1 || { cat "$work/up.log"; fail "compose up (local ring)"; }
 wait_up
 api -X POST http://127.0.0.1:3000/v1/auth/register -d '{"email":"kms@example.test","password":"correct horse battery staple"}' >/dev/null
 [ "$(api -X POST http://127.0.0.1:3000/v1/auth/login -d '{"email":"kms@example.test","password":"correct horse battery staple"}')" = 200 ] || fail "login"
@@ -49,7 +53,7 @@ api -X POST http://127.0.0.1:3000/v1/me/mfa/setup -H "$AUTH" -d '{"password":"co
 ok "local ring: a note and a TOTP seed stored"
 
 # 2. Vault.
-vault_dc up -d --no-build bastion >/dev/null 2>&1
+vault_dc up -d --no-build bastion >"$work/up.log" 2>&1 || { cat "$work/up.log"; vault_dc logs vault-init; fail "compose up (Vault)"; }
 wait_up
 vault_dc logs vault-init 2>/dev/null | grep -q 'root token revoked' && ok "Vault initialised, root token revoked"
 [ "$(api http://127.0.0.1:3000/v1/notes/"$OLD" -H "$AUTH")" = 200 ] && [ "$(field body)" = "written under the local ring" ] || fail "old note after the switch"

@@ -42,7 +42,7 @@ export class FakeVault {
 
   private encrypt(plaintext: Buffer, context: Buffer, version = this.versions.length): string {
     const iv = randomBytes(12);
-    const c = createCipheriv('aes-256-gcm', this.derived(version, context), iv);
+    const c = createCipheriv('aes-256-gcm', this.derived(version, context), iv, { authTagLength: 16 });
     const ct = Buffer.concat([c.update(plaintext), c.final()]);
     return `vault:v${String(version)}:${Buffer.concat([iv, c.getAuthTag(), ct]).toString('base64')}`;
   }
@@ -51,7 +51,7 @@ export class FakeVault {
     const m = /^vault:v(\d+):(.+)$/.exec(ciphertext);
     if (!m) throw new Error('invalid ciphertext');
     const raw = Buffer.from(m[2] ?? '', 'base64');
-    const d = createDecipheriv('aes-256-gcm', this.derived(Number(m[1]), context), raw.subarray(0, 12));
+    const d = createDecipheriv('aes-256-gcm', this.derived(Number(m[1]), context), raw.subarray(0, 12), { authTagLength: 16 });
     d.setAuthTag(raw.subarray(12, 28));
     return Buffer.concat([d.update(raw.subarray(28)), d.final()]);
   }
