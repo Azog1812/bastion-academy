@@ -19,7 +19,8 @@ deuxième ligne. Bastion fait autrement : **le propriétaire fait partie de la
 requête elle-même** (`src/services/note-service.ts`) :
 
 ```ts
-const row = (await this.db.one('SELECT * FROM notes WHERE id = ? AND owner_id = ?', noteId, ownerId)) as NoteRow | undefined;
+const row = await this.as(ownerId, async (tx) =>
+  (await tx.one('SELECT * FROM notes WHERE id = ? AND owner_id = ?', noteId, ownerId)) as NoteRow | undefined);
 if (!row) throw notFound('Note not found'); // même réponse dans tous les cas
 ```
 
@@ -56,6 +57,31 @@ endpoints, Bastion ajoute une règle Semgrep (`.semgrep/bastion.yml`,
 `id` sans `owner_id` fait échouer la CI. La règle de sécurité est écrite dans
 le code, pas seulement dans la tête des développeurs.
 
+## Couche 5 : la base elle-même (PostgreSQL)
+
+Une règle Semgrep reconnaît une forme de requête ; un bug plus tordu peut lui
+échapper. Avec PostgreSQL, Bastion ajoute la **row-level security** (ADR 0022) :
+une politique attachée à la table `notes` qui ne montre à l'API que les lignes de
+l'utilisateur pour lequel elle agit.
+
+```sql
+CREATE POLICY notes_owner ON notes TO bastion_app
+  USING (owner_id = current_setting('app.user_id', true));
+```
+
+`this.as(ownerId, …)` ouvre une transaction et y pose `app.user_id`. Une requête
+qui oublierait son `owner_id` ne verrait donc que les notes de Mallory, sur la
+requête de Mallory. Deux détails comptent :
+
+- l'API se connecte avec un rôle, `bastion_app`, qui **ne possède pas** la table
+  (le propriétaire passe outre la politique) et ne peut pas en devenir
+  propriétaire. Une première version se connectait en propriétaire puis
+  changeait de rôle : un test a montré qu'un `SET ROLE` injecté suffisait à
+  revenir en arrière, parce que PostgreSQL vérifie ce droit par rapport au
+  compte connecté ;
+- `app.user_id` ne vit que le temps de la transaction : une connexion du pool
+  ne peut pas transporter l'utilisateur d'une requête dans la suivante.
+
 ## Récapitulatif
 
 | Couche | Ce qu'elle garantit |
@@ -64,6 +90,7 @@ le code, pas seulement dans la tête des développeurs.
 | Même `404` + audit | L'attaquant n'apprend rien, le défenseur voit tout |
 | Test à deux comptes | La faille ne revient pas sur les routes existantes |
 | Règle Semgrep | Elle ne revient pas non plus sur les nouvelles routes |
+| Row-level security | Même une requête fautive ne voit que les lignes de l'utilisateur |
 
 C'est le principe de Bastion Academy : une faille n'est vraiment corrigée que
 si la correction est **prouvée** et **protégée contre la régression**.

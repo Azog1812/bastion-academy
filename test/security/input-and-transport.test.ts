@@ -140,7 +140,7 @@ describe('response hardening', () => {
     const t = setup();
     await t.http.get('/healthz').expect(200, { status: 'ok' });
     await t.http.get('/readyz').expect(200, { status: 'ready' });
-    await t.db.close();
+    await t.appDb.close();
     await t.http.get('/readyz').expect(503);
   });
 });

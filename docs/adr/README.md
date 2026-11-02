@@ -26,3 +26,4 @@ Format: context → decision → consequences.
 | [0019](0019-vault-transit-kms.md) | KEKs in Vault Transit: derived key per note, AppRole with 1-hour tokens, least-privilege policy, migration from the local ring |
 | [0020](0020-async-database-layer.md) | Asynchronous database layer: atomicity from the database (compare-and-set or one transaction), never from the event loop; race tests against a latency-injecting database |
 | [0021](0021-postgresql-backend.md) | PostgreSQL as a second engine (`pg`, pure JS): one SQL for both, SERIALIZABLE with retries, an advisory lock for the audit chain, verify-full TLS, the whole suite run against both |
+| [0022](0022-row-level-security.md) | Row-level security on notes as a second IDOR barrier; the API logs in as a role that owns nothing and cannot switch back; boot refuses a role that would skip it |

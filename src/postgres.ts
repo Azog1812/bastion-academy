@@ -166,7 +166,43 @@ const SCHEMA: readonly string[] = [
   );
   CREATE INDEX webauthn_login_challenges_expiry ON webauthn_login_challenges(expires_at);
   `,
+  // v2: row-level security on notes (ADR 0022), a second IDOR barrier under the owner_id
+  // that every note query already carries (invariant 2). The API logs in as bastion_app: it
+  // owns nothing (an owner skips RLS), cannot bypass RLS, changes rows but not the schema.
+  // Logs in, rather than switching to it with SET ROLE from the owner's login: PostgreSQL
+  // checks SET ROLE against the login user, so injected SQL could switch back.
+  `
+  DO $$ BEGIN
+    -- NOLOGIN until the operator gives it a password (compose: deploy/postgres/init-app-role.sh).
+    CREATE ROLE bastion_app NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;
+  EXCEPTION WHEN duplicate_object THEN NULL; -- one role per cluster, shared by every schema
+  END $$;
+  DO $$ BEGIN EXECUTE format('GRANT USAGE ON SCHEMA %I TO bastion_app', current_schema()); END $$;
+  GRANT SELECT ON schema_version TO bastion_app;
+  GRANT SELECT, INSERT, UPDATE, DELETE ON users, notes, refresh_tokens, lesson_progress, challenge_solves,
+    user_mfa, mfa_recovery_codes, mfa_challenges, lab_instances, module_choices, passkeys,
+    webauthn_challenges, webauthn_login_challenges TO bastion_app;
+  -- Append-only for the API itself, not only through the triggers it could no longer drop.
+  GRANT SELECT, INSERT ON audit_log TO bastion_app;
+
+  ALTER TABLE notes ENABLE ROW LEVEL SECURITY;
+  -- app.user_id is set per transaction (set_config(..., true)), never per connection: a pooled
+  -- connection cannot carry one request's user into the next. Unset, it is NULL or '' and
+  -- matches no row: a query without a user context sees nothing and writes nothing.
+  CREATE POLICY notes_owner ON notes TO bastion_app
+    USING (owner_id = current_setting('app.user_id', true))
+    WITH CHECK (owner_id = current_setting('app.user_id', true));
+
+  -- Whether a note exists, never what it holds: the audit log tells a probe of someone else's
+  -- note from a typo (authz.denied). Runs as the owner, with the search path fixed at creation.
+  CREATE FUNCTION note_exists(note_id TEXT) RETURNS BOOLEAN LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path FROM CURRENT AS $$ SELECT EXISTS (SELECT 1 FROM notes WHERE id = note_id) $$;
+  REVOKE EXECUTE ON FUNCTION note_exists(TEXT) FROM PUBLIC;
+  GRANT EXECUTE ON FUNCTION note_exists(TEXT) TO bastion_app;
+  `,
 ];
+
+
 
 /** Advisory lock keys, a closed set: the only locks the application takes. */
 const LOCKS = {
@@ -267,10 +303,11 @@ class PgDb implements Db {
   private readonly inside = new AsyncLocalStorage<PgDb>();
   private readonly ready: Promise<void>;
 
-  constructor(private readonly pool: pg.Pool, schema: string | undefined) {
-    this.ready = this.migrate(schema);
-    // Awaited by every operation; this only stops an unawaited failure from crashing the process.
-    this.ready.catch(() => undefined);
+  constructor(
+    private readonly pool: pg.Pool,
+    ready: Promise<void>,
+  ) {
+    this.ready = ready;
   }
 
   private async free(): Promise<void> {
@@ -319,6 +356,8 @@ class PgDb implements Db {
         } else {
           await client.query('BEGIN ISOLATION LEVEL SERIALIZABLE');
         }
+        // Row-level security reads it (ADR 0022); `true`: it ends with the transaction.
+        if (options.user !== undefined) await client.query("SELECT set_config('app.user_id', $1, true)", [options.user]);
         const result = await this.inside.run(this, () => fn(tx));
         tx.ended = true;
         await client.query('COMMIT');
@@ -348,35 +387,35 @@ class PgDb implements Db {
     await this.ready.catch(() => undefined);
     await this.pool.end();
   }
+}
 
-  /**
-   * Schema migrations, once per database: replicas that boot together wait on an advisory
-   * lock, and the first one migrates. The version lives in a table (no PRAGMA here).
-   */
-  private async migrate(schema: string | undefined): Promise<void> {
-    const client = await this.pool.connect();
-    try {
-      if (schema !== undefined) {
-        // An identifier cannot be bound; the name matched SCHEMA_NAME in openPostgres().
-        // eslint-disable-next-line no-restricted-syntax -- reviewed exception, validated identifier
-        await client.query(`CREATE SCHEMA IF NOT EXISTS ${schema}`); // nosemgrep: bastion-sql-interpolation
-      }
-      await client.query('BEGIN');
-      await client.query('SELECT pg_advisory_xact_lock($1)', [LOCKS.migrations]);
-      await client.query('CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)');
-      const row = (await client.query('SELECT version FROM schema_version')).rows[0] as { version: number } | undefined;
-      if (row === undefined) await client.query('INSERT INTO schema_version (version) VALUES (0)');
-      for (let v = row?.version ?? 0; v < SCHEMA.length; v++) {
-        await client.query(SCHEMA[v] as string);
-        await client.query('UPDATE schema_version SET version = $1', [v + 1]);
-      }
-      await client.query('COMMIT');
-    } catch (err) {
-      await client.query('ROLLBACK').catch(() => undefined);
-      throw err;
-    } finally {
-      client.release();
+/**
+ * Schema migrations, once per database: replicas that boot together wait on an advisory
+ * lock, and the first one migrates. The version lives in a table (no PRAGMA here).
+ */
+async function migrate(pool: pg.Pool, schema: string | undefined): Promise<void> {
+  const client = await pool.connect();
+  try {
+    if (schema !== undefined) {
+      // An identifier cannot be bound; the name matched SCHEMA_NAME in openPostgres().
+      // eslint-disable-next-line no-restricted-syntax -- reviewed exception, validated identifier
+      await client.query(`CREATE SCHEMA IF NOT EXISTS ${schema}`); // nosemgrep: bastion-sql-interpolation
     }
+    await client.query('BEGIN');
+    await client.query('SELECT pg_advisory_xact_lock($1)', [LOCKS.migrations]);
+    await client.query('CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)');
+    const row = (await client.query('SELECT version FROM schema_version')).rows[0] as { version: number } | undefined;
+    if (row === undefined) await client.query('INSERT INTO schema_version (version) VALUES (0)');
+    for (let v = row?.version ?? 0; v < SCHEMA.length; v++) {
+      await client.query(SCHEMA[v] as string);
+      await client.query('UPDATE schema_version SET version = $1', [v + 1]);
+    }
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => undefined);
+    throw err;
+  } finally {
+    client.release();
   }
 }
 
@@ -414,11 +453,11 @@ class PgTx implements Db {
 }
 
 /**
- * Opens a pool and starts migrating; the first query waits for the schema. Synchronous
- * so callers (and the test helpers) build a context without awaiting; `server.ts` runs a
- * query at boot so a wrong URL or password stops the process before it listens.
+ * Opens a pool; the first query waits for `after` (tests: the owner's migration) and, with
+ * `migrate`, for the schema migrations. Synchronous so callers (and the test helpers) build
+ * a context without awaiting.
  */
-export function openPostgres(url: string, options: PostgresOptions = {}): Db {
+export function openPostgres(url: string, options: PostgresOptions & { migrate?: boolean; after?: Promise<unknown> } = {}): Db {
   const { schema } = options;
   if (schema !== undefined && !SCHEMA_NAME.test(schema)) throw new Error('invalid schema name');
   const pool = new pg.Pool({
@@ -435,7 +474,28 @@ export function openPostgres(url: string, options: PostgresOptions = {}): Db {
     ...(schema !== undefined ? { options: `-c search_path=${schema}` } : {}),
   });
   pool.on('error', (err) => options.onIdleError?.(err));
-  return new PgDb(pool, schema);
+  const before = Promise.resolve(options.after);
+  const ready = options.migrate ? before.then(() => migrate(pool, schema)) : before.then(() => undefined);
+  // Awaited by every operation; this only stops an unawaited failure from crashing the process.
+  ready.catch(() => undefined);
+  return new PgDb(pool, ready);
+}
+
+/**
+ * Fail closed at boot (ADR 0022): the API refuses a role under which row-level security
+ * would not hold, a superuser, BYPASSRLS, the tables' owner or a member of the owner's role
+ * (SET ROLE back to it), and a schema the migration job has not brought up to date.
+ */
+export async function assertAppRole(db: Db): Promise<void> {
+  const row = (await db.one(
+    `SELECT r.rolsuper OR r.rolbypassrls OR pg_has_role(current_user, t.tableowner, 'MEMBER') AS privileged,
+            (SELECT version FROM schema_version) AS version
+       FROM pg_roles r, pg_tables t
+      WHERE r.rolname = current_user AND t.tablename = 'notes' AND t.schemaname = current_schema()`,
+  )) as { privileged: boolean; version: number } | undefined;
+  if (row === undefined) throw new Error('database schema missing: run the migration (node dist/cli.js migrate)');
+  if (row.privileged) throw new Error('DATABASE_URL logs in with a role that skips row-level security: use bastion_app, not the owner');
+  if (row.version !== SCHEMA.length) throw new Error(`database schema at version ${String(row.version)}, expected ${String(SCHEMA.length)}: run the migration`);
 }
 
 /** PostgreSQL error code for unique_violation. */

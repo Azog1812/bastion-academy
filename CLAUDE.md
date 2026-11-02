@@ -37,7 +37,7 @@ explain the *why* (threat, standard, trade-off), not only the *what*.
 npm ci --ignore-scripts      # never run install scripts
 npm run lint                 # ESLint strictTypeChecked + security plugin + custom SQL rules
 npm run typecheck            # tsc strict, noUncheckedIndexedAccess, exactOptionalPropertyTypes
-npm test                     # vitest (434 tests; TEST_DATABASE_URL=postgres://… runs them on PostgreSQL)
+npm test                     # vitest (441 tests; TEST_DATABASE_URL (owner) + TEST_DATABASE_APP_URL (bastion_app) run them on PostgreSQL)
 npm run test:coverage        # thresholds: lines/statements/functions 90 %, branches 80 %
 npm run check                # lint + typecheck + coverage
 npm run build && node dist/cli.js gen-secrets > .env   # local secrets (gitignored)
@@ -49,7 +49,7 @@ docker compose up --build    # platform + lab runner + lab gateway, same hardeni
 docker compose --profile observability up -d   # + Prometheus 127.0.0.1:9090, Alertmanager (no port), Grafana 127.0.0.1:3001 (ADR 0011, 0018)
 deploy/alertmanager/routes.test.sh   # amtool routing of every alert + live inhibition test (also in CI)
 docker compose -f docker-compose.yml -f docker-compose.vault.yml up -d   # KEKs in Vault Transit (ADR 0019)
-docker compose -f docker-compose.yml -f docker-compose.postgres.yml up -d   # PostgreSQL instead of SQLite (ADR 0021)
+docker compose -f docker-compose.yml -f docker-compose.postgres.yml up -d   # PostgreSQL instead of SQLite (ADR 0021, 0022: migrate job + API as bastion_app)
 test/vault-real/run.sh       # real Vault: ring → Vault migration, rotation, policy denials, sealed → 503
 docker compose --profile wazuh up -d   # once: real Wazuh (~4 GiB), then started/stopped from the UI (ADR 0013)
 test/wazuh-real/run.sh       # Wazuh challenges: Bastion's evaluator vs the real wazuh-logtest (Docker, offline)
@@ -70,7 +70,8 @@ src/
                          triggers on audit_log; connectDatabase(): PostgreSQL when DATABASE_URL is set
   postgres.ts            PostgreSQL adapter (ADR 0021, `pg` pure JS): ? → $n, rows shaped as SQLite's,
                          SERIALIZABLE + retry on 40001, advisory lock for audit appends and migrations,
-                         schema translated (BIGINT, BYTEA, ICU nocase, TRUNCATE trigger)
+                         schema translated (BIGINT, BYTEA, ICU nocase, TRUNCATE trigger); v2: row-level
+                         security on notes, bastion_app role, note_exists(), assertAppRole() at boot (ADR 0022)
   audit-export.ts        SIEM copy of the audit log: one JSON line per entry (AUDIT_EXPORT_FILE, 0600),
                          failures counted, never thrown (ADR 0015)
   audit.ts               HMAC-SHA256 chained audit log; verify() returns firstInvalidSeq;
@@ -142,7 +143,8 @@ content/                 curriculum as code: index.json (levels, path order), <p
                          challenges.json (challenge → module, points, kind, brief)
 test/unit, test/security, test/helpers.ts (setup(), newUser(), auditActions(), withLatency():
                          a database that yields before each query, for race tests; testDb(): SQLite
-                         or, with TEST_DATABASE_URL, a fresh PostgreSQL schema)
+                         or, with TEST_DATABASE_URL, a fresh PostgreSQL schema; t.db = owner,
+                         t.appDb = what the API uses, under RLS on PostgreSQL)
 deploy/k8s (kustomize), deploy/policies (Kyverno signed-image policy),
 deploy/prometheus (scrape config, alerts.yml, alerts.test.yml for promtool),
 deploy/alertmanager (routing by severity, inhibition, routes.test.sh), deploy/grafana (provisioned
@@ -150,7 +152,7 @@ deploy/alertmanager (routing by severity, inhibition, routes.test.sh), deploy/gr
 deploy/wazuh (offline certs.sh, users.sh without demo accounts, indexer/manager/dashboard config,
              bastion_rules.xml: rules for Bastion's own audit log, ids 100200-100299)
 docs/  threat-model · security-controls (OWASP API Top 10 + ASVS 4.0.3) · security-pipeline ·
-       adr/0001-0021 · runbook · openapi.yaml (used by DAST)
+       adr/0001-0022 · runbook · openapi.yaml (used by DAST)
 ```
 
 ## Security invariants — never break these
@@ -163,6 +165,9 @@ docs/  threat-model · security-controls (OWASP API Top 10 + ASVS 4.0.3) · secu
 2. **Every note query includes `owner_id` in the SQL itself.** Never fetch-then-check.
    Enforced by Semgrep `bastion-note-query-without-owner`. Foreign and missing notes must
    return the *same* 404. Exception: `rotateKeys()` (operator-only, annotated).
+   On PostgreSQL, row-level security is the second barrier (ADR 0022): note queries run in
+   `transaction(fn, { user })`; the API logs in as `bastion_app` (never the owner, never a
+   role that can `SET ROLE` to it; checked at boot); migrations and the CLI use the owner.
 3. **All request schemas stay `.strict()`.** Unknown fields → 400.
 4. **Login stays enumeration-proof:** same 401 message for unknown user / wrong password /
    locked account; unknown users still pay the scrypt cost (dummy hash).
@@ -309,9 +314,10 @@ If a CI job is renamed, update the ruleset's required checks in the same change 
    ~~passwordless passkey login + account recovery~~ (done 1 Nov 2026, ADR 0017).
 3. ~~**External KMS for KEKs**~~ (done 1 Nov 2026, ADR 0019: Vault Transit, docker-compose.vault.yml).
    Next: auto-unseal and TLS for a hosted Vault, a cloud KMS implementation of `Kms`.
-4. **PostgreSQL + Redis**: ~~async layer~~ (ADR 0020), ~~PostgreSQL adapter~~ (ADR 0021, done
-   2 Nov 2026). Next: row-level security as a second IDOR barrier, then the Redis rate-limit
-   store (in-house RESP client on node:net) and several replicas in compose.
+4. **PostgreSQL + Redis**: ~~async layer~~ (ADR 0020), ~~PostgreSQL adapter~~ (ADR 0021),
+   ~~row-level security on notes~~ (ADR 0022, done 2 Nov 2026). Next: the Redis rate-limit
+   store (in-house RESP client on node:net) and several replicas in compose; RLS on more
+   per-user tables.
 5. ~~**Observability**: Prometheus metrics, alerting rules matching `docs/runbook.md`~~
    (done 31 Oct 2026, ADR 0011). Real Wazuh from the UI done (ADR 0013), Wazuh rule challenges
    done (ADR 0014), Bastion's audit log in Wazuh done (ADR 0015), ~~Alertmanager routing,

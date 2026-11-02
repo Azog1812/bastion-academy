@@ -34,6 +34,7 @@ describe('configuration fails closed', () => {
     // PostgreSQL (ADR 0021): the URL carries the password, and the link every secret row.
     ['database URL that is not PostgreSQL', { DATABASE_URL: 'mysql://bastion:pw@db/bastion' }, 'postgres:// URL'],
     ['database across a network without verified TLS', { NODE_ENV: 'production', SCRYPT_LOG_N: '17', DATABASE_URL: 'postgres://bastion:pw@db.internal.example/bastion?sslmode=require' }, 'sslmode=verify-full'],
+    ['owner connection across a network without verified TLS', { NODE_ENV: 'production', SCRYPT_LOG_N: '17', DATABASE_OWNER_URL: 'postgres://owner:pw@db.internal.example/bastion' }, 'DATABASE_OWNER_URL'],
   ])('refuses to start with a %s', (_name, override, message) => {
     expect(() => loadConfig(testEnv(override))).toThrow(message);
   });

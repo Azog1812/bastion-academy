@@ -13,6 +13,7 @@ import { recoverAccount } from './services/recovery.js';
  * host, which is a separate, stronger trust boundary.
  *
  *   node dist/cli.js gen-secrets
+ *   node dist/cli.js migrate            (PostgreSQL: as DATABASE_OWNER_URL, before the API starts)
  *   node dist/cli.js promote <email>
  *   node dist/cli.js rotate-keys
  *   node dist/cli.js recover-account <email>
@@ -50,6 +51,8 @@ async function main(): Promise<number> {
         `GRAFANA_ADMIN_PASSWORD=${b64(24)}`,
         // Hex: goes into a postgres:// URL (docker-compose.postgres.yml) without escaping.
         `POSTGRES_PASSWORD=${randomBytes(24).toString('hex')}`,
+        // The API's own login (bastion_app, under row-level security), apart from the owner's.
+        `POSTGRES_APP_PASSWORD=${randomBytes(24).toString('hex')}`,
         `ENCRYPTION_KEYS=k1:${b64(32)}`,
         'ACTIVE_KEY_ID=k1',
         '',
@@ -59,7 +62,7 @@ async function main(): Promise<number> {
   }
 
   const config = loadConfig();
-  const db = await connectDatabase(config);
+  const db = await connectDatabase(config, { as: 'owner' });
   try {
     return await operate(command, arg, config, db);
   } finally {
@@ -106,13 +109,18 @@ async function operate(command: string | undefined, arg: string | undefined, con
       process.stdout.write(`${temporaryPassword}\n`);
       return 0;
     }
+    case 'migrate': {
+      // Connecting as the owner already brought the schema up to date (connectDatabase).
+      console.log('database schema up to date');
+      return 0;
+    }
     case 'verify-audit': {
       const result = await audit.verify();
       console.log(JSON.stringify(result));
       return result.valid ? 0 : 2;
     }
     default:
-      console.error('commands: gen-secrets | promote <email> | rotate-keys | recover-account <email> | verify-audit');
+      console.error('commands: gen-secrets | migrate | promote <email> | rotate-keys | recover-account <email> | verify-audit');
       return 64;
   }
 }

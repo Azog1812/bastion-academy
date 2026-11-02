@@ -145,17 +145,24 @@ docker compose -f docker-compose.yml -f docker-compose.vault.yml exec bastion /n
 ## PostgreSQL (ADR 0021)
 
 ```bash
-node dist/cli.js gen-secrets | grep POSTGRES_PASSWORD >> .env   # once, for an older .env
+node dist/cli.js gen-secrets | grep POSTGRES_ >> .env   # once, for an older .env
 docker compose -f docker-compose.yml -f docker-compose.postgres.yml up -d
 ```
 
-- **First start**: the platform creates the schema; replicas starting together wait for the
-  first one (advisory lock). Data in the SQLite file is not moved: this starts empty.
-- **Outside compose**: `DATABASE_URL_FILE` pointing at a file holding
-  `postgres://user:password@host:5432/db?sslmode=verify-full` (plus `sslrootcert=` for a
-  private CA). Production refuses a server across a network without `verify-full`.
+- **Two logins** (ADR 0022): the owner (`POSTGRES_PASSWORD`, `DATABASE_OWNER_URL`) migrates
+  and runs the CLI; the API logs in as `bastion_app` (`POSTGRES_APP_PASSWORD`,
+  `DATABASE_URL`), under row-level security. In compose, `init-app-role.sh` creates
+  `bastion_app` when the data volume is first initialised, and `bastion-migrate` brings the
+  schema up to date before the API starts.
+- **Outside compose**: create `bastion_app` (`LOGIN NOBYPASSRLS`, a password, nothing
+  else), run `node dist/cli.js migrate` with `DATABASE_OWNER_URL`, then start the API with
+  `DATABASE_URL` as `bastion_app`. Both URLs can come from files (`*_FILE`) and take
+  `?sslmode=verify-full` (plus `sslrootcert=` for a private CA); production refuses a server
+  across a network without it. Data in the SQLite file is not moved: this starts empty.
 - **Boot stops with `database unavailable, refusing to start`**: wrong URL, password or
-  certificate, or the server is down. Nothing was served; fix and restart.
+  certificate, or the server is down. With `skips row-level security`: `DATABASE_URL` is
+  the owner, a superuser or a `BYPASSRLS` role; use `bastion_app`. With `run the
+  migration`: the schema is behind; run `migrate` as the owner. Nothing was served.
 - **Requests fail with `could not serialize access`** in the logs: a transaction lost
   five races in a row. Rare by design (retries with backoff); frequent means a hot row,
   look at which service.

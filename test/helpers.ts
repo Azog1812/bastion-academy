@@ -57,11 +57,29 @@ export function withLatency(db: Database): Database {
 /**
  * A fresh, empty database. SQLite in memory by default; with TEST_DATABASE_URL set (CI's
  * PostgreSQL job), a new schema of that server, so the whole suite proves both engines.
+ * `app` is what the API uses (on PostgreSQL: the bastion_app role, under row-level
+ * security); `owner` is the database administrator, what tests use to play an attacker
+ * with database access. With SQLite both are the same handle.
  */
-export function testDb(): Database {
+export function testDbs(): { app: Database; owner: Database } {
   const url = process.env.TEST_DATABASE_URL;
-  if (url === undefined || url === '') return openDatabase(':memory:');
-  return openPostgres(url, { schema: `t_${randomBytes(8).toString('hex')}`, poolSize: 3 });
+  if (url === undefined || url === '') {
+    const db = openDatabase(':memory:');
+    return { app: db, owner: db };
+  }
+  // TEST_DATABASE_APP_URL logs in as bastion_app (CI creates it with a password, as the
+  // compose init script does); it may only connect once the owner has migrated the schema.
+  const appUrl = process.env.TEST_DATABASE_APP_URL;
+  if (appUrl === undefined || appUrl === '') throw new Error('TEST_DATABASE_URL needs TEST_DATABASE_APP_URL (the bastion_app login)');
+  const schema = `t_${randomBytes(8).toString('hex')}`;
+  const owner = openPostgres(url, { schema, poolSize: 3, migrate: true });
+  const app = openPostgres(appUrl, { schema, poolSize: 3, after: owner.one('SELECT 1') });
+  return { app, owner };
+}
+
+/** The administrator's handle on a fresh database (see testDbs). */
+export function testDb(): Database {
+  return testDbs().owner;
 }
 
 /** What an attacker with database access does first: remove the append-only guard. */
@@ -75,7 +93,10 @@ export async function dropAuditTrigger(db: Database, which: 'update' | 'delete')
 
 export interface TestContext {
   config: Config;
+  /** The database administrator's view (owner): row-level security does not apply. */
   db: Database;
+  /** What the API itself uses: on PostgreSQL, under row-level security. */
+  appDb: Database;
   app: ReturnType<typeof createApp>['app'];
   services: ReturnType<typeof createApp>['services'];
   metrics: ReturnType<typeof createApp>['metrics'];
@@ -99,11 +120,11 @@ export function setup(
   } = {},
 ): TestContext {
   const config = loadConfig(testEnv(opts.env));
-  const fresh = testDb();
-  const db = opts.latency ? withLatency(fresh) : fresh;
+  const fresh = testDbs();
+  const appDb = opts.latency ? withLatency(fresh.app) : fresh.app;
   const { app, services, metrics } = createApp({
     config,
-    db,
+    db: appDb,
     logger: createLogger('silent'),
     curriculum: opts.curriculum ?? realCurriculum,
     ...(opts.web ? { web: opts.web } : {}),
@@ -112,7 +133,7 @@ export function setup(
     ...(opts.kms ? { kms: opts.kms } : {}),
     rateLimits: { global: 10_000, auth: 10_000, refresh: 10_000, quiz: 10_000, ...opts.rateLimits },
   });
-  return { config, db, app, services, metrics, http: request(app) };
+  return { config, db: fresh.owner, appDb, app, services, metrics, http: request(app) };
 }
 
 export interface Session {

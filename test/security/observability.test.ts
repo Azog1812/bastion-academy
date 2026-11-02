@@ -39,7 +39,7 @@ describe('metrics endpoint (ADR 0011)', () => {
 
   it('fails a scrape without leaking why when a collector breaks', async () => {
     const t = setup();
-    await t.db.close(); // every database gauge now throws
+    await t.appDb.close(); // every database gauge now throws
     const res = await scrape(t).get('/metrics').set(bearer).expect(500);
     expect(res.text).toBe('scrape failed\n');
   });

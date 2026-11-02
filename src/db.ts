@@ -2,7 +2,7 @@ import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
-import { openPostgres, pgErrorCode, PG_UNIQUE_VIOLATION } from './postgres.js';
+import { assertAppRole, openPostgres, pgErrorCode, PG_UNIQUE_VIOLATION } from './postgres.js';
 
 /**
  * Persistence: Node's built-in SQLite driver by default (zero native dependencies,
@@ -199,6 +199,12 @@ export interface TransactionOptions {
    * (PostgreSQL). For the audit chain, which has a single head every append reads.
    */
   lock?: 'audit_log';
+  /**
+   * The user the transaction acts for. On PostgreSQL, row-level security shows the app role
+   * only this user's rows of the tables it protects (notes, ADR 0022). SQLite ignores it:
+   * there the owner_id in each query is the only barrier.
+   */
+  user?: string;
 }
 
 export interface Db {
@@ -370,17 +376,23 @@ function migrate(db: DatabaseSync): void {
 
 /**
  * The database the configuration names: PostgreSQL when DATABASE_URL is set, else the
- * SQLite file at DATABASE_PATH. Waits for the schema, so a wrong URL or password stops
- * the process before it serves anything.
+ * SQLite file at DATABASE_PATH. The API connects `as: 'app'`: DATABASE_URL, the bastion_app
+ * role, checked to be one row-level security binds (ADR 0022). The operator CLI connects
+ * `as: 'owner'`: DATABASE_OWNER_URL, which owns the schema and migrates it (shell access is
+ * its own trust boundary, invariant 9). Fails before anything is served.
  */
 export async function connectDatabase(
-  config: { DATABASE_URL?: string | undefined; DATABASE_PATH: string; DATABASE_POOL_SIZE: number },
-  onIdleError?: (err: Error) => void,
+  config: { DATABASE_URL?: string | undefined; DATABASE_OWNER_URL?: string | undefined; DATABASE_PATH: string; DATABASE_POOL_SIZE: number },
+  options: { onIdleError?: (err: Error) => void; as: 'app' | 'owner' },
 ): Promise<Database> {
-  if (config.DATABASE_URL === undefined) return openDatabase(config.DATABASE_PATH);
-  const db = openPostgres(config.DATABASE_URL, { poolSize: config.DATABASE_POOL_SIZE, ...(onIdleError ? { onIdleError } : {}) });
+  if (config.DATABASE_URL === undefined && config.DATABASE_OWNER_URL === undefined) return openDatabase(config.DATABASE_PATH);
+  const url = options.as === 'owner' ? config.DATABASE_OWNER_URL : config.DATABASE_URL;
+  if (url === undefined) throw new Error(options.as === 'owner' ? 'the operator CLI needs DATABASE_OWNER_URL' : 'the API needs DATABASE_URL');
+  const { onIdleError } = options;
+  const db = openPostgres(url, { poolSize: config.DATABASE_POOL_SIZE, migrate: options.as === 'owner', ...(onIdleError ? { onIdleError } : {}) });
   try {
-    await db.one('SELECT 1');
+    if (options.as === 'app') await assertAppRole(db);
+    else await db.one('SELECT 1');
   } catch (err) {
     await db.close().catch(() => undefined);
     throw err;
