@@ -303,7 +303,7 @@ flowchart LR
 | Database dump / leaked backup | **Envelope encryption**: one AES-256-GCM key per note, wrapped by a rotating KEK that never touches the DB | [`envelope.test.ts`](test/unit/envelope.test.ts) |
 | Database *and* the platform's secrets stolen | **KEKs in Vault Transit** (optional overlay): the KEK never leaves Vault, a derived key per note, AppRole with 1-hour tokens, a policy that forbids export and deletion, rotation inside Vault ([ADR 0019](docs/adr/0019-vault-transit-kms.md)) | [`kms-vault.test.ts`](test/security/kms-vault.test.ts), [`test/vault-real`](test/vault-real/run.sh) |
 | Ciphertext swapped between users by a DB-level attacker | Owner id and note id bound in the **AAD** → decryption fails | [`authorization.test.ts`](test/security/authorization.test.ts) |
-| IDOR / BOLA (OWASP API #1) | Owner id inside every SQL query; foreign and missing notes are indistinguishable (404); probing is audited | [`authorization.test.ts`](test/security/authorization.test.ts) |
+| IDOR / BOLA (OWASP API #1) | Owner id inside every SQL query; foreign and missing notes are indistinguishable (404); probing is audited; on PostgreSQL, row-level security as a second barrier, under an API login that cannot escape it ([ADR 0022](docs/adr/0022-row-level-security.md)) | [`authorization.test.ts`](test/security/authorization.test.ts), [`row-level-security.test.ts`](test/security/row-level-security.test.ts) |
 | Brute force & credential stuffing | Per-IP rate limit, **progressive lockout** with atomic counters, breached-password blocklist | [`authentication.test.ts`](test/security/authentication.test.ts) |
 | Account enumeration | Identical response for unknown user / wrong password / locked, and a **dummy scrypt hash** so timing matches | [`authentication.test.ts`](test/security/authentication.test.ts) |
 | JWT attacks (`alg:none`, alg confusion, tampering, replay) | Algorithm allow-list, `iss`/`aud`/`typ`/`exp` enforced, claims re-validated | [`tokens.test.ts`](test/unit/tokens.test.ts) |
@@ -420,8 +420,7 @@ same SQL ([ADR 0021](docs/adr/0021-postgresql-backend.md)). Known, accepted risk
 (registration enumeration, lockout-as-DoS, HS256…) are listed in the
 [threat model](docs/threat-model.md#5-accepted-risks) rather than hidden.
 
-**Roadmap:** row-level security on PostgreSQL as a second IDOR barrier · Redis
-rate-limit store for several replicas · signed commits.
+**Roadmap:** Redis rate-limit store for several replicas · signed commits.
 
 ## Security
 

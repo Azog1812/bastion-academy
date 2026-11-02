@@ -35,6 +35,13 @@ export interface Note extends NoteContent {
  * ownership afterwards — that "fetch then check" pattern is where IDOR bugs
  * (OWASP API1:2023, Broken Object Level Authorization) usually come from.
  */
+
+/** Does a note exist, whoever owns it? Existence only, for the audit log (see load). */
+const NOTE_EXISTS = {
+  sqlite: 'SELECT 1 AS x FROM notes WHERE id = ?',
+  postgres: 'SELECT 1 AS x WHERE note_exists(?)',
+} as const;
+
 export class NoteService {
   constructor(
     private readonly db: Database,
@@ -69,11 +76,22 @@ export class NoteService {
     });
   }
 
+  /**
+   * Every note query runs in a transaction acting for the owner: on PostgreSQL, row-level
+   * security then hides every other owner's rows even from a query that forgot its
+   * owner_id (ADR 0022). The owner_id stays in the SQL all the same (invariant 2).
+   */
+  private as<T>(ownerId: string, fn: (tx: Database) => Promise<T>): Promise<T> {
+    return this.db.transaction(fn, { user: ownerId });
+  }
+
   private async load(ownerId: string, noteId: string, ip: string | null): Promise<NoteRow> {
-    const row = await this.db.one('SELECT * FROM notes WHERE id = ? AND owner_id = ?', noteId, ownerId) as NoteRow | undefined;
+    const row = await this.as(ownerId, async (tx) => (await tx.one('SELECT * FROM notes WHERE id = ? AND owner_id = ?', noteId, ownerId)) as NoteRow | undefined);
     if (!row) {
       // Record cross-tenant probing: someone asked for a note that exists but is not theirs.
-      const exists = await this.db.one('SELECT 1 AS x FROM notes WHERE id = ?', noteId);
+      // Under row-level security the app cannot see that row: it asks a function that answers
+      // existence only (note_exists, SECURITY DEFINER).
+      const exists = await this.db.one(NOTE_EXISTS[this.db.dialect], noteId);
       if (exists) {
         await this.audit.record({ action: 'authz.denied', outcome: 'denied', actorId: ownerId, target: noteId, ip, details: { resource: 'note' } });
       }
@@ -86,15 +104,17 @@ export class NoteService {
     const id = randomUUID();
     const s = await seal(this.kms, JSON.stringify(content), id, ownerId);
     const now = Date.now();
-    await this.db.run(`INSERT INTO notes (id, owner_id, key_id, wrapped_dek, iv, tag, ciphertext, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, id, ownerId, s.keyId, s.wrappedDek, s.iv, s.tag, s.ciphertext, now, now);
+    await this.as(ownerId, (tx) => tx.run(`INSERT INTO notes (id, owner_id, key_id, wrapped_dek, iv, tag, ciphertext, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, id, ownerId, s.keyId, s.wrappedDek, s.iv, s.tag, s.ciphertext, now, now));
     await this.audit.record({ action: 'note.create', outcome: 'success', actorId: ownerId, target: id, ip });
     return { id, ...content, version: 1, createdAt: new Date(now).toISOString(), updatedAt: new Date(now).toISOString() };
   }
 
   async list(ownerId: string, limit: number, offset: number): Promise<{ items: Omit<Note, 'body'>[]; total: number }> {
-    const rows = await this.db.many('SELECT * FROM notes WHERE owner_id = ? ORDER BY updated_at DESC, id LIMIT ? OFFSET ?', ownerId, limit, offset) as unknown as NoteRow[];
-    const { n } = await this.db.one('SELECT COUNT(*) AS n FROM notes WHERE owner_id = ?', ownerId) as { n: number };
+    const { rows, n } = await this.as(ownerId, async (tx) => ({
+      rows: (await tx.many('SELECT * FROM notes WHERE owner_id = ? ORDER BY updated_at DESC, id LIMIT ? OFFSET ?', ownerId, limit, offset)) as unknown as NoteRow[],
+      n: ((await tx.one('SELECT COUNT(*) AS n FROM notes WHERE owner_id = ?', ownerId)) as { n: number }).n,
+    }));
     return {
       items: (await this.decrypt(rows)).map(({ body: _body, ...summary }) => summary),
       total: n,
@@ -117,8 +137,8 @@ export class NoteService {
     // write that lands meanwhile makes this one fail instead of being overwritten.
     const s = await seal(this.kms, JSON.stringify(content), noteId, ownerId);
     const now = Date.now();
-    const result = await this.db.run(`UPDATE notes SET key_id = ?, wrapped_dek = ?, iv = ?, tag = ?, ciphertext = ?, version = version + 1, updated_at = ?
-         WHERE id = ? AND owner_id = ? AND version = ?`, s.keyId, s.wrappedDek, s.iv, s.tag, s.ciphertext, now, noteId, ownerId, expectedVersion);
+    const result = await this.as(ownerId, (tx) => tx.run(`UPDATE notes SET key_id = ?, wrapped_dek = ?, iv = ?, tag = ?, ciphertext = ?, version = version + 1, updated_at = ?
+         WHERE id = ? AND owner_id = ? AND version = ?`, s.keyId, s.wrappedDek, s.iv, s.tag, s.ciphertext, now, noteId, ownerId, expectedVersion));
     if (result.changes !== 1) throw conflict('Note was modified concurrently');
 
     await this.audit.record({ action: 'note.update', outcome: 'success', actorId: ownerId, target: noteId, ip });
@@ -133,11 +153,15 @@ export class NoteService {
 
   async delete(ownerId: string, noteId: string, ip: string | null): Promise<void> {
     await this.load(ownerId, noteId, ip);
-    await this.db.run('DELETE FROM notes WHERE id = ? AND owner_id = ?', noteId, ownerId);
+    await this.as(ownerId, (tx) => tx.run('DELETE FROM notes WHERE id = ? AND owner_id = ?', noteId, ownerId));
     await this.audit.record({ action: 'note.delete', outcome: 'success', actorId: ownerId, target: noteId, ip });
   }
 
-  /** KEK rotation: re-wrap every DEK still under an old key. Content is never decrypted. */
+  /**
+   * KEK rotation: re-wrap every DEK still under an old key. Content is never decrypted.
+   * Spans every owner, so it needs the owner connection (CLI): through the API's role,
+   * row-level security would show it nothing.
+   */
   async rotateKeys(): Promise<{ rewrapped: number }> {
     const rows = await this.db.many('SELECT id, key_id, wrapped_dek FROM notes WHERE key_id != ?', await this.kms.activeKeyId()) as unknown as Pick<NoteRow, 'id' | 'key_id' | 'wrapped_dek'>[];
     let rewrapped = 0;

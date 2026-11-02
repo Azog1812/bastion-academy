@@ -73,7 +73,7 @@ describe('database layer', () => {
   // abort and retry; with a full pool, 82 of 300 ran out of retries (lost audit events,
   // failed requests) when this lock was removed. With it they queue: none fails.
   it.skipIf(!process.env.TEST_DATABASE_URL)('loses no audit append under load on PostgreSQL', { timeout: 60_000 }, async () => {
-    const db = openPostgres(process.env.TEST_DATABASE_URL ?? '', { schema: `t_${randomBytes(8).toString('hex')}`, poolSize: 20 });
+    const db = openPostgres(process.env.TEST_DATABASE_URL ?? '', { schema: `t_${randomBytes(8).toString('hex')}`, poolSize: 20, migrate: true });
     const log = new AuditLog(db, randomBytes(32));
     const results = await Promise.allSettled(Array.from({ length: 300 }, () => log.record({ action: 'note.read', outcome: 'success' })));
     expect(results.filter((r) => r.status === 'rejected')).toEqual([]);

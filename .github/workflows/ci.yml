@@ -64,7 +64,8 @@ jobs:
 
   postgres:
     # The whole suite again, every test context in its own schema of a real PostgreSQL
-    # (ADR 0021): same SQL, same race tests, the second engine proven like the first.
+    # (ADR 0021): same SQL, same race tests, the second engine proven like the first, plus
+    # the row-level security tests (ADR 0022), which only run here.
     name: Test suite against PostgreSQL
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -97,7 +98,14 @@ jobs:
           docker run -d --name pg -e POSTGRES_PASSWORD="$password" -e POSTGRES_DB=bastion_test             -p 127.0.0.1:5432:5432 --tmpfs /var/lib/postgresql "$POSTGRES_IMAGE" -c max_connections=300 -c fsync=off
           for _ in $(seq 1 30); do docker exec pg pg_isready -U postgres -d bastion_test -q && break; sleep 1; done
           docker exec pg pg_isready -U postgres -d bastion_test
+          # The API's own login (ADR 0022), as deploy/postgres/init-app-role.sh creates it.
+          app_password="$(openssl rand -hex 24)"
+          echo "::add-mask::$app_password"
+          # On stdin: psql only interpolates :'pw' (quoted by psql itself) outside -c.
+          echo "CREATE ROLE bastion_app LOGIN NOBYPASSRLS PASSWORD :'pw'" |
+            docker exec -i pg psql -v ON_ERROR_STOP=1 -v pw="$app_password" -U postgres -d bastion_test
           echo "TEST_DATABASE_URL=postgres://postgres:$password@127.0.0.1:5432/bastion_test" >> "$GITHUB_ENV"
+          echo "TEST_DATABASE_APP_URL=postgres://bastion_app:$app_password@127.0.0.1:5432/bastion_test" >> "$GITHUB_ENV"
 
       - run: npx vitest run
 

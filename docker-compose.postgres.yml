@@ -1,11 +1,15 @@
 # PostgreSQL instead of the SQLite file (ADR 0021), on top of the main file:
 #   docker compose -f docker-compose.yml -f docker-compose.postgres.yml up -d
 #
-#   bastion ──db (internal)──► postgres:5432   (SCRAM password from .env, no published port)
+#   bastion-migrate (owner) ──db (internal)──► postgres:5432 ◄── bastion (bastion_app, RLS)
 #
-# The schema is created by the platform at its first start. Data in SQLite is not moved:
-# this starts from an empty database. POSTGRES_PASSWORD comes from `gen-secrets` (hex, so
-# it needs no escaping inside the URL).
+# Two logins (ADR 0022): the one-shot migration job owns the schema; the API logs in as
+# bastion_app, which row-level security binds, and refuses to start as anything else.
+# Data in SQLite is not moved: this starts from an empty database. POSTGRES_PASSWORD and
+# POSTGRES_APP_PASSWORD come from `gen-secrets` (hex: no escaping inside the URLs).
+# Known limit of this single-host overlay: .env reaches the bastion container whole, so code
+# execution there would read the owner password too; an orchestrator gives the migration
+# job and the API separate secrets.
 services:
   postgres:
     # Same image and digest as the PostgreSQL job of .github/workflows/ci.yml: keep them in sync.
@@ -18,8 +22,11 @@ services:
       POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is missing from .env, run gen-secrets}"
       # SCRAM for every connection, including the ones initdb would otherwise trust locally.
       POSTGRES_INITDB_ARGS: "--auth=scram-sha-256"
+      # Read by init-app-role.sh, on first initialisation only.
+      POSTGRES_APP_PASSWORD: "${POSTGRES_APP_PASSWORD:?POSTGRES_APP_PASSWORD is missing from .env, run gen-secrets}"
     volumes:
       - postgres-data:/var/lib/postgresql
+      - ./deploy/postgres/init-app-role.sh:/docker-entrypoint-initdb.d/init-app-role.sh:ro
     networks: [db]
     read_only: true
     tmpfs:
@@ -39,15 +46,35 @@ services:
       retries: 20
     restart: unless-stopped
 
-  bastion:
+  # Brings the schema up to date as its owner, then exits. The API waits for it.
+  bastion-migrate:
+    image: bastion:local
+    command: ["--disable-warning=ExperimentalWarning", "dist/cli.js", "migrate"]
+    env_file: .env
     environment:
+      NODE_ENV: production
       # A container name on the private `db` network: the one case where config accepts
       # PostgreSQL without verify-full TLS in production (see config.ts).
-      DATABASE_URL: "postgres://bastion:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is missing from .env, run gen-secrets}@postgres:5432/bastion"
-    networks: [default, lab-control, metrics, db]
+      DATABASE_OWNER_URL: "postgres://bastion:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is missing from .env, run gen-secrets}@postgres:5432/bastion"
+    networks: [db]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 64
+    mem_limit: 256m
     depends_on:
       postgres:
         condition: service_healthy
+    restart: "no"
+
+  bastion:
+    environment:
+      DATABASE_URL: "postgres://bastion_app:${POSTGRES_APP_PASSWORD:?POSTGRES_APP_PASSWORD is missing from .env, run gen-secrets}@postgres:5432/bastion"
+    networks: [default, lab-control, metrics, db]
+    depends_on:
+      bastion-migrate:
+        condition: service_completed_successfully
 
 networks:
   # Platform ↔ PostgreSQL. No route out, nothing else joins it.

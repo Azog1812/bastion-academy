@@ -64,9 +64,9 @@ Standards: **OWASP API Security Top 10 (2023)** and **OWASP ASVS 4.0.3** (Level 
 | ID | Requirement (summary) | How |
 |---|---|---|
 | 4.1.1 | Access control enforced server-side | Middleware + SQL scoping |
-| 4.1.3 | Least privilege | Users see only their notes; admin limited to audit |
+| 4.1.3 | Least privilege | Users see only their notes; admin limited to audit. On PostgreSQL the API logs in as `bastion_app`: rows only, no schema change, `SELECT`/`INSERT` only on `audit_log`; migrations and operator tasks as the owner, from the CLI (ADR 0022) |
 | 4.1.5 | Access control fails securely | Missing principal → 401 (`uid()` throws) |
-| 4.2.1 | Protection against IDOR | Owner scoping + uniform 404 |
+| 4.2.1 | Protection against IDOR | Owner scoping + uniform 404; on PostgreSQL, row-level security on `notes` as a second barrier (user set per transaction, fails closed), under a role that cannot skip it or switch back, checked at boot (`row-level-security.test.ts`, ADR 0022) |
 | 4.1.2 | Attributes used by access control cannot be manipulated by the user | Optional-module choices are per learner and scoped in SQL; every lesson, quiz, challenge and lab re-checks them server-side (ADR 0012) |
 
 ### V5 Validation and injection

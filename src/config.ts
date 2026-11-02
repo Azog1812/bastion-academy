@@ -76,6 +76,14 @@ const schema = z
       .string()
       .refine((v) => /^postgres(ql)?:\/\//.test(v) && URL.canParse(v), 'must be a postgres:// URL')
       .optional(),
+    /**
+     * The schema owner (ADR 0022): migrations and the operator CLI. The API itself logs in
+     * with DATABASE_URL as bastion_app, which row-level security binds.
+     */
+    DATABASE_OWNER_URL: z
+      .string()
+      .refine((v) => /^postgres(ql)?:\/\//.test(v) && URL.canParse(v), 'must be a postgres:// URL')
+      .optional(),
     /** Connections per replica: replicas × this must stay under the server's max_connections. */
     DATABASE_POOL_SIZE: z.coerce.number().int().min(1).max(100).default(10),
 
@@ -199,15 +207,17 @@ const schema = z
         ctx.addIssue({ code: 'custom', path: ['VAULT_ADDR'], message: 'scheme://host[:port] only' });
       }
     }
-    if (cfg.DATABASE_URL !== undefined && cfg.NODE_ENV === 'production') {
+    for (const key of ['DATABASE_URL', 'DATABASE_OWNER_URL'] as const) {
+      const value = cfg[key];
+      if (value === undefined || cfg.NODE_ENV !== 'production') continue;
       // Password, password hashes, sealed seeds and wrapped DEKs cross this link. Without
       // verify-full a network attacker can sit in the middle (sslmode=require does not
       // check whose certificate it is). Plain only where no network is crossed: loopback,
       // or a container name on a private network (as for Vault).
-      const url = new URL(cfg.DATABASE_URL);
+      const url = new URL(value);
       const local = url.hostname === 'localhost' || url.hostname === '127.0.0.1' || url.hostname === '[::1]' || !url.hostname.includes('.');
       if (!local && url.searchParams.get('sslmode') !== 'verify-full') {
-        ctx.addIssue({ code: 'custom', path: ['DATABASE_URL'], message: 'needs sslmode=verify-full, except on loopback or to a container name on a private network' });
+        ctx.addIssue({ code: 'custom', path: [key], message: 'needs sslmode=verify-full, except on loopback or to a container name on a private network' });
       }
     }
     for (const origin of cfg.WEBAUTHN_ORIGINS) {
@@ -247,7 +257,7 @@ const schema = z
 
 export type Config = Readonly<z.output<typeof schema>>;
 
-const FILE_SECRETS = ['DATABASE_URL', 'JWT_SECRET', 'AUDIT_HMAC_KEY', 'FLAG_HMAC_KEY', 'ENCRYPTION_KEYS', 'LAB_RUNNER_TOKEN', 'METRICS_TOKEN', 'VAULT_TOKEN', 'VAULT_ROLE_ID', 'VAULT_SECRET_ID'] as const;
+const FILE_SECRETS = ['DATABASE_URL', 'DATABASE_OWNER_URL', 'JWT_SECRET', 'AUDIT_HMAC_KEY', 'FLAG_HMAC_KEY', 'ENCRYPTION_KEYS', 'LAB_RUNNER_TOKEN', 'METRICS_TOKEN', 'VAULT_TOKEN', 'VAULT_ROLE_ID', 'VAULT_SECRET_ID'] as const;
 
 /**
  * Secrets can be provided as files (`JWT_SECRET_FILE=/run/secrets/jwt`), the

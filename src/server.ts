@@ -10,8 +10,11 @@ import { kmsFromConfig } from './crypto/kms-config.js';
 const config = loadConfig();
 const logger = createLogger(config.LOG_LEVEL);
 // Fail closed: an unreachable database or a wrong password stops the boot (the orchestrator restarts us).
-const db = await connectDatabase(config, (err) => {
-  logger.warn({ reason: err.message }, 'idle database connection lost');
+const db = await connectDatabase(config, {
+  as: 'app',
+  onIdleError: (err) => {
+    logger.warn({ reason: err.message }, 'idle database connection lost');
+  },
 }).catch((err: unknown) => {
   logger.fatal({ reason: err instanceof Error ? err.message : 'unknown' }, 'database unavailable, refusing to start');
   process.exit(1);
