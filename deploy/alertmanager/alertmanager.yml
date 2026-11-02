@@ -1,0 +1,67 @@
+# Alertmanager for the local stack (ADR 0018): docker compose --profile observability up -d
+#
+# Prometheus decides *that* something is wrong (deploy/prometheus/alerts.yml); this file
+# decides *who* hears about it, *how fast*, and *what is noise*. The routing tree is code
+# and is tested like the alerts: deploy/alertmanager/routes.test.sh, run in CI with amtool.
+#
+# Receivers carry no integration here: a local install has no mail server and no chat,
+# and the person on call is the learner, who reads the alerts in Grafana. To deliver for
+# real, add e-mail/Slack/webhook configs to a receiver with their *_file variants
+# (smtp_auth_password_file, api_url_file, url_file) pointing to a compose secret: a
+# credential never lives in this file, which is in git.
+global:
+  resolve_timeout: 5m
+
+route:
+  # Default: anything unrouted still lands somewhere a human looks.
+  receiver: secops
+  # One notification per alert name: 50 failed logins from 50 addresses are one incident.
+  group_by: [alertname]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  routes:
+    # Dead man's switch. Always firing: if it stops arriving, the alerting pipeline is broken.
+    # Matched first so that nothing below can swallow it.
+    - receiver: watchdog
+      matchers: ['alertname = "Watchdog"']
+      group_wait: 0s
+      group_interval: 1m
+      repeat_interval: 5m
+
+    # Token theft, database tampering, platform down: wake someone up, now, and keep
+    # reminding. No grouping delay: the first replayed refresh token is the incident.
+    - receiver: pager
+      matchers: ['severity = "critical"']
+      group_wait: 0s
+      repeat_interval: 1h
+
+    # Attacks in progress (stuffing, MFA guessing, probing), and degraded service.
+    - receiver: secops
+      matchers: ['severity = "warning"']
+
+    # A shared flag is a matter for the trainers, not for the security on-call.
+    # Batched: one message a day is enough.
+    - receiver: trainers
+      matchers: ['severity = "info"']
+      group_wait: 10m
+      group_interval: 1h
+      repeat_interval: 24h
+
+inhibit_rules:
+  # Bastion cannot be scraped: its error rate, latency and every counter-based alert are
+  # stale or meaningless. Page once for the outage, not ten times for its symptoms.
+  - source_matchers: ['alertname = "BastionDown"']
+    target_matchers: ['severity =~ "warning|info"']
+  # Lockouts are the consequence of the stuffing already being reported.
+  - source_matchers: ['alertname = "BastionCredentialStuffing"']
+    target_matchers: ['alertname = "BastionAccountLockouts"']
+  # The event loop being blocked is the cause of the 5xx; report the cause.
+  - source_matchers: ['alertname = "BastionEventLoopBlocked"']
+    target_matchers: ['alertname = "BastionHighErrorRate"']
+
+receivers:
+  - name: pager
+  - name: secops
+  - name: trainers
+  - name: watchdog

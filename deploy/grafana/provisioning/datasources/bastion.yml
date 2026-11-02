@@ -1,0 +1,21 @@
+# Provisioned from git, not clicked: the data sources are reviewed like code (ADR 0018).
+apiVersion: 1
+datasources:
+  - name: Prometheus
+    uid: bastion-prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false
+  # Alerts and silences live in Alertmanager, which the host cannot reach: Grafana is the
+  # only way in, and only for a logged-in user (silencing an alert is an attacker's goal).
+  - name: Alertmanager
+    uid: bastion-alertmanager
+    type: alertmanager
+    access: proxy
+    url: http://alertmanager:9093
+    editable: false
+    jsonData:
+      implementation: prometheus
+      handleGrafanaManagedAlerts: false
