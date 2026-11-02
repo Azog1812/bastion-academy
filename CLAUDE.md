@@ -37,7 +37,7 @@ explain the *why* (threat, standard, trade-off), not only the *what*.
 npm ci --ignore-scripts      # never run install scripts
 npm run lint                 # ESLint strictTypeChecked + security plugin + custom SQL rules
 npm run typecheck            # tsc strict, noUncheckedIndexedAccess, exactOptionalPropertyTypes
-npm test                     # vitest (441 tests; TEST_DATABASE_URL (owner) + TEST_DATABASE_APP_URL (bastion_app) run them on PostgreSQL)
+npm test                     # vitest (459 tests; TEST_REDIS_URL adds the Valkey store tests; TEST_DATABASE_URL (owner) + TEST_DATABASE_APP_URL (bastion_app) run them on PostgreSQL)
 npm run test:coverage        # thresholds: lines/statements/functions 90 %, branches 80 %
 npm run check                # lint + typecheck + coverage
 npm run build && node dist/cli.js gen-secrets > .env   # local secrets (gitignored)
@@ -50,6 +50,7 @@ docker compose --profile observability up -d   # + Prometheus 127.0.0.1:9090, Al
 deploy/alertmanager/routes.test.sh   # amtool routing of every alert + live inhibition test (also in CI)
 docker compose -f docker-compose.yml -f docker-compose.vault.yml up -d   # KEKs in Vault Transit (ADR 0019)
 docker compose -f docker-compose.yml -f docker-compose.postgres.yml up -d   # PostgreSQL instead of SQLite (ADR 0021, 0022: migrate job + API as bastion_app)
+docker compose -f docker-compose.yml -f docker-compose.postgres.yml -f docker-compose.replicas.yml up -d   # + Valkey, 2 replicas behind nginx (ADR 0023)
 test/vault-real/run.sh       # real Vault: ring → Vault migration, rotation, policy denials, sealed → 503
 docker compose --profile wazuh up -d   # once: real Wazuh (~4 GiB), then started/stopped from the UI (ADR 0013)
 test/wazuh-real/run.sh       # Wazuh challenges: Bastion's evaluator vs the real wazuh-logtest (Docker, offline)
@@ -72,6 +73,10 @@ src/
                          SERIALIZABLE + retry on 40001, advisory lock for audit appends and migrations,
                          schema translated (BIGINT, BYTEA, ICU nocase, TRUNCATE trigger); v2: row-level
                          security on notes, bastion_app role, note_exists(), assertAppRole() at boot (ADR 0022)
+  redis.ts               in-house RESP2 client on node:net/tls (ADR 0023): bounded parser, ACL AUTH, timeouts,
+                         fail-fast reconnect; only AUTH/EVAL/DEL/PING are used
+  http/rate-limit-store  express-rate-limit store in Redis/Valkey: atomic Lua INCR+PEXPIRE, hashed keys,
+                         guessing limiters fail closed (503), the global one fails open; LIMITERS closed set
   audit-export.ts        SIEM copy of the audit log: one JSON line per entry (AUDIT_EXPORT_FILE, 0600),
                          failures counted, never thrown (ADR 0015)
   audit.ts               HMAC-SHA256 chained audit log; verify() returns firstInvalidSeq;
@@ -152,7 +157,7 @@ deploy/alertmanager (routing by severity, inhibition, routes.test.sh), deploy/gr
 deploy/wazuh (offline certs.sh, users.sh without demo accounts, indexer/manager/dashboard config,
              bastion_rules.xml: rules for Bastion's own audit log, ids 100200-100299)
 docs/  threat-model · security-controls (OWASP API Top 10 + ASVS 4.0.3) · security-pipeline ·
-       adr/0001-0022 · runbook · openapi.yaml (used by DAST)
+       adr/0001-0023 · runbook · openapi.yaml (used by DAST)
 ```
 
 ## Security invariants — never break these
@@ -244,6 +249,13 @@ docs/  threat-model · security-controls (OWASP API Top 10 + ASVS 4.0.3) · secu
     like lessons (module added and unlocked, audited), never sends a password to the browser
     (login hint only), and their networks stay `internal` except the loopback-published UI.
     No demo account or public default password survives setup.
+19. **Rate limits hold across replicas** (ADR 0023). With `REDIS_URL`, every limiter counts in
+    Valkey with one atomic script (increment + expiry); keys are SHA-256 of the client key.
+    Limiters that stop guessing fail closed (503) when the store is down; only the global
+    flood guard fails open. The proxy in front overwrites `X-Forwarded-For`, and
+    `TRUST_PROXY` counts exactly the trusted hops. The Valkey user stays limited to
+    `bastion:rl:*` and the scripts' commands; no new Redis command without updating its ACL.
+    The RESP client stays bounded (sizes, depth, buffer, timeouts): no client library.
 
 ## Conventions
 
@@ -284,8 +296,8 @@ Validate workflows locally with `actionlint` before pushing.
 - Trivy SARIF uses `ignore-unfixed`: unpatched base-image CVEs are an accepted risk (threat model §5).
 - Dependabot ignores semver-major for `@types/node` (must match engines: Node 22) and
   `typescript` (typescript-eslint supports < 6.1 only).
-- SQLite → single replica; PostgreSQL allows several, but rate limiting stays in memory,
-  per replica, until the Redis store; HS256 (single issuer/verifier).
+- SQLite → single replica; several replicas need PostgreSQL + Valkey (`REDIS_URL`), without
+  it rate limits are per replica (the server warns); HS256 (single issuer/verifier).
 - Registration reveals whether an e-mail exists (409); lockout can be abused for targeted DoS.
 - `package.json` `overrides` pins `minimatch` 11 (GHSA-g3hv-75wg-m249, dev-only, via ESLint and
   typescript-eslint which still ask for 10): remove it once they depend on a fixed version.
@@ -314,10 +326,9 @@ If a CI job is renamed, update the ruleset's required checks in the same change 
    ~~passwordless passkey login + account recovery~~ (done 1 Nov 2026, ADR 0017).
 3. ~~**External KMS for KEKs**~~ (done 1 Nov 2026, ADR 0019: Vault Transit, docker-compose.vault.yml).
    Next: auto-unseal and TLS for a hosted Vault, a cloud KMS implementation of `Kms`.
-4. **PostgreSQL + Redis**: ~~async layer~~ (ADR 0020), ~~PostgreSQL adapter~~ (ADR 0021),
-   ~~row-level security on notes~~ (ADR 0022, done 2 Nov 2026). Next: the Redis rate-limit
-   store (in-house RESP client on node:net) and several replicas in compose; RLS on more
-   per-user tables.
+4. ~~**PostgreSQL + Redis**~~ (done 2 Nov 2026): async layer (ADR 0020), PostgreSQL (ADR
+   0021), row-level security on notes (ADR 0022), shared rate limits in Valkey + 2 replicas
+   behind nginx (ADR 0023). Follow-ups: RLS on more per-user tables.
 5. ~~**Observability**: Prometheus metrics, alerting rules matching `docs/runbook.md`~~
    (done 31 Oct 2026, ADR 0011). Real Wazuh from the UI done (ADR 0013), Wazuh rule challenges
    done (ADR 0014), Bastion's audit log in Wazuh done (ADR 0015), ~~Alertmanager routing,

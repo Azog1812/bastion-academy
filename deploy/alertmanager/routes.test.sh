@@ -41,6 +41,7 @@ expect secops alertname=BastionAccountLockouts severity=warning
 expect secops alertname=BastionMfaBruteForce severity=warning
 expect secops alertname=BastionAuthorizationProbing severity=warning
 expect secops alertname=BastionAuditExportFailing severity=warning
+expect secops alertname=BastionRateLimitStoreDown severity=warning
 expect secops alertname=BastionHighErrorRate severity=warning
 expect secops alertname=BastionEventLoopBlocked severity=warning
 expect secops alertname=BastionMetricsCardinality severity=warning

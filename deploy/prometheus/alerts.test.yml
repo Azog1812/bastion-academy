@@ -99,6 +99,10 @@ tests:
         values: "0 0 0 0 0"
       - series: "bastion_audit_export_failures_total"
         values: "0 0 3 3 3"
+      - series: 'bastion_rate_limit_store_errors_total{limiter="auth"}'
+        values: "0 0 5 9 9"
+      - series: 'bastion_rate_limit_store_errors_total{limiter="global"}'
+        values: "0 0 40 80 80"
     alert_rule_test:
       - eval_time: 3m
         alertname: BastionCiphertextTampering
@@ -127,6 +131,17 @@ tests:
       # Quiet when the export works: the counter exists at 0 from the start.
       - eval_time: 1m
         alertname: BastionAuditExportFailing
+        exp_alerts: []
+      # One alert for the outage, not one per limiter.
+      - eval_time: 3m
+        alertname: BastionRateLimitStoreDown
+        exp_alerts:
+          - exp_labels: { severity: warning }
+            exp_annotations:
+              summary: Rate-limit store unreachable, logins refused and flood guard off
+              runbook: docs/runbook.md#alert-bastionratelimitstoredown
+      - eval_time: 1m
+        alertname: BastionRateLimitStoreDown
         exp_alerts: []
 
   - name: availability

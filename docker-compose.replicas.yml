@@ -1,0 +1,78 @@
+# Several API replicas behind a load balancer (ADR 0023), on top of the PostgreSQL overlay:
+#   docker compose -f docker-compose.yml -f docker-compose.postgres.yml -f docker-compose.replicas.yml up -d
+#
+#   browser ─► lb 127.0.0.1:3000 ─► bastion ×2 ──db──► postgres
+#                                          └──ratelimit (internal)──► valkey (ACL user, no port)
+#
+# Rate limits live in Valkey (Redis protocol, BSD licence), so the replicas share one budget
+# per client instead of granting one each. REDIS_PASSWORD comes from `gen-secrets`.
+services:
+  valkey:
+    image: valkey/valkey:9.1.3-alpine@sha256:bf09d58e96d6b4524a15396b65b242bbe18beebbcc15a04d8ee75ddac62fae0b
+    user: "999:1000"
+    entrypoint: ["sh", "/setup/start.sh"]
+    environment:
+      VALKEY_PASSWORD: "${REDIS_PASSWORD:?REDIS_PASSWORD is missing from .env, run gen-secrets}"
+    volumes:
+      - ./deploy/valkey/start.sh:/setup/start.sh:ro
+    networks: [ratelimit]
+    read_only: true
+    tmpfs:
+      - /run/valkey:size=1m,uid=999,gid=1000,mode=0700
+      - /data:size=1m,uid=999,gid=1000
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 64
+    mem_limit: 128m
+    cpus: 0.5
+    healthcheck:
+      # No password needed to see that it answers: PING without AUTH gets NOAUTH, which is an answer.
+      test: ["CMD-SHELL", "valkey-cli ping 2>&1 | grep -qE 'PONG|NOAUTH'"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  bastion:
+    deploy:
+      replicas: 2
+    # The load balancer publishes the port now; two replicas cannot both bind it.
+    ports: !reset []
+    environment:
+      REDIS_URL: "redis://bastion:${REDIS_PASSWORD:?REDIS_PASSWORD is missing from .env, run gen-secrets}@valkey:6379"
+      # Exactly one proxy hop, which overwrites X-Forwarded-For (deploy/nginx/replicas.conf).
+      TRUST_PROXY: "1"
+    networks: [default, lab-control, metrics, db, ratelimit, edge]
+    depends_on:
+      valkey:
+        condition: service_healthy
+      bastion-migrate:
+        condition: service_completed_successfully
+
+  lb:
+    image: nginxinc/nginx-unprivileged:1.31.7-alpine@sha256:b5047b9b76845eac124358373c6852377c52e4b05834a47647e955dd91cb8f1e
+    volumes:
+      - ./deploy/nginx/replicas.conf:/etc/nginx/conf.d/default.conf:ro
+    ports:
+      - "127.0.0.1:3000:8080" # loopback only, as the single-replica setup
+    networks: [edge]
+    read_only: true
+    tmpfs:
+      - /tmp:size=8m
+      - /var/cache/nginx:size=16m
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 64
+    mem_limit: 64m
+    cpus: 0.5
+    depends_on: [bastion]
+    restart: unless-stopped
+
+networks:
+  # Replicas ↔ Valkey. No route out, nothing else joins it.
+  ratelimit:
+    internal: true
+  # Load balancer ↔ replicas: the only network the published port leads to.
+  edge:

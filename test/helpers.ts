@@ -117,6 +117,8 @@ export function setup(
     kms?: AppOptions['kms'];
     /** Make the database behave like a remote one (see withLatency). */
     latency?: boolean;
+    /** Shared rate-limit counters (ADR 0023). */
+    redis?: AppOptions['redis'];
   } = {},
 ): TestContext {
   const config = loadConfig(testEnv(opts.env));
@@ -131,6 +133,7 @@ export function setup(
     ...(opts.labRunner ? { labRunner: opts.labRunner } : {}),
     ...(opts.environmentRunner ? { environmentRunner: opts.environmentRunner } : {}),
     ...(opts.kms ? { kms: opts.kms } : {}),
+    ...(opts.redis ? { redis: opts.redis } : {}),
     rateLimits: { global: 10_000, auth: 10_000, refresh: 10_000, quiz: 10_000, ...opts.rateLimits },
   });
   return { config, db: fresh.owner, appDb, app, services, metrics, http: request(app) };

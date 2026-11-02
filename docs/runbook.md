@@ -171,6 +171,21 @@ docker compose -f docker-compose.yml -f docker-compose.postgres.yml up -d
 - **Backups**: `pg_dump` holds ciphertext and hashes only, like the SQLite file; the audit
   chain still needs `AUDIT_HMAC_KEY` to verify after a restore (`verify-audit`).
 
+## Several replicas (ADR 0023)
+
+```bash
+node dist/cli.js gen-secrets | grep REDIS_PASSWORD >> .env   # once, for an older .env
+docker compose -f docker-compose.yml -f docker-compose.postgres.yml -f docker-compose.replicas.yml up -d
+```
+
+- Two API replicas behind `lb` (nginx, `127.0.0.1:3000`); rate limits in `valkey` (no
+  published port). The boot log of each replica says `"rateLimits":"redis"`.
+- **A replica refuses to start with `rate-limit store unavailable`**: Valkey is down or the
+  password in `.env` changed after Valkey started (restart `valkey`).
+- **Outside compose**: put a proxy in front that *replaces* `X-Forwarded-For` (never
+  appends), set `TRUST_PROXY` to the number of such hops, and give `REDIS_URL` an ACL user
+  limited like `deploy/valkey/start.sh` does, over `rediss://` across a network.
+
 ## Rotating the JWT key
 Replace `JWT_SECRET` and redeploy. Every access token becomes invalid (users refresh
 transparently; refresh tokens are not JWTs and stay valid).
@@ -214,6 +229,16 @@ Audit entries are not reaching `AUDIT_EXPORT_FILE`: Wazuh is blind to them. The
 database still has every entry. Look for `audit export:` in the platform's logs: a full
 disk (`docker system df`), or the `bastion-audit` volume missing or read-only. Once
 fixed, compare `seq` in Wazuh with `GET /v1/admin/audit` to see what Wazuh missed.
+
+## Alert: `BastionRateLimitStoreDown`
+The replicas cannot reach Redis/Valkey (ADR 0023). Logins, refreshes, flags, quizzes,
+labs and detection evaluations answer 503: their limiters fail closed, so nobody can guess
+while the counters are gone. The global flood guard fails open: the API stays up, without
+it. Check the `valkey` service (`docker compose ps valkey`, its logs), then a replica's log
+line `rate-limit store unavailable` for the reason (`authentication refused`: the
+`REDIS_PASSWORD` in `.env` no longer matches the one the server started with; restart
+`valkey`). Counters start from zero after a Valkey restart: every client gets a fresh
+window, which is accepted (no persistence on purpose).
 
 ## Alert: `BastionDown`
 Prometheus cannot scrape the platform for two minutes. Check `/healthz` on the API: if

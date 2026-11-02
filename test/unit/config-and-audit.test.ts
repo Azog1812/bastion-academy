@@ -34,6 +34,8 @@ describe('configuration fails closed', () => {
     // PostgreSQL (ADR 0021): the URL carries the password, and the link every secret row.
     ['database URL that is not PostgreSQL', { DATABASE_URL: 'mysql://bastion:pw@db/bastion' }, 'postgres:// URL'],
     ['database across a network without verified TLS', { NODE_ENV: 'production', SCRYPT_LOG_N: '17', DATABASE_URL: 'postgres://bastion:pw@db.internal.example/bastion?sslmode=require' }, 'sslmode=verify-full'],
+    ['Redis URL of another scheme', { REDIS_URL: 'http://cache.example:6379' }, 'redis://'],
+    ['Redis across a network without TLS', { NODE_ENV: 'production', SCRYPT_LOG_N: '17', REDIS_URL: 'redis://bastion:pw@cache.internal.example:6379' }, 'must be rediss://'],
     ['owner connection across a network without verified TLS', { NODE_ENV: 'production', SCRYPT_LOG_N: '17', DATABASE_OWNER_URL: 'postgres://owner:pw@db.internal.example/bastion' }, 'DATABASE_OWNER_URL'],
   ])('refuses to start with a %s', (_name, override, message) => {
     expect(() => loadConfig(testEnv(override))).toThrow(message);
@@ -77,6 +79,8 @@ describe('configuration fails closed', () => {
     expect(() => loadConfig(testEnv({ ...prod, DATABASE_URL: 'postgresql://bastion:pw@postgres:5432/bastion' }))).not.toThrow();
     expect(() => loadConfig(testEnv({ ...prod, DATABASE_URL: 'postgres://bastion:pw@127.0.0.1:5432/bastion' }))).not.toThrow();
     expect(() => loadConfig(testEnv({ ...prod, DATABASE_URL: 'postgres://bastion:pw@10.0.0.5/bastion' }))).toThrow('verify-full');
+    expect(() => loadConfig(testEnv({ ...prod, REDIS_URL: 'redis://bastion:pw@redis:6379' }))).not.toThrow();
+    expect(() => loadConfig(testEnv({ ...prod, REDIS_URL: 'rediss://bastion:pw@cache.example:6380' }))).not.toThrow();
   });
 
   it('reads the database URL, password included, from a file', () => {
