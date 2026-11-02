@@ -102,18 +102,18 @@ export class LabService {
     private readonly now: () => number = Date.now,
   ) {}
 
-  private labChallenge(userId: string, challengeId: string, ip: string | null): { id: string; lab: LabId } {
+  private async labChallenge(userId: string, challengeId: string, ip: string | null): Promise<{ id: string; lab: LabId }> {
     const c = this.curriculum.challenges.get(challengeId);
     if (!c?.lab) throw notFound('Lab not found');
-    if (!this.learning.isModuleUnlocked(userId, c.moduleId)) {
-      this.audit.record({ action: 'lab.start', outcome: 'denied', actorId: userId, target: c.id, ip, details: { reason: 'locked' } });
+    if (!await this.learning.isModuleUnlocked(userId, c.moduleId)) {
+      await this.audit.record({ action: 'lab.start', outcome: 'denied', actorId: userId, target: c.id, ip, details: { reason: 'locked' } });
       throw forbidden('Complete the prerequisite modules first');
     }
     return { id: c.id, lab: c.lab };
   }
 
-  private mine(userId: string): InstanceRow | undefined {
-    return this.db.prepare('SELECT id, challenge_id, expires_at FROM lab_instances WHERE user_id = ?').get(userId) as InstanceRow | undefined;
+  private async mine(userId: string): Promise<InstanceRow | undefined> {
+    return await this.db.one('SELECT id, challenge_id, expires_at FROM lab_instances WHERE user_id = ?', userId) as InstanceRow | undefined;
   }
 
   private publicView(row: InstanceRow) {
@@ -121,27 +121,25 @@ export class LabService {
   }
 
   /** For the challenge page: is the feature on, and is my lab for this challenge running? */
-  view(userId: string, challengeId: string) {
-    const row = this.mine(userId);
+  async view(userId: string, challengeId: string) {
+    const row = await this.mine(userId);
     const live = row && row.challenge_id === challengeId && row.expires_at > this.now() ? row : undefined;
     return { enabled: this.runner !== undefined, ttlSeconds: this.ttlSeconds, instance: live ? this.publicView(live) : null };
   }
 
   async start(userId: string, challengeId: string, ip: string | null) {
-    const c = this.labChallenge(userId, challengeId, ip);
+    const c = await this.labChallenge(userId, challengeId, ip);
     if (!this.runner) throw unavailable('Labs are not enabled on this installation');
 
-    const existing = this.mine(userId);
+    const existing = await this.mine(userId);
     if (existing && existing.expires_at <= this.now()) await this.destroy(userId, existing, 'lab.expire', ip);
     else if (existing?.challenge_id === c.id) return this.publicView(existing);
     else if (existing) throw conflict('Stop your running lab before starting another one');
 
-    // Claim the slot before any await (TOCTOU): the UNIQUE(user_id) constraint decides between concurrent starts.
+    // Claim the slot first (TOCTOU): the UNIQUE(user_id) constraint, not the check above, decides between concurrent starts.
     const row: InstanceRow = { id: randomBytes(16).toString('hex'), challenge_id: c.id, expires_at: this.now() + this.ttlSeconds * 1000 };
     try {
-      this.db
-        .prepare('INSERT INTO lab_instances (id, user_id, challenge_id, created_at, expires_at) VALUES (?, ?, ?, ?, ?)')
-        .run(row.id, userId, row.challenge_id, this.now(), row.expires_at);
+      await this.db.run('INSERT INTO lab_instances (id, user_id, challenge_id, created_at, expires_at) VALUES (?, ?, ?, ?, ?)', row.id, userId, row.challenge_id, this.now(), row.expires_at);
     } catch {
       throw conflict('A lab is already starting for this account');
     }
@@ -149,21 +147,21 @@ export class LabService {
     try {
       await this.runner.start({ instanceId: row.id, lab: c.lab, flag: this.challenges.flagFor(userId, c.id), ttlSeconds: this.ttlSeconds });
     } catch (err) {
-      this.db.prepare('DELETE FROM lab_instances WHERE id = ? AND user_id = ?').run(row.id, userId);
+      await this.db.run('DELETE FROM lab_instances WHERE id = ? AND user_id = ?', row.id, userId);
       const code = err instanceof LabRunnerError ? err.code : 'unreachable';
-      this.audit.record({ action: 'lab.start', outcome: 'failure', actorId: userId, target: c.id, ip, details: { reason: code } });
+      await this.audit.record({ action: 'lab.start', outcome: 'failure', actorId: userId, target: c.id, ip, details: { reason: code } });
       throw unavailable(
         code === 'lab_image_missing'
           ? 'This lab is not built yet: run "docker compose --profile labs build"'
           : 'The lab could not be started, try again in a moment',
       );
     }
-    this.audit.record({ action: 'lab.start', outcome: 'success', actorId: userId, target: c.id, ip, details: { lab: c.lab } });
+    await this.audit.record({ action: 'lab.start', outcome: 'success', actorId: userId, target: c.id, ip, details: { lab: c.lab } });
     return this.publicView(row);
   }
 
   async stop(userId: string, challengeId: string, ip: string | null): Promise<void> {
-    const row = this.mine(userId);
+    const row = await this.mine(userId);
     if (row?.challenge_id !== challengeId) throw notFound('No running lab for this challenge');
     await this.destroy(userId, row, 'lab.stop', ip);
   }
@@ -171,20 +169,18 @@ export class LabService {
   /** Platform-side TTL. The runner has its own reaper too, so neither side alone keeps a lab alive. */
   async reap(): Promise<number> {
     // Cross-user on purpose: an operator job over expired rows, never exposed over HTTP.
-    const expired = this.db
-      .prepare('SELECT id, user_id, challenge_id, expires_at FROM lab_instances WHERE expires_at <= ?')
-      .all(this.now()) as unknown as ExpiredRow[];
+    const expired = await this.db.many('SELECT id, user_id, challenge_id, expires_at FROM lab_instances WHERE expires_at <= ?', this.now()) as unknown as ExpiredRow[];
     for (const row of expired) await this.destroy(row.user_id, row, 'lab.expire', null);
     return expired.length;
   }
 
   private async destroy(userId: string, row: InstanceRow, action: 'lab.stop' | 'lab.expire', ip: string | null): Promise<void> {
-    this.db.prepare('DELETE FROM lab_instances WHERE id = ? AND user_id = ?').run(row.id, userId);
+    await this.db.run('DELETE FROM lab_instances WHERE id = ? AND user_id = ?', row.id, userId);
     let outcome: 'success' | 'failure' = 'success';
     // If the runner is unreachable, its own TTL reaper removes the containers later.
     await this.runner?.stop(row.id).catch(() => {
       outcome = 'failure';
     });
-    this.audit.record({ action, outcome, actorId: userId, target: row.challenge_id, ip });
+    await this.audit.record({ action, outcome, actorId: userId, target: row.challenge_id, ip });
   }
 }

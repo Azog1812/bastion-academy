@@ -60,7 +60,7 @@ describe('MFA enrolment', () => {
     expect(en.body.recoveryCodes).toHaveLength(10);
     expect((await t.http.get('/v1/me').set(s.auth).expect(200)).body.mfaEnabled).toBe(true);
     await t.http.post('/v1/me/mfa/setup').set(s.auth).send({ password: STRONG_PASSWORD }).expect(409);
-    expect(auditActions(t)).toEqual(expect.arrayContaining(['mfa.setup:success', 'mfa.enable:failure', 'mfa.enable:success']));
+    expect(await auditActions(t)).toEqual(expect.arrayContaining(['mfa.setup:success', 'mfa.enable:failure', 'mfa.enable:success']));
   });
 
   it('stores the seed encrypted and the recovery codes hashed', async () => {
@@ -68,9 +68,9 @@ describe('MFA enrolment', () => {
     const t = setup();
     const s = await newUser(t);
     const { secret, recoveryCodes } = await enrol(t, s);
-    const row = t.db.prepare('SELECT secret FROM user_mfa WHERE user_id = ?').get(s.id) as { secret: Uint8Array };
+    const row = await t.db.one('SELECT secret FROM user_mfa WHERE user_id = ?', s.id) as { secret: Uint8Array };
     expect(Buffer.from(row.secret).includes(secret)).toBe(false);
-    const dump = JSON.stringify(t.db.prepare('SELECT code_hash FROM mfa_recovery_codes WHERE user_id = ?').all(s.id));
+    const dump = JSON.stringify(await t.db.many('SELECT code_hash FROM mfa_recovery_codes WHERE user_id = ?', s.id));
     for (const c of recoveryCodes) expect(dump).not.toContain(c.replaceAll('-', ''));
   });
 });
@@ -84,7 +84,7 @@ describe('MFA login', () => {
     const token = await mfaToken(t, s);
     const res = await t.http.post('/v1/auth/mfa').send({ mfaToken: token, code: code(secret, STEP + 1) }).expect(200);
     await t.http.get('/v1/me').set({ Authorization: `Bearer ${res.body.accessToken as string}` }).expect(200);
-    expect(auditActions(t)).toContain('auth.mfa:success');
+    expect(await auditActions(t)).toContain('auth.mfa:success');
   });
 
   it('refuses a replayed TOTP code, even within its validity window', async () => {
@@ -130,7 +130,7 @@ describe('MFA login', () => {
     await enrol(t, s);
     const token = await mfaToken(t, s);
     for (let i = 0; i < 5; i++) await t.http.post('/v1/auth/mfa').send({ mfaToken: token, code: String(200000 + i) }).expect(401);
-    expect(auditActions(t)).toContain('auth.lockout:denied');
+    expect(await auditActions(t)).toContain('auth.lockout:denied');
     // Locked: same generic 401 at the password step (no enumeration), whatever the code.
     const res = await login(t, s).expect(401);
     expect(res.body.message).toBe('Invalid e-mail or password');
@@ -156,7 +156,7 @@ describe('MFA login', () => {
     await t.http.post('/v1/auth/mfa').send({ mfaToken: tok4, code: rc.toLowerCase() }).expect(200);
     const tok5 = await mfaToken(t, s);
     await t.http.post('/v1/auth/mfa').send({ mfaToken: tok5, code: rc }).expect(401);
-    const used = t.services.audit.list(100).find((r) => r.action === 'mfa.recovery_code_used');
+    const used = (await t.services.audit.list(100)).find((r) => r.action === 'mfa.recovery_code_used');
     expect(JSON.parse(used?.details ?? '{}')).toEqual({ left: 9 });
   });
 
@@ -193,10 +193,10 @@ describe('MFA removal', () => {
     const { secret } = await enrol(t, s);
     await t.http.post('/v1/me/mfa/disable').set(s.auth).send({ password: 'not the password', code: code(secret, STEP + 1) }).expect(401);
     await t.http.post('/v1/me/mfa/disable').set(s.auth).send({ password: STRONG_PASSWORD, code: '000000' }).expect(401);
-    expect(auditActions(t)).toContain('mfa.disable:failure');
+    expect(await auditActions(t)).toContain('mfa.disable:failure');
     await t.http.post('/v1/me/mfa/disable').set(s.auth).send({ password: STRONG_PASSWORD, code: code(secret, STEP + 1) }).expect(204);
     expect((await login(t, s).expect(200)).body.accessToken).toBeDefined();
-    expect(t.db.prepare('SELECT COUNT(*) AS n FROM mfa_recovery_codes WHERE user_id = ?').get(s.id)).toEqual({ n: 0 });
+    expect(await t.db.one('SELECT COUNT(*) AS n FROM mfa_recovery_codes WHERE user_id = ?', s.id)).toEqual({ n: 0 });
   });
 });
 
@@ -210,7 +210,7 @@ describe('MFA key rotation (CLI)', () => {
     const rotated = new MfaService(t.db, new LocalKms({ keys, activeKeyId: 'k2' }), t.services.audit, 'Bastion Academy');
     expect(await rotated.rotateKeys()).toBe(1);
     expect(await rotated.rotateKeys()).toBe(0); // idempotent
-    expect(t.db.prepare('SELECT key_id FROM user_mfa WHERE user_id = ?').get(s.id)).toEqual({ key_id: 'k2' });
+    expect(await t.db.one('SELECT key_id FROM user_mfa WHERE user_id = ?', s.id)).toEqual({ key_id: 'k2' });
     expect(await rotated.verify(s.id, code(secret, STEP + 1), null)).toBe('totp');
   });
 });

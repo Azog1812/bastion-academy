@@ -39,7 +39,7 @@ describe('metrics endpoint (ADR 0011)', () => {
 
   it('fails a scrape without leaking why when a collector breaks', async () => {
     const t = setup();
-    t.db.close(); // every database gauge now throws
+    await t.db.close(); // every database gauge now throws
     const res = await scrape(t).get('/metrics').set(bearer).expect(500);
     expect(res.text).toBe('scrape failed\n');
   });
@@ -92,7 +92,7 @@ describe('what the metrics contain', () => {
     const alice = await newUser(t);
     const mallory = await newUser(t);
     const { body } = await t.http.post('/v1/notes').set(alice.auth).send({ title: 't', body: 'c' }).expect(201);
-    t.db.prepare('UPDATE notes SET owner_id = ? WHERE id = ?').run(mallory.id, body.id);
+    await t.db.run('UPDATE notes SET owner_id = ? WHERE id = ?', mallory.id, body.id);
     await t.http.get(`/v1/notes/${String(body.id)}`).set(mallory.auth).expect(500);
     expect(await metricsText(t)).toContain('bastion_integrity_failures_total 1\n');
   });

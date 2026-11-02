@@ -70,7 +70,7 @@ describe('shared environments (ADR 0013): a real Wazuh started from the UI', () 
     await t.http.post('/v1/environments/wazuh/start').set(alice.auth).send({}).expect(403); // prerequisites still apply
     await t.http.post('/v1/environments/wazuh/stop').set(alice.auth).send({}).expect(403);
     expect(runner.calls).toEqual([]);
-    expect(auditActions(t).filter((a) => a.startsWith('environment.'))).toEqual(['environment.start:denied', 'environment.start:denied', 'environment.stop:denied']);
+    expect((await auditActions(t)).filter((a) => a.startsWith('environment.'))).toEqual(['environment.start:denied', 'environment.start:denied', 'environment.stop:denied']);
   });
 
   it('starts and stops for an allowed learner, audits both, and never sends a secret', async () => {
@@ -87,7 +87,7 @@ describe('shared environments (ADR 0013): a real Wazuh started from the UI', () 
 
     await t.http.post('/v1/environments/wazuh/stop').set(alice.auth).send({}).expect(204);
     expect(runner.calls).toEqual(['status wazuh', 'start wazuh', 'status wazuh', 'stop wazuh']);
-    expect(auditActions(t).filter((a) => a.startsWith('environment.'))).toEqual(['environment.start:success', 'environment.stop:success']);
+    expect((await auditActions(t)).filter((a) => a.startsWith('environment.'))).toEqual(['environment.start:success', 'environment.stop:success']);
   });
 
   it('only acts on catalog environments whose module exists', async () => {
@@ -112,7 +112,7 @@ describe('shared environments (ADR 0013): a real Wazuh started from the UI', () 
     expect(JSON.stringify(res2.body)).not.toContain('172.18');
     await t.http.post('/v1/environments/wazuh/stop').set(alice.auth).send({}).expect(503);
     expect((await list(t, alice))[0]).toMatchObject({ state: 'unavailable' });
-    expect(auditActions(t).filter((a) => a.startsWith('environment.'))).toEqual(['environment.start:failure', 'environment.start:failure', 'environment.stop:failure']);
+    expect((await auditActions(t)).filter((a) => a.startsWith('environment.'))).toEqual(['environment.start:failure', 'environment.start:failure', 'environment.stop:failure']);
   });
 
   it('is off without a runner, and rate-limited per account', async () => {

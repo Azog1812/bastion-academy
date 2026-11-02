@@ -154,20 +154,19 @@ class Gauge {
   constructor(
     readonly name: string,
     readonly help: string,
-    private readonly collect: () => number,
+    private readonly collect: () => number | Promise<number>,
     private readonly constLabels = '',
   ) {
     if (!METRIC_NAME.test(name)) throw new Error(`invalid metric name "${name}"`);
   }
-  render(): string {
-    return [`# HELP ${this.name} ${escapeHelp(this.help)}`, `# TYPE ${this.name} gauge`, `${this.name}${this.constLabels} ${formatNumber(this.collect())}`].join(
-      '\n',
-    );
+  async render(): Promise<string> {
+    const value = await this.collect();
+    return [`# HELP ${this.name} ${escapeHelp(this.help)}`, `# TYPE ${this.name} gauge`, `${this.name}${this.constLabels} ${formatNumber(value)}`].join('\n');
   }
 }
 
 export class Registry {
-  private readonly metrics: { name: string; render(): string }[] = [];
+  private readonly metrics: { name: string; render(): string | Promise<string> }[] = [];
   readonly dropped: Counter;
 
   constructor() {
@@ -176,7 +175,7 @@ export class Registry {
     );
   }
 
-  private register<M extends { name: string; render(): string }>(m: M): M {
+  private register<M extends { name: string; render(): string | Promise<string> }>(m: M): M {
     if (this.metrics.some((x) => x.name === m.name)) throw new Error(`metric "${m.name}" registered twice`);
     this.metrics.push(m);
     return m;
@@ -204,14 +203,14 @@ export class Registry {
     );
   }
 
-  gauge(name: string, help: string, collect: () => number, constLabels: Labels = {}): void {
+  gauge(name: string, help: string, collect: () => number | Promise<number>, constLabels: Labels = {}): void {
     const names = Object.keys(constLabels);
     this.register(new Gauge(name, help, collect, formatLabels(names, names.map((n) => constLabels[n] ?? ''))));
   }
 
   /** The whole scrape body. A gauge that throws fails the scrape (Prometheus marks the target down) rather than lying. */
-  render(): string {
-    return this.metrics.map((m) => m.render()).join('\n') + '\n';
+  async render(): Promise<string> {
+    return (await Promise.all(this.metrics.map(async (m) => m.render()))).join('\n') + '\n';
   }
 }
 
@@ -234,7 +233,7 @@ function eventLoopDelay(): ReturnType<typeof monitorEventLoopDelay> {
   return loopDelay;
 }
 
-const count = (db: Database, sql: string, ...params: number[]): number => (db.prepare(sql).get(...params) as { n: number }).n;
+const count = async (db: Database, sql: string, ...params: number[]): Promise<number> => ((await db.one(sql, ...params)) as { n: number }).n;
 
 /** The platform's metrics. Security signals come from the audit log, so every audited event is countable. */
 export function createMetrics(db: Database): AppMetrics {

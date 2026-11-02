@@ -42,7 +42,7 @@ export class EnvironmentService {
 
   private async view(userId: string, id: EnvironmentId) {
     const spec = ENVIRONMENTS[id];
-    const available = this.learning.isModuleUnlocked(userId, spec.moduleId);
+    const available = await this.learning.isModuleUnlocked(userId, spec.moduleId);
     let status: EnvironmentStatus | null = null;
     // Locked learners learn nothing about the machine's containers.
     if (available && this.runner) status = await this.runner.environmentStatus(id).catch(() => null);
@@ -60,10 +60,10 @@ export class EnvironmentService {
     };
   }
 
-  private gate(userId: string, rawId: string, action: 'environment.start' | 'environment.stop', ip: string | null): EnvironmentId {
+  private async gate(userId: string, rawId: string, action: 'environment.start' | 'environment.stop', ip: string | null): Promise<EnvironmentId> {
     if (!isEnvironmentId(rawId) || !this.curriculum.modules.has(ENVIRONMENTS[rawId].moduleId)) throw notFound('Environment not found');
-    if (!this.learning.isModuleUnlocked(userId, ENVIRONMENTS[rawId].moduleId)) {
-      this.audit.record({ action, outcome: 'denied', actorId: userId, target: rawId, ip, details: { reason: 'locked' } });
+    if (!await this.learning.isModuleUnlocked(userId, ENVIRONMENTS[rawId].moduleId)) {
+      await this.audit.record({ action, outcome: 'denied', actorId: userId, target: rawId, ip, details: { reason: 'locked' } });
       throw forbidden('Add the module to your training and complete its prerequisites first');
     }
     if (!this.runner) throw unavailable('Environments need the lab runner (docker compose up)');
@@ -71,30 +71,30 @@ export class EnvironmentService {
   }
 
   async start(userId: string, rawId: string, ip: string | null) {
-    const id = this.gate(userId, rawId, 'environment.start', ip);
+    const id = await this.gate(userId, rawId, 'environment.start', ip);
     try {
       await this.runner?.startEnvironment(id);
     } catch (err) {
       const code = err instanceof LabRunnerError ? err.code : 'unreachable';
-      this.audit.record({ action: 'environment.start', outcome: 'failure', actorId: userId, target: id, ip, details: { reason: code } });
+      await this.audit.record({ action: 'environment.start', outcome: 'failure', actorId: userId, target: id, ip, details: { reason: code } });
       throw unavailable(
         code === 'environment_missing'
           ? `Not installed yet: run "docker compose --profile ${id} up -d" once`
           : 'The environment could not be started, try again in a moment',
       );
     }
-    this.audit.record({ action: 'environment.start', outcome: 'success', actorId: userId, target: id, ip });
+    await this.audit.record({ action: 'environment.start', outcome: 'success', actorId: userId, target: id, ip });
     return this.view(userId, id);
   }
 
   async stop(userId: string, rawId: string, ip: string | null): Promise<void> {
-    const id = this.gate(userId, rawId, 'environment.stop', ip);
+    const id = await this.gate(userId, rawId, 'environment.stop', ip);
     try {
       await this.runner?.stopEnvironment(id);
     } catch {
-      this.audit.record({ action: 'environment.stop', outcome: 'failure', actorId: userId, target: id, ip });
+      await this.audit.record({ action: 'environment.stop', outcome: 'failure', actorId: userId, target: id, ip });
       throw unavailable('The environment could not be stopped, try again in a moment');
     }
-    this.audit.record({ action: 'environment.stop', outcome: 'success', actorId: userId, target: id, ip });
+    await this.audit.record({ action: 'environment.stop', outcome: 'success', actorId: userId, target: id, ip });
   }
 }

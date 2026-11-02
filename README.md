@@ -312,7 +312,7 @@ flowchart LR
 | Escaping a lab (to the host, the platform, other labs, the Internet) | Hardened container, **per-instance internal network**, gateway as the only peer, Docker socket held by the runner only, closed lab catalog | [`lab-runner.test.ts`](test/unit/lab-runner.test.ts), [`labs.test.ts`](test/security/labs.test.ts) |
 | SSRF through the lab gateway | Upstream **built** from a 32-hex instance id, never read from the request | [`lab-runner.test.ts`](test/unit/lab-runner.test.ts) |
 | Stolen refresh token | Single-use **rotation with reuse detection**: replay kills the whole session family (RFC 9700) | [`authentication.test.ts`](test/security/authentication.test.ts) |
-| Race conditions (TOCTOU) on refresh & lockout | Token claimed atomically before any `await`; `UPDATE … RETURNING` counters | parallel-request tests |
+| Race conditions (TOCTOU) on refresh, lockout, audit chain, last second factor | Token claimed by one compare-and-set; `UPDATE … RETURNING` counters; every other check-then-act in one transaction, never "no `await` in between" ([ADR 0020](docs/adr/0020-async-database-layer.md)) | parallel-request tests; race tests against a latency-injecting database ([`db.test.ts`](test/unit/db.test.ts)) |
 | "Stateless" JWT that can't be revoked | `token_version` + role checked on every request → instant logout-everywhere and demotion | [`authorization.test.ts`](test/security/authorization.test.ts) |
 | Mass assignment, prototype pollution, HPP | Strict schemas reject unknown keys; simple query parser | [`input-and-transport.test.ts`](test/security/input-and-transport.test.ts) |
 | SQL injection | Bound parameters only, enforced by **ESLint and Semgrep rules** | tests + CI |

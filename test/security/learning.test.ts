@@ -69,7 +69,7 @@ describe('learning: curriculum and progress', () => {
     expect(cur.body.paths[0].modules[1]).toMatchObject({ unlocked: true, completed: false });
     await t.http.get('/v1/lessons/quiz-lesson').set(alice.auth).expect(200);
 
-    expect(auditActions(t)).toEqual(expect.arrayContaining(['lesson.complete:denied', 'lesson.complete:success']));
+    expect(await auditActions(t)).toEqual(expect.arrayContaining(['lesson.complete:denied', 'lesson.complete:success']));
   });
 
   it('never sends quiz answers to the client', async () => {
@@ -106,7 +106,7 @@ describe('learning: curriculum and progress', () => {
 
     const ok = await complete(t, alice, 'quiz-lesson', RIGHT).expect(200);
     expect(ok.body.passed).toBe(true);
-    expect(auditActions(t)).toContain('lesson.complete:failure');
+    expect(await auditActions(t)).toContain('lesson.complete:failure');
   });
 
   it('rejects malformed or incomplete submissions instead of guessing', async () => {
@@ -130,7 +130,7 @@ describe('learning: curriculum and progress', () => {
     const first = await complete(t, alice, 'intro').expect(200);
     const again = await complete(t, alice, 'intro').expect(200);
     expect(again.body).toEqual({ passed: true, alreadyCompleted: true, completedAt: first.body.completedAt });
-    expect(auditActions(t).filter((a) => a === 'lesson.complete:success')).toHaveLength(1);
+    expect((await auditActions(t)).filter((a) => a === 'lesson.complete:success')).toHaveLength(1);
   });
 
   it("isolates progress: one learner's completions never unlock or show for another", async () => {
@@ -169,8 +169,8 @@ describe('learning: curriculum and progress', () => {
     const t = setup({ curriculum });
     const alice = await newUser(t);
     await complete(t, alice, 'intro').expect(200);
-    t.db.prepare('DELETE FROM users WHERE id = ?').run(alice.id);
-    const { n } = t.db.prepare('SELECT COUNT(*) AS n FROM lesson_progress WHERE user_id = ?').get(alice.id) as { n: number };
+    await t.db.run('DELETE FROM users WHERE id = ?', alice.id);
+    const { n } = await t.db.one('SELECT COUNT(*) AS n FROM lesson_progress WHERE user_id = ?', alice.id) as { n: number };
     expect(n).toBe(0);
   });
 });

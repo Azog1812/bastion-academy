@@ -11,7 +11,7 @@ import {
   type RelyingParty,
 } from '../crypto/webauthn.js';
 import type { Database } from '../db.js';
-import { badRequest, conflict, notFound, unavailable } from '../errors.js';
+import { badRequest, conflict, notFound, unauthorized, unavailable } from '../errors.js';
 
 /** What the page passes back from navigator.credentials.create() / .get(), base64url-encoded. */
 export interface RegistrationResponse {
@@ -33,6 +33,8 @@ export type PasswordlessFailure = 'challenge' | 'user_handle' | 'unknown_credent
 
 const CHALLENGE_TTL_MS = 5 * 60 * 1000;
 const MAX_PASSKEYS = 10;
+/** Removing the last second factor is disabling MFA: password AND a code, as for TOTP. */
+export const LAST_FACTOR = 'This is your last second factor: enter a recovery code to remove it';
 /**
  * Passwordless challenges are handed out before anyone is identified, so the per-address
  * rate limit is the only per-client brake. This global cap bounds what a botnet spread
@@ -82,14 +84,12 @@ export class PasskeyService {
     private readonly now: () => number = Date.now,
   ) {}
 
-  count(userId: string): number {
-    return (this.db.prepare('SELECT COUNT(*) AS n FROM passkeys WHERE user_id = ?').get(userId) as { n: number }).n;
+  async count(userId: string, db: Database = this.db): Promise<number> {
+    return ((await db.one('SELECT COUNT(*) AS n FROM passkeys WHERE user_id = ?', userId)) as { n: number }).n;
   }
 
-  list(userId: string) {
-    const rows = this.db
-      .prepare('SELECT id, name, created_at, last_used_at FROM passkeys WHERE user_id = ? ORDER BY created_at')
-      .all(userId) as { id: string; name: string; created_at: number; last_used_at: number | null }[];
+  async list(userId: string) {
+    const rows = await this.db.many('SELECT id, name, created_at, last_used_at FROM passkeys WHERE user_id = ? ORDER BY created_at', userId) as { id: string; name: string; created_at: number; last_used_at: number | null }[];
     return rows.map((r) => ({
       id: r.id,
       name: r.name,
@@ -98,34 +98,30 @@ export class PasskeyService {
     }));
   }
 
-  private newChallenge(userId: string, purpose: 'register' | 'login', mfaTokenHash: string | null): string {
+  private async newChallenge(userId: string, purpose: 'register' | 'login', mfaTokenHash: string | null): Promise<string> {
     const challenge = randomBytes(32);
-    this.db.prepare('DELETE FROM webauthn_challenges WHERE user_id = ? AND expires_at <= ?').run(userId, this.now());
-    this.db
-      .prepare('INSERT INTO webauthn_challenges (challenge_hash, user_id, purpose, mfa_token_hash, expires_at) VALUES (?, ?, ?, ?, ?)')
-      .run(sha256(challenge), userId, purpose, mfaTokenHash, this.now() + CHALLENGE_TTL_MS);
+    await this.db.run('DELETE FROM webauthn_challenges WHERE user_id = ? AND expires_at <= ?', userId, this.now());
+    await this.db.run('INSERT INTO webauthn_challenges (challenge_hash, user_id, purpose, mfa_token_hash, expires_at) VALUES (?, ?, ?, ?, ?)', sha256(challenge), userId, purpose, mfaTokenHash, this.now() + CHALLENGE_TTL_MS);
     return b64u(challenge);
   }
 
   /** Consumes a challenge: found or not, valid or not, it can never be presented again. */
-  private takeChallenge(userId: string, challenge: Buffer, purpose: 'register' | 'login', mfaTokenHash: string | null): boolean {
+  private async takeChallenge(userId: string, challenge: Buffer, purpose: 'register' | 'login', mfaTokenHash: string | null): Promise<boolean> {
     // The MFA-step binding is compared by SQLite (IS: equal, or both NULL), never in JS with ===.
-    const row = this.db
-      .prepare('DELETE FROM webauthn_challenges WHERE challenge_hash = ? AND user_id = ? RETURNING purpose, (mfa_token_hash IS ?) AS same_step, expires_at')
-      .get(sha256(challenge), userId, mfaTokenHash) as { purpose: string; same_step: number; expires_at: number } | undefined;
+    const row = await this.db.one('DELETE FROM webauthn_challenges WHERE challenge_hash = ? AND user_id = ? RETURNING purpose, (mfa_token_hash IS ?) AS same_step, expires_at', sha256(challenge), userId, mfaTokenHash) as { purpose: string; same_step: number; expires_at: number } | undefined;
     return row !== undefined && row.purpose === purpose && row.same_step === 1 && row.expires_at > this.now();
   }
 
-  private credentialIds(userId: string): string[] {
-    const rows = this.db.prepare('SELECT credential_id FROM passkeys WHERE user_id = ?').all(userId) as { credential_id: Uint8Array }[];
+  private async credentialIds(userId: string): Promise<string[]> {
+    const rows = await this.db.many('SELECT credential_id FROM passkeys WHERE user_id = ?', userId) as { credential_id: Uint8Array }[];
     return rows.map((r) => b64u(r.credential_id));
   }
 
   /** Options for navigator.credentials.create(). The caller has re-checked the password. */
-  registrationOptions(userId: string, account: string) {
-    if (this.count(userId) >= MAX_PASSKEYS) throw conflict(`At most ${String(MAX_PASSKEYS)} passkeys per account`);
+  async registrationOptions(userId: string, account: string) {
+    if (await this.count(userId) >= MAX_PASSKEYS) throw conflict(`At most ${String(MAX_PASSKEYS)} passkeys per account`);
     return {
-      challenge: this.newChallenge(userId, 'register', null),
+      challenge: await this.newChallenge(userId, 'register', null),
       rp: { id: this.rp.id, name: this.rp.name },
       // The user handle is the account id: no e-mail stored on the authenticator.
       user: { id: b64u(Buffer.from(userId)), name: account, displayName: account },
@@ -133,14 +129,14 @@ export class PasskeyService {
       timeout: CHALLENGE_TTL_MS,
       attestation: 'none',
       authenticatorSelection: { residentKey: 'preferred', userVerification: 'preferred' },
-      excludeCredentials: this.credentialIds(userId).map((id) => ({ type: 'public-key', id })),
+      excludeCredentials: (await this.credentialIds(userId)).map((id) => ({ type: 'public-key', id })),
     };
   }
 
-  register(userId: string, name: string, cred: RegistrationResponse, ip: string | null) {
+  async register(userId: string, name: string, cred: RegistrationResponse, ip: string | null) {
     const clientDataJSON = fromB64u(cred.response.clientDataJSON);
-    if (!this.takeChallenge(userId, claimedChallenge(clientDataJSON), 'register', null)) {
-      this.audit.record({ action: 'passkey.register', outcome: 'failure', actorId: userId, ip, details: { reason: 'challenge' } });
+    if (!await this.takeChallenge(userId, claimedChallenge(clientDataJSON), 'register', null)) {
+      await this.audit.record({ action: 'passkey.register', outcome: 'failure', actorId: userId, ip, details: { reason: 'challenge' } });
       throw badRequest('This passkey request has expired: start again');
     }
     let reg;
@@ -148,29 +144,40 @@ export class PasskeyService {
       reg = verifyRegistration(this.rp, claimedChallenge(clientDataJSON), clientDataJSON, fromB64u(cred.response.attestationObject));
     } catch (err) {
       if (!(err instanceof WebAuthnError)) throw err;
-      this.audit.record({ action: 'passkey.register', outcome: 'failure', actorId: userId, ip, details: { reason: err.message.slice(0, 80) } });
+      await this.audit.record({ action: 'passkey.register', outcome: 'failure', actorId: userId, ip, details: { reason: err.message.slice(0, 80) } });
       throw badRequest(`Passkey refused: ${err.message}`);
     }
-    if (this.count(userId) >= MAX_PASSKEYS) throw conflict(`At most ${String(MAX_PASSKEYS)} passkeys per account`);
     const id = randomUUID();
-    const inserted = this.db
-      .prepare(
+    // Cap and insert in one transaction, or concurrent enrolments could all pass the count.
+    const outcome = await this.db.transaction(async (tx) => {
+      if ((await this.count(userId, tx)) >= MAX_PASSKEYS) return 'full';
+      const inserted = await tx.run(
         `INSERT INTO passkeys (id, user_id, credential_id, public_key, alg, sign_count, name, created_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (credential_id) DO NOTHING`,
-      )
-      .run(id, userId, reg.credentialId, reg.publicKey, reg.alg, reg.signCount, name, this.now());
+        id,
+        userId,
+        reg.credentialId,
+        reg.publicKey,
+        reg.alg,
+        reg.signCount,
+        name,
+        this.now(),
+      );
+      return inserted.changes === 1 ? 'added' : 'duplicate';
+    });
+    if (outcome === 'full') throw conflict(`At most ${String(MAX_PASSKEYS)} passkeys per account`);
     // The same authenticator key, already enrolled (here or on another account).
-    if (Number(inserted.changes) !== 1) throw conflict('This passkey is already registered');
-    this.audit.record({ action: 'passkey.register', outcome: 'success', actorId: userId, target: id, ip, details: { alg: reg.alg } });
+    if (outcome === 'duplicate') throw conflict('This passkey is already registered');
+    await this.audit.record({ action: 'passkey.register', outcome: 'success', actorId: userId, target: id, ip, details: { alg: reg.alg } });
     return { id, name };
   }
 
   /** Options for navigator.credentials.get() during the MFA step identified by its token hash. */
-  loginOptions(userId: string, mfaTokenHash: string) {
-    const allow = this.credentialIds(userId);
+  async loginOptions(userId: string, mfaTokenHash: string) {
+    const allow = await this.credentialIds(userId);
     if (allow.length === 0) throw badRequest('No passkey on this account: use your authenticator code');
     return {
-      challenge: this.newChallenge(userId, 'login', mfaTokenHash),
+      challenge: await this.newChallenge(userId, 'login', mfaTokenHash),
       rpId: this.rp.id,
       timeout: CHALLENGE_TTL_MS,
       userVerification: 'preferred',
@@ -179,13 +186,11 @@ export class PasskeyService {
   }
 
   /** Verifies an assertion for this MFA step. True only for a fresh, valid signature by one of the user's keys. */
-  verifyLogin(userId: string, mfaTokenHash: string, cred: AssertionResponse, ip: string | null): boolean {
+  async verifyLogin(userId: string, mfaTokenHash: string, cred: AssertionResponse, ip: string | null): Promise<boolean> {
     const clientDataJSON = fromB64u(cred.response.clientDataJSON);
     const challenge = claimedChallenge(clientDataJSON);
-    if (!this.takeChallenge(userId, challenge, 'login', mfaTokenHash)) return false;
-    const row = this.db
-      .prepare('SELECT id, public_key, alg, sign_count FROM passkeys WHERE user_id = ? AND credential_id = ?')
-      .get(userId, fromB64u(cred.id)) as PasskeyRow | undefined;
+    if (!await this.takeChallenge(userId, challenge, 'login', mfaTokenHash)) return false;
+    const row = await this.db.one('SELECT id, public_key, alg, sign_count FROM passkeys WHERE user_id = ? AND credential_id = ?', userId, fromB64u(cred.id)) as PasskeyRow | undefined;
     if (!row || !(COSE_ALGS as readonly number[]).includes(row.alg)) return false;
     try {
       const { signCount } = verifyAssertion(
@@ -197,13 +202,11 @@ export class PasskeyService {
         fromB64u(cred.response.signature),
       );
       // Compare-and-set on the counter read above (invariant 5).
-      const updated = this.db
-        .prepare('UPDATE passkeys SET sign_count = ?, last_used_at = ? WHERE id = ? AND user_id = ? AND sign_count = ?')
-        .run(signCount, this.now(), row.id, userId, row.sign_count);
-      return Number(updated.changes) === 1;
+      const updated = await this.db.run('UPDATE passkeys SET sign_count = ?, last_used_at = ? WHERE id = ? AND user_id = ? AND sign_count = ?', signCount, this.now(), row.id, userId, row.sign_count);
+      return updated.changes === 1;
     } catch (err) {
       if (err instanceof CloneWarning) {
-        this.audit.record({ action: 'passkey.clone_detected', outcome: 'denied', actorId: userId, target: row.id, ip, details: { stored: row.sign_count } });
+        await this.audit.record({ action: 'passkey.clone_detected', outcome: 'denied', actorId: userId, target: row.id, ip, details: { stored: row.sign_count } });
         return false;
       }
       if (err instanceof WebAuthnError) return false;
@@ -216,13 +219,18 @@ export class PasskeyService {
    * is empty and the authenticator offers the discoverable passkeys it holds for this RP
    * ID. Nothing here depends on an e-mail address: there is nothing to enumerate.
    */
-  passwordlessOptions() {
+  async passwordlessOptions() {
     const now = this.now();
-    this.db.prepare('DELETE FROM webauthn_login_challenges WHERE expires_at <= ?').run(now);
-    const { n } = this.db.prepare('SELECT COUNT(*) AS n FROM webauthn_login_challenges').get() as { n: number };
-    if (n >= MAX_PENDING_LOGIN_CHALLENGES) throw unavailable('Too many passkey sign-ins in progress, try again in a minute');
     const challenge = randomBytes(32);
-    this.db.prepare('INSERT INTO webauthn_login_challenges (challenge_hash, expires_at) VALUES (?, ?)').run(sha256(challenge), now + CHALLENGE_TTL_MS);
+    // Purge, count and insert as one step: the cap must hold under a burst of concurrent requests.
+    const issued = await this.db.transaction(async (tx) => {
+      await tx.run('DELETE FROM webauthn_login_challenges WHERE expires_at <= ?', now);
+      const { n } = (await tx.one('SELECT COUNT(*) AS n FROM webauthn_login_challenges')) as { n: number };
+      if (n >= MAX_PENDING_LOGIN_CHALLENGES) return false;
+      await tx.run('INSERT INTO webauthn_login_challenges (challenge_hash, expires_at) VALUES (?, ?)', sha256(challenge), now + CHALLENGE_TTL_MS);
+      return true;
+    });
+    if (!issued) throw unavailable('Too many passkey sign-ins in progress, try again in a minute');
     return { challenge: b64u(challenge), rpId: this.rp.id, timeout: CHALLENGE_TTL_MS, userVerification: 'required', allowCredentials: [] };
   }
 
@@ -232,20 +240,16 @@ export class PasskeyService {
    * key of account A presented with B's handle finds nothing. User verification is
    * required: the passkey is the only factor here.
    */
-  verifyPasswordless(cred: DiscoverableAssertionResponse): { userId: string } | { reason: PasswordlessFailure; userId?: string; passkeyId?: string } {
+  async verifyPasswordless(cred: DiscoverableAssertionResponse): Promise<{ userId: string } | { reason: PasswordlessFailure; userId?: string; passkeyId?: string }> {
     const clientDataJSON = fromB64u(cred.response.clientDataJSON);
     const challenge = claimedChallenge(clientDataJSON);
     // Consumed whatever happens next: a challenge never answers twice.
-    const taken = this.db
-      .prepare('DELETE FROM webauthn_login_challenges WHERE challenge_hash = ? RETURNING expires_at')
-      .get(sha256(challenge)) as { expires_at: number } | undefined;
+    const taken = await this.db.one('DELETE FROM webauthn_login_challenges WHERE challenge_hash = ? RETURNING expires_at', sha256(challenge)) as { expires_at: number } | undefined;
     if (!taken || taken.expires_at <= this.now()) return { reason: 'challenge' };
 
     const userId = fromB64u(cred.response.userHandle).toString('utf8');
     if (!UUID.test(userId)) return { reason: 'user_handle' };
-    const row = this.db
-      .prepare('SELECT id, public_key, alg, sign_count FROM passkeys WHERE user_id = ? AND credential_id = ?')
-      .get(userId, fromB64u(cred.id)) as PasskeyRow | undefined;
+    const row = await this.db.one('SELECT id, public_key, alg, sign_count FROM passkeys WHERE user_id = ? AND credential_id = ?', userId, fromB64u(cred.id)) as PasskeyRow | undefined;
     if (!row || !(COSE_ALGS as readonly number[]).includes(row.alg)) return { reason: 'unknown_credential' };
     try {
       const { signCount } = verifyAssertion(
@@ -257,10 +261,8 @@ export class PasskeyService {
         fromB64u(cred.response.signature),
         true,
       );
-      const updated = this.db
-        .prepare('UPDATE passkeys SET sign_count = ?, last_used_at = ? WHERE id = ? AND user_id = ? AND sign_count = ?')
-        .run(signCount, this.now(), row.id, userId, row.sign_count);
-      return Number(updated.changes) === 1 ? { userId } : { reason: 'race', userId, passkeyId: row.id };
+      const updated = await this.db.run('UPDATE passkeys SET sign_count = ?, last_used_at = ? WHERE id = ? AND user_id = ? AND sign_count = ?', signCount, this.now(), row.id, userId, row.sign_count);
+      return updated.changes === 1 ? { userId } : { reason: 'race', userId, passkeyId: row.id };
     } catch (err) {
       if (err instanceof CloneWarning) return { reason: 'clone', userId, passkeyId: row.id };
       if (err instanceof UserVerificationRequired) return { reason: 'user_verification', userId, passkeyId: row.id };
@@ -269,13 +271,29 @@ export class PasskeyService {
     }
   }
 
-  remove(userId: string, passkeyId: string, ip: string | null): void {
-    const deleted = this.db.prepare('DELETE FROM passkeys WHERE id = ? AND user_id = ?').run(passkeyId, userId);
-    if (Number(deleted.changes) !== 1) throw notFound('Passkey not found');
-    this.audit.record({ action: 'passkey.delete', outcome: 'success', actorId: userId, target: passkeyId, ip });
+  /**
+   * Deletes a passkey. Unless `lastAllowed` (the caller checked password *and* a code),
+   * the account's last second factor is refused. The check and the delete are one
+   * transaction: two concurrent deletions of an account's two passkeys must not both see
+   * "another factor remains" and leave it with none, no code ever asked.
+   */
+  async remove(userId: string, passkeyId: string, ip: string | null, lastAllowed: boolean): Promise<void> {
+    const outcome = await this.db.transaction(async (tx) => {
+      const totp = await tx.one('SELECT 1 FROM user_mfa WHERE user_id = ? AND enabled_at IS NOT NULL', userId);
+      const { n } = (await tx.one('SELECT COUNT(*) AS n FROM passkeys WHERE user_id = ?', userId)) as { n: number };
+      if (!lastAllowed && totp === undefined && n <= 1) return 'last';
+      const deleted = await tx.run('DELETE FROM passkeys WHERE id = ? AND user_id = ?', passkeyId, userId);
+      return deleted.changes === 1 ? 'deleted' : 'missing';
+    });
+    if (outcome === 'missing') throw notFound('Passkey not found');
+    if (outcome === 'last') {
+      await this.audit.record({ action: 'passkey.delete', outcome: 'failure', actorId: userId, target: passkeyId, ip, details: { reason: 'last_factor' } });
+      throw unauthorized(LAST_FACTOR);
+    }
+    await this.audit.record({ action: 'passkey.delete', outcome: 'success', actorId: userId, target: passkeyId, ip });
   }
 
-  isOwn(userId: string, passkeyId: string): boolean {
-    return this.db.prepare('SELECT 1 FROM passkeys WHERE id = ? AND user_id = ?').get(passkeyId, userId) !== undefined;
+  async isOwn(userId: string, passkeyId: string): Promise<boolean> {
+    return await this.db.one('SELECT 1 FROM passkeys WHERE id = ? AND user_id = ?', passkeyId, userId) !== undefined;
   }
 }

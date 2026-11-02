@@ -68,8 +68,8 @@ describe('authentication', () => {
       // Even the right password is refused while locked, with the same generic message.
       const res = await t.http.post('/v1/auth/login').send({ email: 'victim@example.test', password: STRONG_PASSWORD }).expect(401);
       expect(res.body.message).toBe('Invalid e-mail or password');
-      expect(auditActions(t)).toContain('auth.lockout:denied');
-      expect(auditActions(t)).toContain('auth.login:denied');
+      expect(await auditActions(t)).toContain('auth.lockout:denied');
+      expect(await auditActions(t)).toContain('auth.login:denied');
     });
 
     it('counts concurrent failures atomically (no race to bypass the lockout)', async () => {
@@ -78,7 +78,7 @@ describe('authentication', () => {
       await Promise.all(
         Array.from({ length: 8 }, (_, i) => t.http.post('/v1/auth/login').send({ email: 'race@example.test', password: `parallel guess ${i}` })),
       );
-      const row = t.db.prepare('SELECT failed_logins, locked_until FROM users WHERE email = ?').get('race@example.test') as {
+      const row = await t.db.one('SELECT failed_logins, locked_until FROM users WHERE email = ?', 'race@example.test') as {
         failed_logins: number;
         locked_until: number;
       };
@@ -99,7 +99,7 @@ describe('authentication', () => {
       await newUser(t, 'reset@example.test');
       for (let i = 0; i < 3; i++) await t.http.post('/v1/auth/login').send({ email: 'reset@example.test', password: `bad guess ${i}` });
       await t.http.post('/v1/auth/login').send({ email: 'reset@example.test', password: STRONG_PASSWORD }).expect(200);
-      const row = t.db.prepare('SELECT failed_logins FROM users WHERE email = ?').get('reset@example.test') as { failed_logins: number };
+      const row = await t.db.one('SELECT failed_logins FROM users WHERE email = ?', 'reset@example.test') as { failed_logins: number };
       expect(row.failed_logins).toBe(0);
     });
   });
@@ -115,7 +115,7 @@ describe('authentication', () => {
     const upgraded = createApp({ config: t2.config, db: t.db, logger: createLogger('silent'), curriculum: loadCurriculum() });
     const request = (await import('supertest')).default;
     await request(upgraded.app).post('/v1/auth/login').send({ email: 'legacy@example.test', password: STRONG_PASSWORD }).expect(200);
-    const row = t.db.prepare('SELECT password_hash FROM users WHERE email = ?').get('legacy@example.test') as { password_hash: string };
+    const row = await t.db.one('SELECT password_hash FROM users WHERE email = ?', 'legacy@example.test') as { password_hash: string };
     expect(row.password_hash).toMatch(/^scrypt\$ln=11,/);
   });
 });
@@ -140,7 +140,7 @@ describe('session management', () => {
     // The legitimate client's new refresh token AND its access token are now dead too.
     await t.http.post('/v1/auth/refresh').send({ refreshToken: rotated.body.refreshToken }).expect(401);
     await t.http.get('/v1/me').set({ Authorization: `Bearer ${rotated.body.accessToken}` }).expect(401);
-    expect(auditActions(t)).toContain('auth.refresh_reuse_detected:denied');
+    expect(await auditActions(t)).toContain('auth.refresh_reuse_detected:denied');
   });
 
   it('lets only one of two concurrent refreshes with the same token succeed (TOCTOU)', async () => {
@@ -157,7 +157,7 @@ describe('session management', () => {
     const t = setup();
     const s = await newUser(t);
     await t.http.post('/v1/auth/refresh').send({ refreshToken: 'A'.repeat(43) }).expect(401);
-    t.db.prepare('UPDATE refresh_tokens SET expires_at = 0').run();
+    await t.db.run('UPDATE refresh_tokens SET expires_at = 0');
     const res = await t.http.post('/v1/auth/refresh').send({ refreshToken: s.refreshToken }).expect(401);
     expect(res.body.message).toMatch(/expired/);
   });
@@ -204,7 +204,7 @@ describe('session management', () => {
   it('rejects a token for a deleted account', async () => {
     const t = setup();
     const s = await newUser(t);
-    t.db.prepare('DELETE FROM users WHERE id = ?').run(s.id);
+    await t.db.run('DELETE FROM users WHERE id = ?', s.id);
     await t.http.get('/v1/me').set(s.auth).expect(401);
     await t.http.post('/v1/auth/refresh').send({ refreshToken: s.refreshToken }).expect(401);
   });

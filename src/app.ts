@@ -56,6 +56,7 @@ export interface App {
     labs: LabService;
     environments: EnvironmentService;
     mfa: MfaService;
+    passkeys: PasskeyService;
     audit: AuditLog;
   };
 }
@@ -134,9 +135,9 @@ export function createApp({ config, db, logger, curriculum, rateLimits, web, lab
   app.get('/healthz', (_req, res) => {
     res.json({ status: 'ok' });
   });
-  app.get('/readyz', (_req, res) => {
+  app.get('/readyz', async (_req, res) => {
     try {
-      db.prepare('SELECT 1').get();
+      await db.one('SELECT 1');
       res.json({ status: 'ready' });
     } catch {
       res.status(503).json({ status: 'unavailable' });
@@ -179,5 +180,5 @@ export function createApp({ config, db, logger, curriculum, rateLimits, web, lab
     }),
   );
 
-  return { app, metrics, siem, services: { auth, notes, learning, challenges, labs, environments, mfa, audit } };
+  return { app, metrics, siem, services: { auth, notes, learning, challenges, labs, environments, mfa, passkeys, audit } };
 }

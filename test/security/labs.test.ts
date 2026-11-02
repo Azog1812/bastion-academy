@@ -78,7 +78,7 @@ describe('labs: per-learner instances', () => {
     // The flag inside the lab is exactly the one that scores for this learner.
     await t.http.post('/v1/challenges/sqli/submit').set(s.auth).send({ flag: sent?.flag }).expect(200, { correct: true, points: 200, alreadySolved: false });
     expect((await view(t, s, 'sqli')).lab?.instance?.url).toBe(res.body.url);
-    expect(auditActions(t)).toContain('lab.start:success');
+    expect(await auditActions(t)).toContain('lab.start:success');
   });
 
   it('starting again is idempotent, including two concurrent starts: one runner call, one instance', async () => {
@@ -101,7 +101,7 @@ describe('labs: per-learner instances', () => {
     expect(runner.stops).toEqual([runner.starts[0]?.instanceId]);
     expect((await view(t, s, 'sqli')).lab?.instance).toBeNull();
     await start(t, s, 'idor').expect(201);
-    expect(auditActions(t)).toContain('lab.stop:success');
+    expect(await auditActions(t)).toContain('lab.stop:success');
   });
 
   it('learners get different instances and flags, and cannot see or stop each other\'s lab (no IDOR)', async () => {
@@ -125,7 +125,7 @@ describe('labs: per-learner instances', () => {
     const s = await newUser(t);
     await start(t, s, 'late').expect(403);
     expect(runner.starts).toHaveLength(0);
-    expect(auditActions(t)).toContain('lab.start:denied');
+    expect(await auditActions(t)).toContain('lab.start:denied');
   });
 
   it('unknown challenges, non-lab challenges and bad ids get no lab', async () => {
@@ -151,21 +151,21 @@ describe('labs: per-learner instances', () => {
     expect((await view(t, s, 'sqli')).lab?.instance).toBeNull();
     runner.failWith = null;
     await start(t, s, 'sqli').expect(201);
-    expect(auditActions(t).filter((a) => a === 'lab.start:failure')).toHaveLength(2);
+    expect((await auditActions(t)).filter((a) => a === 'lab.start:failure')).toHaveLength(2);
   });
 
   it('expired labs are destroyed by the reaper, and an expired slot does not block a new start', async () => {
     const { t, runner } = ctx();
     const s = await newUser(t);
     await start(t, s, 'sqli').expect(201);
-    t.db.prepare('UPDATE lab_instances SET expires_at = 0').run();
+    await t.db.run('UPDATE lab_instances SET expires_at = 0');
     expect((await view(t, s, 'sqli')).lab?.instance).toBeNull();
     expect(await t.services.labs.reap()).toBe(1);
     expect(runner.stops).toEqual([runner.starts[0]?.instanceId]);
-    expect(auditActions(t)).toContain('lab.expire:success');
+    expect(await auditActions(t)).toContain('lab.expire:success');
 
     await start(t, s, 'idor').expect(201);
-    t.db.prepare('UPDATE lab_instances SET expires_at = 0').run();
+    await t.db.run('UPDATE lab_instances SET expires_at = 0');
     await start(t, s, 'sqli').expect(201); // the expired idor lab is cleaned up first
     expect(runner.stops).toHaveLength(2);
   });

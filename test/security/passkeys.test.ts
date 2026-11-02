@@ -45,7 +45,7 @@ describe('passkeys (WebAuthn) as a second factor', () => {
     expect(list.map((p) => p.name)).toEqual(['Clé USB', 'Téléphone']);
     // Only metadata: no key material, no credential id.
     expect(JSON.stringify(list)).not.toMatch(/public|credential/i);
-    expect(auditActions(t)).toContain('passkey.register:success');
+    expect(await auditActions(t)).toContain('passkey.register:success');
   });
 
   it('turns login into two steps, and a passkey completes the second', async () => {
@@ -55,8 +55,8 @@ describe('passkeys (WebAuthn) as a second factor', () => {
     const res = await passkeyLogin(t, await mfaToken(t, s), a);
     expect(res.status).toBe(200);
     expect(res.body.accessToken).toBeDefined();
-    expect(auditActions(t)).toContain('auth.mfa:success');
-    const last = t.services.audit.list(5).find((r) => r.action === 'auth.mfa');
+    expect(await auditActions(t)).toContain('auth.mfa:success');
+    const last = (await t.services.audit.list(5)).find((r) => r.action === 'auth.mfa');
     expect(JSON.parse(last?.details ?? '{}')).toEqual({ factor: 'passkey' });
   });
 
@@ -126,7 +126,7 @@ describe('passkeys (WebAuthn) as a second factor', () => {
     await passkeyLogin(t, await mfaToken(t, s), key, { keepCounter: true }).then((r) => {
       expect(r.status).toBe(401);
     });
-    expect(auditActions(t)).toContain('passkey.clone_detected:denied');
+    expect(await auditActions(t)).toContain('passkey.clone_detected:denied');
   });
 
   it('feeds wrong assertions into the same lockout as wrong codes', async () => {
@@ -157,6 +157,21 @@ describe('passkeys (WebAuthn) as a second factor', () => {
     expect((await t.http.get('/v1/me').set(s.auth).expect(200)).body).toMatchObject({ mfaEnabled: false, passkeys: 0 });
     // MFA is off: a password logs in again, and the old recovery codes are gone.
     expect((await t.http.post('/v1/auth/login').send({ email: s.email, password: STRONG_PASSWORD }).expect(200)).body.accessToken).toBeDefined();
+  });
+
+  it('cannot lose the last factor through two concurrent deletions without a code', async () => {
+    // A database with network latency (as PostgreSQL), and both deletions started in the
+    // same tick: each one's count runs before either delete unless the check and the delete
+    // are one transaction. Over HTTP the scrypt timing would decide, and the test would be flaky.
+    const t = setup({ latency: true });
+    const s = await newUser(t);
+    const id1 = (await enrolPasskey(t, s)).res.body.id as string;
+    const id2 = (await enrolPasskey(t, s, new SoftAuthenticator('ed25519'), 'Téléphone')).res.body.id as string;
+    // Each deletion alone sees "another passkey remains"; only one of them may act on it.
+    const results = await Promise.allSettled([id1, id2].map((id) => t.services.passkeys.remove(s.id, id, null, false)));
+    expect(results.map((r) => r.status).sort()).toEqual(['fulfilled', 'rejected']);
+    expect((await t.http.get('/v1/me').set(s.auth).expect(200)).body).toMatchObject({ mfaEnabled: true, passkeys: 1 });
+    expect(await auditActions(t)).toContain('passkey.delete:failure');
   });
 
   it('keeps MFA and the recovery codes when TOTP goes but a passkey stays', async () => {

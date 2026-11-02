@@ -72,7 +72,7 @@ avec la clé. Trois règles rendent ce raccourci sûr :
 
 ```ts
 // La clé doit appartenir au compte que le user handle désigne.
-.prepare('SELECT ... FROM passkeys WHERE user_id = ? AND credential_id = ?').get(userId, ...)
+await this.db.one('SELECT ... FROM passkeys WHERE user_id = ? AND credential_id = ?', userId, ...)
 // Seule, la passkey doit avoir vérifié un code PIN ou une biométrie.
 if (requireUserVerification && !(auth.flags & FLAG_UV)) throw new UserVerificationRequired(...)
 ```

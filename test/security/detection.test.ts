@@ -59,7 +59,7 @@ describe('detection challenges', () => {
     const list = (await t.http.get('/v1/challenges').set(s.auth).expect(200)).body.items as { id: string; solved: boolean }[];
     expect(list.find((c) => c.id === 'ssh')?.solved).toBe(true);
     expect((await t.http.get('/v1/scoreboard').set(s.auth).expect(200)).body.me.score).toBe(250);
-    expect(auditActions(t).filter((a) => a.startsWith('challenge.submit'))).toEqual(['challenge.submit:failure', 'challenge.submit:success']);
+    expect((await auditActions(t)).filter((a) => a.startsWith('challenge.submit'))).toEqual(['challenge.submit:failure', 'challenge.submit:success']);
   });
 
   it('rejects rules outside the language with the reason: unknown fields, prototype keys, regex, oversized', async () => {
@@ -87,7 +87,7 @@ describe('detection challenges', () => {
     await detect(t, s, 'late', { match: { query: 'x' } }).expect(403);
     await detect(t, s, 'b64', GOOD).expect(404);
     await detect(t, s, 'nope', GOOD).expect(404);
-    expect(auditActions(t)).toContain('challenge.submit:denied');
+    expect(await auditActions(t)).toContain('challenge.submit:denied');
   });
 
   it('evaluations are rate-limited per account', async () => {

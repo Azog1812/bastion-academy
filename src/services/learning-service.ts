@@ -28,8 +28,8 @@ export class LearningService {
     private readonly audit: AuditLog,
   ) {}
 
-  private completed(userId: string): Map<string, number> {
-    const rows = this.db.prepare('SELECT lesson_id, completed_at FROM lesson_progress WHERE user_id = ?').all(userId) as {
+  private async completed(userId: string): Promise<Map<string, number>> {
+    const rows = await this.db.many('SELECT lesson_id, completed_at FROM lesson_progress WHERE user_id = ?', userId) as {
       lesson_id: string;
       completed_at: number;
     }[];
@@ -37,8 +37,8 @@ export class LearningService {
   }
 
   /** Optional modules this learner added to their training. */
-  private added(userId: string): Set<string> {
-    const rows = this.db.prepare('SELECT module_id FROM module_choices WHERE user_id = ?').all(userId) as { module_id: string }[];
+  private async added(userId: string): Promise<Set<string>> {
+    const rows = await this.db.many('SELECT module_id FROM module_choices WHERE user_id = ?', userId) as { module_id: string }[];
     return new Set(rows.map((r) => r.module_id));
   }
 
@@ -63,21 +63,29 @@ export class LearningService {
     return lesson;
   }
 
-  private assertUnlocked(userId: string, lesson: Lesson, done: ReadonlyMap<string, number>, ip: string | null): void {
+  private async assertUnlocked(userId: string, lesson: Lesson, done: ReadonlyMap<string, number>, ip: string | null): Promise<void> {
     const mod = this.curriculum.modules.get(lesson.moduleId);
-    if (mod && !LearningService.inTraining(mod, this.added(userId))) {
-      this.audit.record({ action: 'lesson.complete', outcome: 'denied', actorId: userId, target: lesson.id, ip, details: { reason: 'not_added' } });
+    if (mod && !LearningService.inTraining(mod, await this.added(userId))) {
+      await this.audit.record({ action: 'lesson.complete', outcome: 'denied', actorId: userId, target: lesson.id, ip, details: { reason: 'not_added' } });
       throw forbidden('Add this optional module to your training first');
     }
     if (mod && this.unlocked(mod, done)) return;
-    this.audit.record({ action: 'lesson.complete', outcome: 'denied', actorId: userId, target: lesson.id, ip, details: { reason: 'locked' } });
+    await this.audit.record({ action: 'lesson.complete', outcome: 'denied', actorId: userId, target: lesson.id, ip, details: { reason: 'locked' } });
     throw forbidden('Complete the prerequisite modules first');
   }
 
   /** Used by challenges and labs, which open with their module: added (if optional) and unlocked. */
-  isModuleUnlocked(userId: string, moduleId: string): boolean {
-    const mod = this.curriculum.modules.get(moduleId);
-    return mod !== undefined && LearningService.inTraining(mod, this.added(userId)) && this.unlocked(mod, this.completed(userId));
+  async isModuleUnlocked(userId: string, moduleId: string): Promise<boolean> {
+    return (await this.moduleGate(userId))(moduleId);
+  }
+
+  /** The same check for many modules, from one read of the learner's progress and choices. */
+  async moduleGate(userId: string): Promise<(moduleId: string) => boolean> {
+    const [added, done] = [await this.added(userId), await this.completed(userId)];
+    return (moduleId) => {
+      const mod = this.curriculum.modules.get(moduleId);
+      return mod !== undefined && LearningService.inTraining(mod, added) && this.unlocked(mod, done);
+    };
   }
 
   /**
@@ -86,25 +94,23 @@ export class LearningService {
    * depends on an optional one, so a removal never locks anything else.
    * Progress is kept: adding the module back restores it.
    */
-  chooseModule(userId: string, moduleId: string, add: boolean, ip: string | null): { id: string; added: boolean } {
+  async chooseModule(userId: string, moduleId: string, add: boolean, ip: string | null): Promise<{ id: string; added: boolean }> {
     const mod = this.curriculum.modules.get(moduleId);
     if (!mod) throw notFound('Module not found');
     if (!mod.optional) throw badRequest('This module is part of every training and cannot be removed');
     const res = add
-      ? this.db
-          .prepare('INSERT INTO module_choices (user_id, module_id, added_at) VALUES (?, ?, ?) ON CONFLICT (user_id, module_id) DO NOTHING')
-          .run(userId, mod.id, Date.now())
-      : this.db.prepare('DELETE FROM module_choices WHERE user_id = ? AND module_id = ?').run(userId, mod.id);
-    if (Number(res.changes) > 0) {
-      this.audit.record({ action: 'module.select', outcome: 'success', actorId: userId, target: mod.id, ip, details: { added: add } });
+      ? await this.db.run('INSERT INTO module_choices (user_id, module_id, added_at) VALUES (?, ?, ?) ON CONFLICT (user_id, module_id) DO NOTHING', userId, mod.id, Date.now())
+      : await this.db.run('DELETE FROM module_choices WHERE user_id = ? AND module_id = ?', userId, mod.id);
+    if (res.changes > 0) {
+      await this.audit.record({ action: 'module.select', outcome: 'success', actorId: userId, target: mod.id, ip, details: { added: add } });
     }
     return { id: mod.id, added: add };
   }
 
   /** The whole catalogue with this user's progress. Quiz answers are never part of it. */
-  overview(userId: string) {
-    const done = this.completed(userId);
-    const added = this.added(userId);
+  async overview(userId: string) {
+    const done = await this.completed(userId);
+    const added = await this.added(userId);
     let completed = 0;
     let total = 0;
     const paths = this.curriculum.paths.map((p) => ({
@@ -139,10 +145,10 @@ export class LearningService {
     return { levels: this.curriculum.levels, paths, progress: { completed, total } };
   }
 
-  getLesson(userId: string, lessonId: string, ip: string | null) {
+  async getLesson(userId: string, lessonId: string, ip: string | null) {
     const lesson = this.lesson(lessonId);
-    const done = this.completed(userId);
-    this.assertUnlocked(userId, lesson, done, ip);
+    const done = await this.completed(userId);
+    await this.assertUnlocked(userId, lesson, done, ip);
     const completedAt = done.get(lesson.id);
     return {
       id: lesson.id,
@@ -159,14 +165,14 @@ export class LearningService {
     };
   }
 
-  complete(userId: string, lessonId: string, answers: QuizAnswer[], ip: string | null): CompletionResult {
+  async complete(userId: string, lessonId: string, answers: QuizAnswer[], ip: string | null): Promise<CompletionResult> {
     const lesson = this.lesson(lessonId);
-    const done = this.completed(userId);
-    this.assertUnlocked(userId, lesson, done, ip);
+    const done = await this.completed(userId);
+    await this.assertUnlocked(userId, lesson, done, ip);
 
     const incorrect = grade(lesson, answers);
     if (incorrect.length > 0) {
-      this.audit.record({
+      await this.audit.record({
         action: 'lesson.complete',
         outcome: 'failure',
         actorId: userId,
@@ -179,16 +185,12 @@ export class LearningService {
 
     // Idempotent: completing twice keeps the first timestamp (no score farming later).
     const now = Date.now();
-    const row = this.db
-      .prepare(
-        `INSERT INTO lesson_progress (user_id, lesson_id, completed_at) VALUES (?, ?, ?)
+    const row = await this.db.one(`INSERT INTO lesson_progress (user_id, lesson_id, completed_at) VALUES (?, ?, ?)
          ON CONFLICT (user_id, lesson_id) DO UPDATE SET completed_at = completed_at
-         RETURNING completed_at`,
-      )
-      .get(userId, lesson.id, now) as { completed_at: number };
+         RETURNING completed_at`, userId, lesson.id, now) as { completed_at: number };
     const alreadyCompleted = done.has(lesson.id);
     if (!alreadyCompleted) {
-      this.audit.record({ action: 'lesson.complete', outcome: 'success', actorId: userId, target: lesson.id, ip });
+      await this.audit.record({ action: 'lesson.complete', outcome: 'success', actorId: userId, target: lesson.id, ip });
     }
     return { passed: true, completedAt: new Date(row.completed_at).toISOString(), alreadyCompleted };
   }

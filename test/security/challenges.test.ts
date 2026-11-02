@@ -95,7 +95,7 @@ describe('challenges: per-learner flags', () => {
 
     const res = await submit(t, mallory, 'b64', aliceFlag).expect(200);
     expect(res.body).toEqual({ correct: false }); // same answer as any wrong flag: no oracle on other accounts
-    const shared = t.services.audit.list(100).find((r) => r.action === 'challenge.flag_shared');
+    const shared = (await t.services.audit.list(100)).find((r) => r.action === 'challenge.flag_shared');
     expect(shared?.actor_id).toBe(mallory.id);
     expect(JSON.parse(shared?.details ?? '{}')).toEqual({ owner: alice.id });
   });
@@ -105,7 +105,7 @@ describe('challenges: per-learner flags', () => {
     const s = await newUser(t);
     expect((await submit(t, s, 'b64', 'BASTION{00000000000000000000000000000000}').expect(200)).body).toEqual({ correct: false });
     expect((await submit(t, s, 'b64', "' OR 1=1 --").expect(200)).body).toEqual({ correct: false });
-    expect(auditActions(t)).toContain('challenge.submit:failure');
+    expect(await auditActions(t)).toContain('challenge.submit:failure');
   });
 
   it('solving twice scores once', async () => {

@@ -69,13 +69,13 @@ export class NoteService {
     });
   }
 
-  private load(ownerId: string, noteId: string, ip: string | null): NoteRow {
-    const row = this.db.prepare('SELECT * FROM notes WHERE id = ? AND owner_id = ?').get(noteId, ownerId) as NoteRow | undefined;
+  private async load(ownerId: string, noteId: string, ip: string | null): Promise<NoteRow> {
+    const row = await this.db.one('SELECT * FROM notes WHERE id = ? AND owner_id = ?', noteId, ownerId) as NoteRow | undefined;
     if (!row) {
       // Record cross-tenant probing: someone asked for a note that exists but is not theirs.
-      const exists = this.db.prepare('SELECT 1 AS x FROM notes WHERE id = ?').get(noteId);
+      const exists = await this.db.one('SELECT 1 AS x FROM notes WHERE id = ?', noteId);
       if (exists) {
-        this.audit.record({ action: 'authz.denied', outcome: 'denied', actorId: ownerId, target: noteId, ip, details: { resource: 'note' } });
+        await this.audit.record({ action: 'authz.denied', outcome: 'denied', actorId: ownerId, target: noteId, ip, details: { resource: 'note' } });
       }
       throw notFound('Note not found'); // identical response either way
     }
@@ -86,21 +86,15 @@ export class NoteService {
     const id = randomUUID();
     const s = await seal(this.kms, JSON.stringify(content), id, ownerId);
     const now = Date.now();
-    this.db
-      .prepare(
-        `INSERT INTO notes (id, owner_id, key_id, wrapped_dek, iv, tag, ciphertext, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(id, ownerId, s.keyId, s.wrappedDek, s.iv, s.tag, s.ciphertext, now, now);
-    this.audit.record({ action: 'note.create', outcome: 'success', actorId: ownerId, target: id, ip });
+    await this.db.run(`INSERT INTO notes (id, owner_id, key_id, wrapped_dek, iv, tag, ciphertext, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, id, ownerId, s.keyId, s.wrappedDek, s.iv, s.tag, s.ciphertext, now, now);
+    await this.audit.record({ action: 'note.create', outcome: 'success', actorId: ownerId, target: id, ip });
     return { id, ...content, version: 1, createdAt: new Date(now).toISOString(), updatedAt: new Date(now).toISOString() };
   }
 
   async list(ownerId: string, limit: number, offset: number): Promise<{ items: Omit<Note, 'body'>[]; total: number }> {
-    const rows = this.db
-      .prepare('SELECT * FROM notes WHERE owner_id = ? ORDER BY updated_at DESC, id LIMIT ? OFFSET ?')
-      .all(ownerId, limit, offset) as unknown as NoteRow[];
-    const { n } = this.db.prepare('SELECT COUNT(*) AS n FROM notes WHERE owner_id = ?').get(ownerId) as { n: number };
+    const rows = await this.db.many('SELECT * FROM notes WHERE owner_id = ? ORDER BY updated_at DESC, id LIMIT ? OFFSET ?', ownerId, limit, offset) as unknown as NoteRow[];
+    const { n } = await this.db.one('SELECT COUNT(*) AS n FROM notes WHERE owner_id = ?', ownerId) as { n: number };
     return {
       items: (await this.decrypt(rows)).map(({ body: _body, ...summary }) => summary),
       total: n,
@@ -108,30 +102,26 @@ export class NoteService {
   }
 
   async get(ownerId: string, noteId: string, ip: string | null): Promise<Note> {
-    const [note] = await this.decrypt([this.load(ownerId, noteId, ip)]);
+    const [note] = await this.decrypt([await this.load(ownerId, noteId, ip)]);
     if (!note) throw notFound('Note not found');
-    this.audit.record({ action: 'note.read', outcome: 'success', actorId: ownerId, target: noteId, ip });
+    await this.audit.record({ action: 'note.read', outcome: 'success', actorId: ownerId, target: noteId, ip });
     return note;
   }
 
   /** Optimistic concurrency: the client must send the version it last read (lost-update protection). */
   async update(ownerId: string, noteId: string, expectedVersion: number, content: NoteContent, ip: string | null): Promise<Note> {
-    const row = this.load(ownerId, noteId, ip);
+    const row = await this.load(ownerId, noteId, ip);
     if (row.version !== expectedVersion) throw conflict(`Version mismatch: current version is ${row.version}`);
 
     // The KMS call is an await: the version check is repeated in the UPDATE below, so a
     // write that lands meanwhile makes this one fail instead of being overwritten.
     const s = await seal(this.kms, JSON.stringify(content), noteId, ownerId);
     const now = Date.now();
-    const result = this.db
-      .prepare(
-        `UPDATE notes SET key_id = ?, wrapped_dek = ?, iv = ?, tag = ?, ciphertext = ?, version = version + 1, updated_at = ?
-         WHERE id = ? AND owner_id = ? AND version = ?`,
-      )
-      .run(s.keyId, s.wrappedDek, s.iv, s.tag, s.ciphertext, now, noteId, ownerId, expectedVersion);
-    if (Number(result.changes) !== 1) throw conflict('Note was modified concurrently');
+    const result = await this.db.run(`UPDATE notes SET key_id = ?, wrapped_dek = ?, iv = ?, tag = ?, ciphertext = ?, version = version + 1, updated_at = ?
+         WHERE id = ? AND owner_id = ? AND version = ?`, s.keyId, s.wrappedDek, s.iv, s.tag, s.ciphertext, now, noteId, ownerId, expectedVersion);
+    if (result.changes !== 1) throw conflict('Note was modified concurrently');
 
-    this.audit.record({ action: 'note.update', outcome: 'success', actorId: ownerId, target: noteId, ip });
+    await this.audit.record({ action: 'note.update', outcome: 'success', actorId: ownerId, target: noteId, ip });
     return {
       id: noteId,
       ...content,
@@ -141,24 +131,22 @@ export class NoteService {
     };
   }
 
-  delete(ownerId: string, noteId: string, ip: string | null): void {
-    this.load(ownerId, noteId, ip);
-    this.db.prepare('DELETE FROM notes WHERE id = ? AND owner_id = ?').run(noteId, ownerId);
-    this.audit.record({ action: 'note.delete', outcome: 'success', actorId: ownerId, target: noteId, ip });
+  async delete(ownerId: string, noteId: string, ip: string | null): Promise<void> {
+    await this.load(ownerId, noteId, ip);
+    await this.db.run('DELETE FROM notes WHERE id = ? AND owner_id = ?', noteId, ownerId);
+    await this.audit.record({ action: 'note.delete', outcome: 'success', actorId: ownerId, target: noteId, ip });
   }
 
   /** KEK rotation: re-wrap every DEK still under an old key. Content is never decrypted. */
   async rotateKeys(): Promise<{ rewrapped: number }> {
-    const rows = this.db
-      .prepare('SELECT id, key_id, wrapped_dek FROM notes WHERE key_id != ?')
-      .all(await this.kms.activeKeyId()) as unknown as Pick<NoteRow, 'id' | 'key_id' | 'wrapped_dek'>[];
-    // Operator-only maintenance task (CLI), intentionally spans all owners.
-    const stmt = this.db.prepare('UPDATE notes SET key_id = ?, wrapped_dek = ? WHERE id = ? AND key_id = ? AND wrapped_dek = ?'); // nosemgrep: bastion-note-query-without-owner
+    const rows = await this.db.many('SELECT id, key_id, wrapped_dek FROM notes WHERE key_id != ?', await this.kms.activeKeyId()) as unknown as Pick<NoteRow, 'id' | 'key_id' | 'wrapped_dek'>[];
     let rewrapped = 0;
     for (const r of rows) {
       const { keyId, wrapped } = await rewrap(this.kms, r.key_id, Buffer.from(r.wrapped_dek), r.id);
       // Compare-and-set: a note rewritten during the rotation keeps its newer DEK.
-      rewrapped += Number(stmt.run(keyId, wrapped, r.id, r.key_id, r.wrapped_dek).changes);
+      // Operator-only maintenance task (CLI), intentionally spans all owners.
+      const cas = await this.db.run('UPDATE notes SET key_id = ?, wrapped_dek = ? WHERE id = ? AND key_id = ? AND wrapped_dek = ?', keyId, wrapped, r.id, r.key_id, r.wrapped_dek); // nosemgrep: bastion-note-query-without-owner
+      rewrapped += cas.changes;
     }
     return { rewrapped };
   }

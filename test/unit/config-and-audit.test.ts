@@ -80,48 +80,48 @@ describe('configuration fails closed', () => {
 });
 
 describe('tamper-evident audit log', () => {
-  const make = () => {
+  const make = async () => {
     const db = openDatabase(':memory:');
     const key = randomBytes(32);
     const log = new AuditLog(db, key);
-    for (let i = 0; i < 5; i++) log.record({ action: 'note.read', outcome: 'success', actorId: `u${i}` });
+    for (let i = 0; i < 5; i++) await log.record({ action: 'note.read', outcome: 'success', actorId: `u${i}` });
     return { db, key, log };
   };
 
-  it('verifies an untouched chain', () => {
-    expect(make().log.verify()).toEqual({ valid: true, checked: 5, firstInvalidSeq: null });
+  it('verifies an untouched chain', async () => {
+    expect(await (await make()).log.verify()).toEqual({ valid: true, checked: 5, firstInvalidSeq: null });
   });
 
-  it('blocks UPDATE and DELETE at the database level', () => {
-    const { db } = make();
-    expect(() => db.prepare("UPDATE audit_log SET outcome = 'failure' WHERE seq = 2").run()).toThrow('append-only');
-    expect(() => db.prepare('DELETE FROM audit_log WHERE seq = 2').run()).toThrow('append-only');
+  it('blocks UPDATE and DELETE at the database level', async () => {
+    const { db } = await make();
+    await expect(db.run("UPDATE audit_log SET outcome = 'failure' WHERE seq = 2")).rejects.toThrow('append-only');
+    await expect(db.run('DELETE FROM audit_log WHERE seq = 2')).rejects.toThrow('append-only');
   });
 
-  it('pinpoints a modified entry even if the attacker drops the triggers', () => {
-    const { db, log } = make();
-    db.exec('DROP TRIGGER audit_no_update');
-    db.prepare("UPDATE audit_log SET actor_id = 'someone-else' WHERE seq = 3").run();
-    expect(log.verify()).toEqual({ valid: false, checked: 2, firstInvalidSeq: 3 });
+  it('pinpoints a modified entry even if the attacker drops the triggers', async () => {
+    const { db, log } = await make();
+    await db.run('DROP TRIGGER audit_no_update');
+    await db.run("UPDATE audit_log SET actor_id = 'someone-else' WHERE seq = 3");
+    expect(await log.verify()).toEqual({ valid: false, checked: 2, firstInvalidSeq: 3 });
   });
 
-  it('detects a deleted entry (broken link)', () => {
-    const { db, log } = make();
-    db.exec('DROP TRIGGER audit_no_delete');
-    db.prepare('DELETE FROM audit_log WHERE seq = 2').run();
-    expect(log.verify().firstInvalidSeq).toBe(3);
+  it('detects a deleted entry (broken link)', async () => {
+    const { db, log } = await make();
+    await db.run('DROP TRIGGER audit_no_delete');
+    await db.run('DELETE FROM audit_log WHERE seq = 2');
+    expect((await log.verify()).firstInvalidSeq).toBe(3);
   });
 
-  it('cannot be re-forged without the HMAC key', () => {
-    const { db } = make();
+  it('cannot be re-forged without the HMAC key', async () => {
+    const { db } = await make();
     const attacker = new AuditLog(db, randomBytes(32));
-    expect(attacker.verify().valid).toBe(false);
+    expect((await attacker.verify()).valid).toBe(false);
   });
 
-  it('paginates newest first', () => {
-    const { log } = make();
-    const page = log.list(2);
+  it('paginates newest first', async () => {
+    const { log } = await make();
+    const page = await log.list(2);
     expect(page.map((r) => r.seq)).toEqual([5, 4]);
-    expect(log.list(2, 4).map((r) => r.seq)).toEqual([3, 2]);
+    expect((await log.list(2, 4)).map((r) => r.seq)).toEqual([3, 2]);
   });
 });

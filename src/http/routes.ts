@@ -9,7 +9,7 @@ import type { EnvironmentService } from '../services/environment-service.js';
 import type { LearningService } from '../services/learning-service.js';
 import type { MfaService } from '../services/mfa-service.js';
 import type { NoteService } from '../services/note-service.js';
-import type { PasskeyService } from '../services/passkey-service.js';
+import { LAST_FACTOR, type PasskeyService } from '../services/passkey-service.js';
 import { notFound, unauthorized } from '../errors.js';
 import { authenticate, handler, parse, requireRole } from './middleware.js';
 import { browserView, clearRefreshCookie, refreshTokenFrom, sameOriginOnly, setRefreshCookie } from './session.js';
@@ -126,9 +126,9 @@ export function buildRouter(d: RouteDeps): Router {
   r.post(
     '/auth/mfa/passkey/options',
     authLimiter,
-    handler((req, res) => {
+    handler(async (req, res) => {
       const { mfaToken } = parse(passkeyOptionsLoginSchema, req.body);
-      res.json(d.auth.passkeyOptions(mfaToken));
+      res.json(await d.auth.passkeyOptions(mfaToken));
     }),
   );
 
@@ -137,9 +137,9 @@ export function buildRouter(d: RouteDeps): Router {
   r.post(
     '/auth/passkey/options',
     authLimiter,
-    handler((req, res) => {
+    handler(async (req, res) => {
       parse(emptyBodySchema, req.body ?? {});
-      res.json(d.auth.passwordlessOptions());
+      res.json(await d.auth.passwordlessOptions());
     }),
   );
 
@@ -164,9 +164,9 @@ export function buildRouter(d: RouteDeps): Router {
   r.post(
     '/auth/logout',
     refreshLimiter,
-    handler((req, res) => {
+    handler(async (req, res) => {
       const { refreshToken } = parse(refreshSchema, req.body);
-      d.auth.logout(refreshToken, ctx(req));
+      await d.auth.logout(refreshToken, ctx(req));
       res.status(204).end();
     }),
   );
@@ -224,9 +224,9 @@ export function buildRouter(d: RouteDeps): Router {
     '/session/logout',
     sameOriginOnly,
     refreshLimiter,
-    handler((req, res) => {
+    handler(async (req, res) => {
       try {
-        d.auth.logout(refreshTokenFrom(req), ctx(req));
+        await d.auth.logout(refreshTokenFrom(req), ctx(req));
       } catch {
         // No cookie: already logged out. Logout stays idempotent.
       }
@@ -240,17 +240,17 @@ export function buildRouter(d: RouteDeps): Router {
   r.get(
     '/me',
     requireAuth,
-    handler((req, res) => {
-      res.json({ id: uid(req), role: req.principal?.role, ...d.auth.profile(uid(req)) });
+    handler(async (req, res) => {
+      res.json({ id: uid(req), role: req.principal?.role, ...await d.auth.profile(uid(req)) });
     }),
   );
 
   r.put(
     '/me/profile',
     requireAuth,
-    handler((req, res) => {
+    handler(async (req, res) => {
       const { displayName } = parse(profileSchema, req.body);
-      res.json(d.auth.setDisplayName(uid(req), displayName, ctx(req)));
+      res.json(await d.auth.setDisplayName(uid(req), displayName, ctx(req)));
     }),
   );
 
@@ -286,10 +286,10 @@ export function buildRouter(d: RouteDeps): Router {
       await d.auth.confirmPassword(uid(req), password, ctx(req));
       // Both factors: a hijacked session alone, or a stolen password alone, cannot remove MFA.
       if (!(await d.mfa.verify(uid(req), code, ctx(req).ip))) {
-        d.audit.record({ action: 'mfa.disable', outcome: 'failure', actorId: uid(req), ip: ctx(req).ip });
+        await d.audit.record({ action: 'mfa.disable', outcome: 'failure', actorId: uid(req), ip: ctx(req).ip });
         throw unauthorized('Invalid verification code');
       }
-      d.mfa.disable(uid(req), ctx(req).ip);
+      await d.mfa.disable(uid(req), ctx(req).ip);
       res.status(204).end();
     }),
   );
@@ -299,8 +299,8 @@ export function buildRouter(d: RouteDeps): Router {
   r.get(
     '/me/passkeys',
     requireAuth,
-    handler((req, res) => {
-      res.json({ items: d.passkeys.list(uid(req)) });
+    handler(async (req, res) => {
+      res.json({ items: await d.passkeys.list(uid(req)) });
     }),
   );
 
@@ -311,7 +311,7 @@ export function buildRouter(d: RouteDeps): Router {
     handler(async (req, res) => {
       const { password } = parse(reauthSchema, req.body);
       const { email } = await d.auth.confirmPassword(uid(req), password, ctx(req));
-      res.json(d.passkeys.registrationOptions(uid(req), email));
+      res.json(await d.passkeys.registrationOptions(uid(req), email));
     }),
   );
 
@@ -319,11 +319,11 @@ export function buildRouter(d: RouteDeps): Router {
     '/me/passkeys',
     requireAuth,
     authLimiter,
-    handler((req, res) => {
+    handler(async (req, res) => {
       const { name, credential } = parse(passkeyRegisterSchema, req.body);
-      const created = d.passkeys.register(uid(req), name, credential, ctx(req).ip);
+      const created = await d.passkeys.register(uid(req), name, credential, ctx(req).ip);
       // First second factor of the account: recovery codes, shown once.
-      res.status(201).json({ ...created, recoveryCodes: d.mfa.issueRecoveryCodesIfNone(uid(req)) });
+      res.status(201).json({ ...created, recoveryCodes: await d.mfa.issueRecoveryCodesIfNone(uid(req)) });
     }),
   );
 
@@ -335,15 +335,16 @@ export function buildRouter(d: RouteDeps): Router {
       const { id } = parse(passkeyIdSchema, req.params);
       const { password, code } = parse(passkeyDeleteSchema, req.body);
       await d.auth.confirmPassword(uid(req), password, ctx(req));
-      if (!d.passkeys.isOwn(uid(req), id)) throw notFound('Passkey not found');
+      if (!await d.passkeys.isOwn(uid(req), id)) throw notFound('Passkey not found');
       // Removing the last second factor is disabling MFA: password AND a code, as for TOTP.
-      const last = !d.mfa.isEnabled(uid(req)) && d.passkeys.count(uid(req)) === 1;
+      // This read only decides whether to ask for the code; remove() checks again, atomically.
+      const last = !(await d.mfa.isEnabled(uid(req))) && (await d.passkeys.count(uid(req))) === 1;
       if (last && (code === undefined || !(await d.mfa.verify(uid(req), code, ctx(req).ip)))) {
-        d.audit.record({ action: 'passkey.delete', outcome: 'failure', actorId: uid(req), target: id, ip: ctx(req).ip, details: { reason: 'last_factor' } });
-        throw unauthorized('This is your last second factor: enter a recovery code to remove it');
+        await d.audit.record({ action: 'passkey.delete', outcome: 'failure', actorId: uid(req), target: id, ip: ctx(req).ip, details: { reason: 'last_factor' } });
+        throw unauthorized(LAST_FACTOR);
       }
-      d.passkeys.remove(uid(req), id, ctx(req).ip);
-      d.mfa.dropIfNoFactor(uid(req));
+      await d.passkeys.remove(uid(req), id, ctx(req).ip, last);
+      await d.mfa.dropIfNoFactor(uid(req));
       res.status(204).end();
     }),
   );
@@ -362,8 +363,8 @@ export function buildRouter(d: RouteDeps): Router {
   r.post(
     '/me/logout-all',
     requireAuth,
-    handler((req, res) => {
-      d.auth.logoutEverywhere(uid(req), ctx(req));
+    handler(async (req, res) => {
+      await d.auth.logoutEverywhere(uid(req), ctx(req));
       res.status(204).end();
     }),
   );
@@ -410,9 +411,9 @@ export function buildRouter(d: RouteDeps): Router {
   r.delete(
     '/notes/:id',
     requireAuth,
-    handler((req, res) => {
+    handler(async (req, res) => {
       const { id } = parse(noteIdSchema, req.params);
-      d.notes.delete(uid(req), id, ctx(req).ip);
+      await d.notes.delete(uid(req), id, ctx(req).ip);
       res.status(204).end();
     }),
   );
@@ -434,27 +435,27 @@ export function buildRouter(d: RouteDeps): Router {
   r.get(
     '/curriculum',
     requireAuth,
-    handler((req, res) => {
-      res.json(d.learning.overview(uid(req)));
+    handler(async (req, res) => {
+      res.json(await d.learning.overview(uid(req)));
     }),
   );
 
   r.put(
     '/me/modules/:id',
     requireAuth,
-    handler((req, res) => {
+    handler(async (req, res) => {
       const { id } = parse(moduleIdSchema, req.params);
       const { added } = parse(moduleChoiceSchema, req.body);
-      res.json(d.learning.chooseModule(uid(req), id, added, ctx(req).ip));
+      res.json(await d.learning.chooseModule(uid(req), id, added, ctx(req).ip));
     }),
   );
 
   r.get(
     '/lessons/:id',
     requireAuth,
-    handler((req, res) => {
+    handler(async (req, res) => {
       const { id } = parse(lessonIdSchema, req.params);
-      res.json(d.learning.getLesson(uid(req), id, ctx(req).ip));
+      res.json(await d.learning.getLesson(uid(req), id, ctx(req).ip));
     }),
   );
 
@@ -462,10 +463,10 @@ export function buildRouter(d: RouteDeps): Router {
     '/lessons/:id/complete',
     requireAuth,
     quizLimiter,
-    handler((req, res) => {
+    handler(async (req, res) => {
       const { id } = parse(lessonIdSchema, req.params);
       const { answers } = parse(completeLessonSchema, req.body ?? {});
-      res.json(d.learning.complete(uid(req), id, answers, ctx(req).ip));
+      res.json(await d.learning.complete(uid(req), id, answers, ctx(req).ip));
     }),
   );
 
@@ -485,18 +486,18 @@ export function buildRouter(d: RouteDeps): Router {
   r.get(
     '/challenges',
     requireAuth,
-    handler((req, res) => {
-      res.json(d.challenges.list(uid(req)));
+    handler(async (req, res) => {
+      res.json(await d.challenges.list(uid(req)));
     }),
   );
 
   r.get(
     '/challenges/:id',
     requireAuth,
-    handler((req, res) => {
+    handler(async (req, res) => {
       const { id } = parse(challengeIdSchema, req.params);
-      const challenge = d.challenges.get(uid(req), id, ctx(req).ip);
-      res.json({ ...challenge, lab: challenge.lab === null ? null : { id: challenge.lab, ...d.labs.view(uid(req), id) } });
+      const challenge = await d.challenges.get(uid(req), id, ctx(req).ip);
+      res.json({ ...challenge, lab: challenge.lab === null ? null : { id: challenge.lab, ...await d.labs.view(uid(req), id) } });
     }),
   );
 
@@ -567,10 +568,10 @@ export function buildRouter(d: RouteDeps): Router {
     '/challenges/:id/submit',
     requireAuth,
     flagLimiter,
-    handler((req, res) => {
+    handler(async (req, res) => {
       const { id } = parse(challengeIdSchema, req.params);
       const { flag } = parse(submitFlagSchema, req.body);
-      res.json(d.challenges.submit(uid(req), id, flag, ctx(req).ip));
+      res.json(await d.challenges.submit(uid(req), id, flag, ctx(req).ip));
     }),
   );
 
@@ -589,18 +590,18 @@ export function buildRouter(d: RouteDeps): Router {
     '/challenges/:id/detect',
     requireAuth,
     detectLimiter,
-    handler((req, res) => {
+    handler(async (req, res) => {
       const { id } = parse(challengeIdSchema, req.params);
       const { rule } = parse(detectSchema, req.body);
-      res.json(d.challenges.detect(uid(req), id, rule, ctx(req).ip));
+      res.json(await d.challenges.detect(uid(req), id, rule, ctx(req).ip));
     }),
   );
 
   r.get(
     '/scoreboard',
     requireAuth,
-    handler((req, res) => {
-      res.json(d.challenges.scoreboard(uid(req)));
+    handler(async (req, res) => {
+      res.json(await d.challenges.scoreboard(uid(req)));
     }),
   );
 
@@ -611,10 +612,10 @@ export function buildRouter(d: RouteDeps): Router {
   r.get(
     '/admin/audit',
     ...adminOnly,
-    handler((req, res) => {
+    handler(async (req, res) => {
       const { limit, before } = parse(auditQuerySchema, req.query);
-      d.audit.record({ action: 'admin.audit_read', outcome: 'success', actorId: uid(req), ip: ctx(req).ip });
-      const items = d.audit.list(limit, before).map((row) => ({ ...row, details: JSON.parse(row.details) as unknown }));
+      await d.audit.record({ action: 'admin.audit_read', outcome: 'success', actorId: uid(req), ip: ctx(req).ip });
+      const items = (await d.audit.list(limit, before)).map((row) => ({ ...row, details: JSON.parse(row.details) as unknown }));
       res.json({ items });
     }),
   );
@@ -622,9 +623,9 @@ export function buildRouter(d: RouteDeps): Router {
   r.get(
     '/admin/audit/verify',
     ...adminOnly,
-    handler((req, res) => {
-      const result = d.audit.verify();
-      d.audit.record({
+    handler(async (req, res) => {
+      const result = await d.audit.verify();
+      await d.audit.record({
         action: 'admin.audit_verify',
         outcome: result.valid ? 'success' : 'failure',
         actorId: uid(req),

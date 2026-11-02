@@ -9,7 +9,7 @@ import type { Database } from './db.js';
  * to the first broken link. Because it is an HMAC (not a bare hash), an
  * attacker who can write to the database but does not hold AUDIT_HMAC_KEY
  * cannot recompute a valid chain. UPDATE and DELETE are additionally blocked
- * by SQLite triggers.
+ * by database triggers.
  */
 
 export const AUDIT_ACTIONS = [
@@ -79,6 +79,7 @@ export interface AuditRow {
 }
 
 const GENESIS = '0'.repeat(64);
+const VERIFY_PAGE = 1000;
 
 export class AuditLog {
   constructor(
@@ -97,11 +98,7 @@ export class AuditLog {
     return createHmac('sha256', this.key).update(prev).update('\n').update(canonical).digest('hex');
   }
 
-  record(event: AuditEvent): void {
-    // DatabaseSync is synchronous and Node is single-threaded: there is no
-    // await between reading the chain head and inserting, so no interleaving.
-    const head = this.db.prepare('SELECT hash FROM audit_log ORDER BY seq DESC LIMIT 1').get() as { hash: string } | undefined;
-    const prev = head?.hash ?? GENESIS;
+  async record(event: AuditEvent): Promise<void> {
     const entry = {
       ts: Date.now(),
       actor_id: event.actorId ?? null,
@@ -111,36 +108,55 @@ export class AuditLog {
       outcome: event.outcome,
       details: JSON.stringify(event.details ?? {}),
     };
-    const { lastInsertRowid } = this.db
-      .prepare(
+    // Reading the chain head and appending must be one step: two appends that read the
+    // same head would fork the chain, and verify() would flag the honest log as tampered.
+    const seq = await this.db.transaction(async (tx) => {
+      const head = (await tx.one('SELECT hash FROM audit_log ORDER BY seq DESC LIMIT 1')) as { hash: string } | undefined;
+      const prev = head?.hash ?? GENESIS;
+      const row = (await tx.one(
         `INSERT INTO audit_log (ts, actor_id, action, target, ip, outcome, details, prev_hash, hash)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(entry.ts, entry.actor_id, entry.action, entry.target, entry.ip, entry.outcome, entry.details, prev, this.digest(prev, entry));
-    this.onRecord?.(event, { seq: Number(lastInsertRowid), ts: entry.ts });
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING seq`,
+        entry.ts,
+        entry.actor_id,
+        entry.action,
+        entry.target,
+        entry.ip,
+        entry.outcome,
+        entry.details,
+        prev,
+        this.digest(prev, entry),
+      )) as { seq: number };
+      return row.seq;
+    });
+    this.onRecord?.(event, { seq, ts: entry.ts });
   }
 
-  list(limit: number, beforeSeq?: number): AuditRow[] {
+  async list(limit: number, beforeSeq?: number): Promise<AuditRow[]> {
     const rows = beforeSeq
-      ? this.db.prepare('SELECT * FROM audit_log WHERE seq < ? ORDER BY seq DESC LIMIT ?').all(beforeSeq, limit)
-      : this.db.prepare('SELECT * FROM audit_log ORDER BY seq DESC LIMIT ?').all(limit);
-    return rows as unknown as AuditRow[];
+      ? await this.db.many('SELECT * FROM audit_log WHERE seq < ? ORDER BY seq DESC LIMIT ?', beforeSeq, limit)
+      : await this.db.many('SELECT * FROM audit_log ORDER BY seq DESC LIMIT ?', limit);
+    return rows as AuditRow[];
   }
 
-  verify(): { valid: boolean; checked: number; firstInvalidSeq: number | null } {
+  /** Walks the chain in pages: memory stays bounded however long the log grows. */
+  async verify(): Promise<{ valid: boolean; checked: number; firstInvalidSeq: number | null }> {
     let prev = GENESIS;
     let checked = 0;
-    for (const raw of this.db.prepare('SELECT * FROM audit_log ORDER BY seq ASC').iterate()) {
-      const row = raw as unknown as AuditRow;
-      const expected = Buffer.from(this.digest(prev, row), 'hex');
-      const actual = Buffer.from(row.hash, 'hex');
-      const linked = row.prev_hash === prev;
-      if (!linked || expected.length !== actual.length || !timingSafeEqual(expected, actual)) {
-        return { valid: false, checked, firstInvalidSeq: row.seq };
+    let after = 0;
+    for (;;) {
+      const page = (await this.db.many('SELECT * FROM audit_log WHERE seq > ? ORDER BY seq ASC LIMIT ?', after, VERIFY_PAGE)) as AuditRow[];
+      for (const row of page) {
+        const expected = Buffer.from(this.digest(prev, row), 'hex');
+        const actual = Buffer.from(row.hash, 'hex');
+        const linked = row.prev_hash === prev;
+        if (!linked || expected.length !== actual.length || !timingSafeEqual(expected, actual)) {
+          return { valid: false, checked, firstInvalidSeq: row.seq };
+        }
+        prev = row.hash;
+        checked++;
+        after = row.seq;
       }
-      prev = row.hash;
-      checked++;
+      if (page.length < VERIFY_PAGE) return { valid: true, checked, firstInvalidSeq: null };
     }
-    return { valid: true, checked, firstInvalidSeq: null };
   }
 }

@@ -100,7 +100,7 @@ describe('SIEM export of the audit log (ADR 0015)', () => {
     const t = setup({ env: { AUDIT_EXPORT_FILE: path } });
     await newUser(t);
     const lines = readFileSync(path, 'utf8').trim().split('\n').map((l) => JSON.parse(l) as { action: string; seq: number; service: string });
-    const rows = t.services.audit.list(100).reverse();
+    const rows = (await t.services.audit.list(100)).reverse();
     expect(lines.map((l) => l.seq)).toEqual(rows.map((r) => r.seq));
     expect(lines.map((l) => l.action)).toEqual(rows.map((r) => r.action));
     expect(lines.every((l) => l.service === 'bastion')).toBe(true);

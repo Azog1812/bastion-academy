@@ -1,9 +1,10 @@
 import { randomBytes } from 'node:crypto';
+import { setImmediate as nextTurn } from 'node:timers/promises';
 import request from 'supertest';
 import { createApp, type AppOptions } from '../src/app.js';
 import { loadConfig, type Config } from '../src/config.js';
 import { loadCurriculum, type Curriculum } from '../src/curriculum/catalog.js';
-import { openDatabase, type Database } from '../src/db.js';
+import { openDatabase, type Database, type SqlValue } from '../src/db.js';
 import { createLogger } from '../src/logger.js';
 
 export const STRONG_PASSWORD = 'correct horse battery staple';
@@ -20,6 +21,34 @@ export function testEnv(overrides: Record<string, string> = {}): NodeJS.ProcessE
     ACTIVE_KEY_ID: 'k1',
     SCRYPT_LOG_N: '10', // fast hashing in tests only; production refuses < 17
     ...overrides,
+  };
+}
+
+/**
+ * The database as a remote server makes it look: every query yields to the event loop
+ * first, so concurrent requests interleave between their queries. In-process SQLite
+ * answers within the same turn, which hides check-then-act races that PostgreSQL
+ * would expose; race tests run against this.
+ */
+export function withLatency(db: Database): Database {
+  return {
+    one: async (sql: string, ...p: SqlValue[]) => {
+      await nextTurn();
+      return db.one(sql, ...p);
+    },
+    many: async (sql: string, ...p: SqlValue[]) => {
+      await nextTurn();
+      return db.many(sql, ...p);
+    },
+    run: async (sql: string, ...p: SqlValue[]) => {
+      await nextTurn();
+      return db.run(sql, ...p);
+    },
+    transaction: async (fn) => {
+      await nextTurn();
+      return db.transaction(async (tx) => fn(withLatency(tx)));
+    },
+    close: () => db.close(),
   };
 }
 
@@ -44,10 +73,13 @@ export function setup(
     labRunner?: AppOptions['labRunner'];
     environmentRunner?: AppOptions['environmentRunner'];
     kms?: AppOptions['kms'];
+    /** Make the database behave like a remote one (see withLatency). */
+    latency?: boolean;
   } = {},
 ): TestContext {
   const config = loadConfig(testEnv(opts.env));
-  const db = openDatabase(':memory:');
+  const sqlite = openDatabase(':memory:');
+  const db = opts.latency ? withLatency(sqlite) : sqlite;
   const { app, services, metrics } = createApp({
     config,
     db,
@@ -84,9 +116,9 @@ export async function newUser(t: TestContext, email = `user${++counter}@example.
   };
 }
 
-export function auditActions(t: TestContext): string[] {
-  return t.services.audit
-    .list(1000)
+export async function auditActions(t: TestContext): Promise<string[]> {
+  return (await t.services.audit
+    .list(1000))
     .reverse()
     .map((r) => `${r.action}:${r.outcome}`);
 }

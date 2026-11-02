@@ -66,12 +66,15 @@ export function metricsListener(registry: Registry, token: Buffer, log: Logger):
       reply(401, 'unauthorized\n', { 'www-authenticate': 'Bearer' });
       return;
     }
-    try {
-      reply(200, registry.render(), { 'content-type': 'text/plain; version=0.0.4; charset=utf-8' });
-    } catch (err) {
-      // A failed scrape is visible in Prometheus (up == 0); the reason stays in our logs, not in the body.
-      log.error({ err }, 'metrics scrape failed');
-      reply(500, 'scrape failed\n');
-    }
+    registry.render().then(
+      (body) => {
+        reply(200, body, { 'content-type': 'text/plain; version=0.0.4; charset=utf-8' });
+      },
+      (err: unknown) => {
+        // A failed scrape is visible in Prometheus (up == 0); the reason stays in our logs, not in the body.
+        log.error({ err }, 'metrics scrape failed');
+        reply(500, 'scrape failed\n');
+      },
+    );
   };
 }

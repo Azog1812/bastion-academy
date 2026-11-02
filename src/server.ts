@@ -74,9 +74,10 @@ function shutdown(signal: string): void {
   metricsServer?.close();
   server.close(() => {
     siem?.close();
-    db.close();
-    logger.info('bye');
-    process.exit(0);
+    void db.close().finally(() => {
+      logger.info('bye');
+      process.exit(0);
+    });
   });
 }
 

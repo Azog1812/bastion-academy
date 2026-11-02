@@ -35,12 +35,12 @@ describe('operator account recovery', () => {
     const me = (await t.http.get('/v1/me').set({ Authorization: `Bearer ${login.body.accessToken as string}` }).expect(200)).body;
     expect(me).toMatchObject({ mfaEnabled: false, totpEnabled: false, passkeys: 0 });
 
-    const entry = t.services.audit.list(50).find((r) => r.action === 'admin.account_recovery');
+    const entry = (await t.services.audit.list(50)).find((r) => r.action === 'admin.account_recovery');
     expect(entry).toMatchObject({ outcome: 'success', target: s.id, actor_id: null });
     expect(JSON.parse(entry?.details ?? '{}')).toEqual({ via: 'cli', passkeys: 1, totp: 1, recoveryCodes: 10 });
     // The temporary password is never written to the audit log.
-    expect(JSON.stringify(t.services.audit.list(1000))).not.toContain(temporaryPassword);
-    expect(auditActions(t)).toContain('admin.account_recovery:success');
+    expect(JSON.stringify(await t.services.audit.list(1000))).not.toContain(temporaryPassword);
+    expect(await auditActions(t)).toContain('admin.account_recovery:success');
   });
 
   it('refuses an unknown account', async () => {

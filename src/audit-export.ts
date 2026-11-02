@@ -10,9 +10,10 @@ import type { AuditEvent } from './audit.js';
  *   convenience copy. `seq` is the database sequence, so a gap shows a lost line.
  * - JSON.stringify escapes control characters: a newline in a URL or an e-mail cannot
  *   start a forged line (log injection, CWE-117).
- * - Written synchronously, like the database insert, so lines keep the chain's order.
- *   A failing write (disk full) is logged and counted, never thrown: losing the SIEM
- *   copy must not take the platform down, and `seq` makes the loss visible.
+ * - Written synchronously once the entry is committed. Under concurrent requests two
+ *   lines can come out of `seq` order (ADR 0020); `seq` orders them again. A failing
+ *   write (disk full) is logged and counted, never thrown: losing the SIEM copy must not
+ *   take the platform down, and `seq` makes the loss visible.
  * - Mode 0600: the file holds user ids and IP addresses. Only the SIEM's volume mount
  *   ever sees it.
  * - Rotated by size, like logrotate's copy-free rename: Wazuh notices the new file.

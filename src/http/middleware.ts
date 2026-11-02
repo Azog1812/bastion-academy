@@ -58,7 +58,7 @@ export function authenticate(signer: TokenSigner, auth: AuthService): RequestHan
 
       // A valid signature is not enough: the account must still exist and the
       // token must not predate a "log out everywhere" / password change.
-      const state = auth.sessionState(claims.sub);
+      const state = await auth.sessionState(claims.sub);
       if (!state || state.tokenVersion !== claims.tv) throw unauthorized('Session revoked');
 
       // Role comes from the database, not the token: a demotion takes effect immediately.
@@ -75,9 +75,9 @@ export function authenticate(signer: TokenSigner, auth: AuthService): RequestHan
 }
 
 export function requireRole(role: Role, audit: AuditLog): RequestHandler {
-  return (req, _res, next) => {
+  return async (req, _res, next) => {
     if (req.principal?.role !== role) {
-      audit.record({
+      await audit.record({
         action: 'authz.denied',
         outcome: 'denied',
         actorId: req.principal?.id ?? null,

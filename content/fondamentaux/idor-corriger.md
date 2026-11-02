@@ -19,9 +19,7 @@ deuxième ligne. Bastion fait autrement : **le propriétaire fait partie de la
 requête elle-même** (`src/services/note-service.ts`) :
 
 ```ts
-const row = this.db
-  .prepare('SELECT * FROM notes WHERE id = ? AND owner_id = ?')
-  .get(noteId, ownerId);
+const row = (await this.db.one('SELECT * FROM notes WHERE id = ? AND owner_id = ?', noteId, ownerId)) as NoteRow | undefined;
 if (!row) throw notFound('Note not found'); // même réponse dans tous les cas
 ```
 
