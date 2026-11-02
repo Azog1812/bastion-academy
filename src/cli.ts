@@ -63,9 +63,9 @@ async function main(): Promise<number> {
   switch (command) {
     case 'promote': {
       if (!arg) throw new Error('usage: promote <email>');
-      const res = db.prepare("UPDATE users SET role = 'admin', token_version = token_version + 1 WHERE email = ?").run(arg);
-      if (Number(res.changes) !== 1) throw new Error('no such user');
-      audit.record({ action: 'admin.promote', outcome: 'success', target: arg, details: { via: 'cli' } });
+      const res = await db.run("UPDATE users SET role = 'admin', token_version = token_version + 1 WHERE email = ?", arg);
+      if (res.changes !== 1) throw new Error('no such user');
+      await audit.record({ action: 'admin.promote', outcome: 'success', target: arg, details: { via: 'cli' } });
       console.log(`${arg} is now admin (existing sessions revoked, log in again)`);
       return 0;
     }
@@ -81,7 +81,7 @@ async function main(): Promise<number> {
       const activeKeyId = await kms.activeKeyId();
       const { rewrapped } = await new NoteService(db, kms, audit).rotateKeys();
       const resealed = await new MfaService(db, kms, audit, config.MFA_ISSUER).rotateKeys();
-      audit.record({ action: 'admin.key_rotation', outcome: 'success', details: { activeKeyId, rewrapped, resealed } });
+      await audit.record({ action: 'admin.key_rotation', outcome: 'success', details: { activeKeyId, rewrapped, resealed } });
       console.log(`re-wrapped ${String(rewrapped)} data keys and ${String(resealed)} MFA secrets under ${activeKeyId}; old keys can now be retired`);
       return 0;
     }
@@ -96,7 +96,7 @@ async function main(): Promise<number> {
       return 0;
     }
     case 'verify-audit': {
-      const result = audit.verify();
+      const result = await audit.verify();
       console.log(JSON.stringify(result));
       return result.valid ? 0 : 2;
     }

@@ -1,6 +1,7 @@
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
+import { AsyncLocalStorage } from 'node:async_hooks';
+import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
 
 /**
  * Persistence uses Node's built-in SQLite driver: zero native
@@ -180,25 +181,161 @@ const MIGRATIONS: readonly string[] = [
   `,
 ];
 
-export type Database = DatabaseSync;
+/** Values a query can bind. No booleans: store 0/1, as SQLite and PostgreSQL agree on integers. */
+export type SqlValue = string | number | bigint | null | Uint8Array;
+
+/**
+ * The only way services reach the database (ADR 0020). Asynchronous so that a network
+ * database (PostgreSQL) fits behind the same calls as the embedded one.
+ *
+ * Rows come back as `unknown`: the caller states the shape it selected, as before.
+ * Atomicity never relies on "no await in between" any more: a check-then-act is one
+ * statement (compare-and-set, `UPDATE … RETURNING`) or runs inside `transaction()`.
+ */
+export interface Db {
+  /** First row, or undefined. */
+  one(sql: string, ...params: SqlValue[]): Promise<unknown>;
+  many(sql: string, ...params: SqlValue[]): Promise<unknown[]>;
+  /** Write; `changes` is the number of rows the statement touched. */
+  run(sql: string, ...params: SqlValue[]): Promise<{ changes: number }>;
+  /**
+   * Runs `fn` in a transaction, rolled back if it throws. Every query of the transaction
+   * must go through `tx`: the outer handle throws inside it rather than deadlocking.
+   */
+  transaction<T>(fn: (tx: Db) => Promise<T>): Promise<T>;
+  close(): Promise<void>;
+}
+
+export type Database = Db;
+
+/** A UNIQUE constraint refused the write (duplicate e-mail, pseudonym, credential). */
+export function isUniqueViolation(err: unknown): boolean {
+  return err instanceof Error && /UNIQUE constraint failed/.test(err.message);
+}
+
+/**
+ * SQLite behind the async interface. One connection, so a transaction must not let other
+ * requests interleave their statements between its BEGIN and COMMIT (they would become
+ * part of it, and be rolled back with it): while one is open, every other operation waits
+ * for it to end. Statements themselves stay synchronous, so outside a transaction nothing
+ * can interleave within one.
+ */
+class SqliteDb implements Db {
+  private open: Promise<void> | null = null;
+  private readonly inside = new AsyncLocalStorage<SqliteDb>();
+
+  constructor(private readonly raw: DatabaseSync) {}
+
+  /**
+   * Runs `op` once no transaction is open. The last check of `open` and `op` must be in
+   * the same synchronous stretch: with an await between them, a transaction could BEGIN
+   * in the gap and `op` would run inside it.
+   */
+  private async whenFree<T>(op: () => T): Promise<T> {
+    if (this.inside.getStore() === this) {
+      throw new Error('database handle used inside its own transaction: use the tx argument');
+    }
+    while (this.open) await this.open;
+    return op();
+  }
+
+  one(sql: string, ...params: SqlValue[]): Promise<unknown> {
+    return this.whenFree(() => this.raw.prepare(sql).get(...(params as SQLInputValue[])));
+  }
+
+  many(sql: string, ...params: SqlValue[]): Promise<unknown[]> {
+    return this.whenFree(() => this.raw.prepare(sql).all(...(params as SQLInputValue[])));
+  }
+
+  run(sql: string, ...params: SqlValue[]): Promise<{ changes: number }> {
+    return this.whenFree(() => ({ changes: Number(this.raw.prepare(sql).run(...(params as SQLInputValue[])).changes) }));
+  }
+
+  async transaction<T>(fn: (tx: Db) => Promise<T>): Promise<T> {
+    let done = (): void => undefined;
+    const tx = new SqliteTx(this.raw);
+    // Claim the connection in the same synchronous stretch as the check (see whenFree).
+    await this.whenFree(() => {
+      this.open = new Promise<void>((resolve) => {
+        done = resolve;
+      });
+      this.raw.exec('BEGIN IMMEDIATE');
+    });
+    try {
+      const result = await this.inside.run(this, () => fn(tx));
+      this.raw.exec('COMMIT');
+      return result;
+    } catch (err) {
+      this.raw.exec('ROLLBACK');
+      throw err;
+    } finally {
+      tx.ended = true;
+      this.open = null;
+      done();
+    }
+  }
+
+  close(): Promise<void> {
+    this.raw.close();
+    return Promise.resolve();
+  }
+}
+
+/** Every failure (a closed handle, an SQL error) becomes a rejection, never a synchronous throw. */
+const settle = <T>(op: () => T): Promise<T> =>
+  new Promise<T>((resolve) => {
+    resolve(op());
+  });
+
+/** The handle a transaction body receives. Unusable once the transaction ended. */
+class SqliteTx implements Db {
+  ended = false;
+
+  constructor(private readonly raw: DatabaseSync) {}
+
+  private live(): DatabaseSync {
+    if (this.ended) throw new Error('transaction handle used after the transaction ended');
+    return this.raw;
+  }
+
+  one(sql: string, ...params: SqlValue[]): Promise<unknown> {
+    return settle(() => this.live().prepare(sql).get(...(params as SQLInputValue[])));
+  }
+
+  many(sql: string, ...params: SqlValue[]): Promise<unknown[]> {
+    return settle(() => this.live().prepare(sql).all(...(params as SQLInputValue[])));
+  }
+
+  run(sql: string, ...params: SqlValue[]): Promise<{ changes: number }> {
+    return settle(() => ({ changes: Number(this.live().prepare(sql).run(...(params as SQLInputValue[])).changes) }));
+  }
+
+  transaction<T>(): Promise<T> {
+    return Promise.reject(new Error('nested transactions are not supported'));
+  }
+
+  close(): Promise<void> {
+    return Promise.reject(new Error('a transaction handle cannot close the database'));
+  }
+}
 
 export function openDatabase(path: string): Database {
   // eslint-disable-next-line security/detect-non-literal-fs-filename -- operator-controlled config, not user input
   if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
 
-  const db = new DatabaseSync(path);
-  db.exec(`
+  const raw = new DatabaseSync(path);
+  raw.exec(`
     PRAGMA journal_mode = WAL;
     PRAGMA foreign_keys = ON;
     PRAGMA busy_timeout = 5000;
     PRAGMA secure_delete = ON;
     PRAGMA trusted_schema = OFF;
   `);
-  migrate(db);
-  return db;
+  migrate(raw);
+  return new SqliteDb(raw);
 }
 
-function migrate(db: Database): void {
+function migrate(db: DatabaseSync): void {
   const row = db.prepare('PRAGMA user_version').get() as { user_version: number };
   for (let v = row.user_version; v < MIGRATIONS.length; v++) {
     db.exec('BEGIN IMMEDIATE');
@@ -212,18 +349,5 @@ function migrate(db: Database): void {
       db.exec('ROLLBACK');
       throw err;
     }
-  }
-}
-
-/** Runs `fn` inside a transaction; rolls back on any thrown error. */
-export function transaction<T>(db: Database, fn: () => T): T {
-  db.exec('BEGIN IMMEDIATE');
-  try {
-    const result = fn();
-    db.exec('COMMIT');
-    return result;
-  } catch (err) {
-    db.exec('ROLLBACK');
-    throw err;
   }
 }

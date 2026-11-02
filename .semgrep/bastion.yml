@@ -7,14 +7,15 @@ rules:
     severity: ERROR
     message: >-
       SQL built from a template literal or concatenation. Use bound parameters (?)
-      with prepare(). (CWE-89)
+      with one()/many()/run() (src/db.ts). (CWE-89)
     metadata: { cwe: "CWE-89", owasp: "A03:2021 - Injection" }
     patterns:
       - pattern-either:
-          - pattern: $DB.prepare(`...${$X}...`)
-          - pattern: $DB.exec(`...${$X}...`)
-          - pattern: $DB.prepare($A + $B)
-          - pattern: $DB.exec($A + $B)
+          - pattern: $DB.$QUERY(`...${$X}...`, ...)
+          - pattern: $DB.$QUERY($A + $B, ...)
+      - metavariable-regex:
+          metavariable: $QUERY
+          regex: ^(prepare|exec|one|many|run)$
 
   - id: bastion-note-query-without-owner
     languages: [typescript]
@@ -25,7 +26,10 @@ rules:
       scoped to its owner inside the SQL itself (IDOR / OWASP API1:2023).
     metadata: { cwe: "CWE-639", owasp: "API1:2023 - Broken Object Level Authorization" }
     patterns:
-      - pattern: $DB.prepare("$SQL")
+      - pattern: $DB.$QUERY("$SQL", ...)
+      - metavariable-regex:
+          metavariable: $QUERY
+          regex: ^(one|many|run)$
       - metavariable-regex:
           metavariable: $SQL
           regex: (?i)^(select|update|delete)\b.*\bnotes\b.*\bwhere\s+id\s*=\s*\?(?!.*owner_id)
@@ -41,7 +45,10 @@ rules:
       choices and credentials must be scoped to the authenticated learner inside the SQL itself (IDOR / OWASP API1:2023).
     metadata: { cwe: "CWE-639", owasp: "API1:2023 - Broken Object Level Authorization" }
     patterns:
-      - pattern: $DB.prepare("$SQL")
+      - pattern: $DB.$QUERY("$SQL", ...)
+      - metavariable-regex:
+          metavariable: $QUERY
+          regex: ^(one|many|run)$
       - metavariable-regex:
           metavariable: $SQL
           regex: (?is)^(?!.*\buser_id\b).*\b(lesson_progress|module_choices|passkeys|webauthn_challenges)\b

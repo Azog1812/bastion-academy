@@ -42,7 +42,7 @@ describe('KEKs in Vault Transit', () => {
     const v = await fakeVault();
     const t = setup({ kms: transit(v) });
     const { alice, noteId } = await withNote(t);
-    const row = t.db.prepare('SELECT key_id, wrapped_dek FROM notes WHERE id = ?').get(noteId) as { key_id: string; wrapped_dek: Uint8Array };
+    const row = await t.db.one('SELECT key_id, wrapped_dek FROM notes WHERE id = ?', noteId) as { key_id: string; wrapped_dek: Uint8Array };
     expect(row.key_id).toBe('vault:bastion-kek:v1');
     expect(Buffer.from(row.wrapped_dek).toString()).toMatch(/^vault:v1:/);
     expect((await t.http.get(`/v1/notes/${noteId}`).set(alice.auth).expect(200)).body.body).toBe("alice's secret");
@@ -64,8 +64,8 @@ describe('KEKs in Vault Transit', () => {
     const { alice, noteId } = await withNote(t);
     const { noteId: other } = await withNote(t, 'mallory');
     // Someone with write access to the database copies another note's DEK into Alice's row.
-    const theirs = t.db.prepare('SELECT key_id, wrapped_dek FROM notes WHERE id = ?').get(other) as { key_id: string; wrapped_dek: Uint8Array };
-    t.db.prepare('UPDATE notes SET key_id = ?, wrapped_dek = ? WHERE id = ?').run(theirs.key_id, theirs.wrapped_dek, noteId);
+    const theirs = await t.db.one('SELECT key_id, wrapped_dek FROM notes WHERE id = ?', other) as { key_id: string; wrapped_dek: Uint8Array };
+    await t.db.run('UPDATE notes SET key_id = ?, wrapped_dek = ? WHERE id = ?', theirs.key_id, theirs.wrapped_dek, noteId);
     const res = await t.http.get(`/v1/notes/${noteId}`).set(alice.auth).expect(500);
     expect(JSON.stringify(res.body)).not.toMatch(/vault|cipher|transit/i);
     expect(integrity(t)).toBe(1);
@@ -75,9 +75,9 @@ describe('KEKs in Vault Transit', () => {
     const v = await fakeVault();
     const t = setup({ kms: transit(v) });
     const { alice, noteId } = await withNote(t);
-    t.db.prepare("UPDATE notes SET key_id = 'vault:bastion-kek:v2' WHERE id = ?").run(noteId);
+    await t.db.run("UPDATE notes SET key_id = 'vault:bastion-kek:v2' WHERE id = ?", noteId);
     await t.http.get(`/v1/notes/${noteId}`).set(alice.auth).expect(500);
-    t.db.prepare("UPDATE notes SET key_id = 'vault:other-key:v1' WHERE id = ?").run(noteId);
+    await t.db.run("UPDATE notes SET key_id = 'vault:other-key:v1' WHERE id = ?", noteId);
     await t.http.get(`/v1/notes/${noteId}`).set(alice.auth).expect(500);
     expect(integrity(t)).toBe(2);
   });
@@ -131,7 +131,7 @@ describe('KEKs in Vault Transit', () => {
     const t = setup({ kms: transit(v) });
     const s = await newUser(t);
     await t.http.post('/v1/me/mfa/setup').set(s.auth).send({ password: STRONG_PASSWORD }).expect(200);
-    expect(t.db.prepare('SELECT key_id FROM user_mfa WHERE user_id = ?').get(s.id)).toEqual({ key_id: 'vault:bastion-kek:v1' });
+    expect(await t.db.one('SELECT key_id FROM user_mfa WHERE user_id = ?', s.id)).toEqual({ key_id: 'vault:bastion-kek:v1' });
   });
 
   it('rotates inside Vault: rewrap, never decrypt, and the old version can then be retired', async () => {
@@ -144,7 +144,7 @@ describe('KEKs in Vault Transit', () => {
     expect(await new NoteService(t.db, kms, t.services.audit).rotateKeys()).toEqual({ rewrapped: 1 });
     expect(v.calls.filter((c) => c.includes('/rewrap/'))).toHaveLength(1);
     expect(v.calls.filter((c) => c.includes('/decrypt/'))).toHaveLength(0);
-    expect(t.db.prepare('SELECT key_id FROM notes WHERE id = ?').get(noteId)).toEqual({ key_id: 'vault:bastion-kek:v2' });
+    expect(await t.db.one('SELECT key_id FROM notes WHERE id = ?', noteId)).toEqual({ key_id: 'vault:bastion-kek:v2' });
     expect(await new NoteService(t.db, kms, t.services.audit).rotateKeys()).toEqual({ rewrapped: 0 });
     expect((await t.http.get(`/v1/notes/${noteId}`).set(alice.auth).expect(200)).body.body).toBe("alice's secret");
   });
@@ -166,7 +166,7 @@ describe('KEKs in Vault Transit', () => {
     const vaultOnly = new NoteService(t.db, transit(v), t.services.audit);
     expect((await vaultOnly.get(alice.id, noteId, null)).body).toBe("alice's secret");
     // A row still pointing at a retired local key fails closed, as tampering.
-    t.db.prepare("UPDATE notes SET key_id = 'k1' WHERE id = ?").run(noteId);
+    await t.db.run("UPDATE notes SET key_id = 'k1' WHERE id = ?", noteId);
     await expect(vaultOnly.get(alice.id, noteId, null)).rejects.toThrow(DecryptionError);
   });
 });

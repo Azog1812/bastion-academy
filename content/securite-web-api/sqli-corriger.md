@@ -45,15 +45,16 @@ L'utilisateur choisit une clé ; seul le code décide du SQL.
 Corriger une faille ne suffit pas : il faut empêcher qu'elle revienne. Bastion
 empile quatre couches.
 
-1. **Le code.** Toutes les requêtes passent par `prepare()` avec des `?`. Par
-   exemple, dans `src/services/note-service.ts` :
+1. **Le code.** Toutes les requêtes passent par `one()`, `many()` ou `run()`
+   (`src/db.ts`) avec des `?` : la requête d'abord, les valeurs ensuite, jamais
+   collées dedans. Par exemple, dans `src/services/note-service.ts` :
 
    ```ts
-   this.db.prepare('SELECT * FROM notes WHERE id = ? AND owner_id = ?').get(noteId, ownerId);
+   await this.db.one('SELECT * FROM notes WHERE id = ? AND owner_id = ?', noteId, ownerId);
    ```
 
 2. **Le lint.** `eslint.config.js` refuse tout gabarit avec interpolation et
-   toute concaténation passés à `prepare()` ou `exec()`. Le message d'erreur
+   toute concaténation passés comme requête à `one()`, `many()` ou `run()`. Le message d'erreur
    explique pourquoi : *SQL injection risk: use bound parameters*.
 
 3. **L'analyse statique en CI.** La règle Semgrep `bastion-sql-interpolation`

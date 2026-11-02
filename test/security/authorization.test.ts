@@ -51,7 +51,7 @@ describe('object-level authorization (IDOR / OWASP API1:2023)', () => {
     expect(intact.body).toMatchObject({ title: 'private', version: 1 });
 
     // Probing is logged for detection.
-    expect(auditActions(t).filter((a) => a === 'authz.denied:denied')).toHaveLength(3);
+    expect((await auditActions(t)).filter((a) => a === 'authz.denied:denied')).toHaveLength(3);
   });
 
   it('paginates within the owner scope only', async () => {
@@ -72,7 +72,7 @@ describe('function-level authorization (OWASP API5:2023)', () => {
     const user = await newUser(t);
     await t.http.get('/v1/admin/audit').set(user.auth).expect(403);
     await t.http.get('/v1/admin/audit/verify').set(user.auth).expect(403);
-    expect(auditActions(t)).toContain('authz.denied:denied');
+    expect(await auditActions(t)).toContain('authz.denied:denied');
   });
 
   it('there is no HTTP path to become admin (mass assignment)', async () => {
@@ -89,7 +89,7 @@ describe('function-level authorization (OWASP API5:2023)', () => {
     const t = setup();
     const admin = await newUser(t, 'root@example.test');
     // Promotion happens out-of-band (operator CLI). It bumps token_version, so log in again.
-    t.db.prepare("UPDATE users SET role = 'admin', token_version = token_version + 1 WHERE id = ?").run(admin.id);
+    await t.db.run("UPDATE users SET role = 'admin', token_version = token_version + 1 WHERE id = ?", admin.id);
     await t.http.get('/v1/admin/audit').set(admin.auth).expect(401);
     const login = await t.http.post('/v1/auth/login').send({ email: admin.email, password: STRONG_PASSWORD }).expect(200);
     const auth = { Authorization: `Bearer ${login.body.accessToken as string}` };
@@ -102,7 +102,7 @@ describe('function-level authorization (OWASP API5:2023)', () => {
     expect(verify.body.valid).toBe(true);
 
     // Role is read from the DB on each request, not trusted from the token.
-    t.db.prepare("UPDATE users SET role = 'user' WHERE id = ?").run(admin.id);
+    await t.db.run("UPDATE users SET role = 'user' WHERE id = ?", admin.id);
     await t.http.get('/v1/admin/audit').set(auth).expect(403);
   });
 });
@@ -111,7 +111,7 @@ describe('data at rest', () => {
   it('stores no plaintext: a raw database dump reveals nothing', async () => {
     const t = setup();
     const { noteId } = await aliceWithNote(t);
-    const row = t.db.prepare('SELECT * FROM notes WHERE id = ?').get(noteId) as Record<string, unknown>;
+    const row = await t.db.one('SELECT * FROM notes WHERE id = ?', noteId) as Record<string, unknown>;
     const dump = Object.values(row)
       .map((v) => (v instanceof Uint8Array ? Buffer.from(v).toString('latin1') : String(v)))
       .join('|');
@@ -123,7 +123,7 @@ describe('data at rest', () => {
     const t = setup();
     const { noteId } = await aliceWithNote(t);
     const mallory = await newUser(t, 'mallory@example.test');
-    t.db.prepare('UPDATE notes SET owner_id = ? WHERE id = ?').run(mallory.id, noteId);
+    await t.db.run('UPDATE notes SET owner_id = ? WHERE id = ?', mallory.id, noteId);
 
     const res = await t.http.get(`/v1/notes/${noteId}`).set(mallory.auth).expect(500);
     expect(res.body).toMatchObject({ error: 'internal_error' });
@@ -138,7 +138,7 @@ describe('data at rest', () => {
     const { LocalKms } = await import('../../src/crypto/kms.js');
     const ring = new LocalKms({ keys: new Map([...(t.config.ENCRYPTION_KEYS ?? []), ['k2', randomBytes(32)]]), activeKeyId: 'k2' });
     expect(await new NoteService(t.db, ring, t.services.audit).rotateKeys()).toEqual({ rewrapped: 1 });
-    const row = t.db.prepare('SELECT key_id FROM notes WHERE id = ?').get(noteId) as { key_id: string };
+    const row = await t.db.one('SELECT key_id FROM notes WHERE id = ?', noteId) as { key_id: string };
     expect(row.key_id).toBe('k2');
     // The running app (k1 only) can no longer open it: proof the DEK really moved to k2.
     await t.http.get(`/v1/notes/${noteId}`).set(alice.auth).expect(500);

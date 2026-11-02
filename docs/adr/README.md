@@ -24,3 +24,4 @@ Format: context → decision → consequences.
 | [0017](0017-passwordless-passkey-login.md) | Passwordless login with a discoverable, user-verified passkey; account recovery that never bypasses a factor |
 | [0018](0018-alert-routing-and-dashboards.md) | Alertmanager routing and inhibition, Grafana dashboard, silences behind a login, all tested as code |
 | [0019](0019-vault-transit-kms.md) | KEKs in Vault Transit: derived key per note, AppRole with 1-hour tokens, least-privilege policy, migration from the local ring |
+| [0020](0020-async-database-layer.md) | Asynchronous database layer: atomicity from the database (compare-and-set or one transaction), never from the event loop; race tests against a latency-injecting database |

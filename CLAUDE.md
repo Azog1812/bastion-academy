@@ -37,7 +37,7 @@ explain the *why* (threat, standard, trade-off), not only the *what*.
 npm ci --ignore-scripts      # never run install scripts
 npm run lint                 # ESLint strictTypeChecked + security plugin + custom SQL rules
 npm run typecheck            # tsc strict, noUncheckedIndexedAccess, exactOptionalPropertyTypes
-npm test                     # vitest (416 tests)
+npm test                     # vitest (423 tests)
 npm run test:coverage        # thresholds: lines/statements/functions 90 %, branches 80 %
 npm run check                # lint + typecheck + coverage
 npm run build && node dist/cli.js gen-secrets > .env   # local secrets (gitignored)
@@ -63,8 +63,10 @@ Requires Node ≥ 22.13 (CI: 22 and 24; image: Node 24 distroless).
 ```
 src/
   config.ts              zod schema, fail-closed; secrets via VAR or VAR_FILE (*_FILE preferred)
-  db.ts                  node:sqlite (built-in, zero native deps), STRICT tables, migrations via
-                         PRAGMA user_version, append-only triggers on audit_log
+  db.ts                  Db interface (ADR 0020): one/many/run/transaction, async; SQLite adapter on
+                         node:sqlite (built-in, zero native deps), transactions serialised on its one
+                         connection, STRICT tables, migrations via PRAGMA user_version, append-only
+                         triggers on audit_log
   audit-export.ts        SIEM copy of the audit log: one JSON line per entry (AUDIT_EXPORT_FILE, 0600),
                          failures counted, never thrown (ADR 0015)
   audit.ts               HMAC-SHA256 chained audit log; verify() returns firstInvalidSeq;
@@ -134,7 +136,8 @@ web/                     front-end, zero deps: src/{main,api,ui,dom,markdown,cha
 content/                 curriculum as code: index.json (levels, path order), <path>/path.json
                          (modules, lessons, quizzes), <path>/<lesson>.md (French lesson bodies),
                          challenges.json (challenge → module, points, kind, brief)
-test/unit, test/security, test/helpers.ts (setup(), newUser(), auditActions())
+test/unit, test/security, test/helpers.ts (setup(), newUser(), auditActions(), withLatency():
+                         a database that yields before each query, for race tests)
 deploy/k8s (kustomize), deploy/policies (Kyverno signed-image policy),
 deploy/prometheus (scrape config, alerts.yml, alerts.test.yml for promtool),
 deploy/alertmanager (routing by severity, inhibition, routes.test.sh), deploy/grafana (provisioned
@@ -142,7 +145,7 @@ deploy/alertmanager (routing by severity, inhibition, routes.test.sh), deploy/gr
 deploy/wazuh (offline certs.sh, users.sh without demo accounts, indexer/manager/dashboard config,
              bastion_rules.xml: rules for Bastion's own audit log, ids 100200-100299)
 docs/  threat-model · security-controls (OWASP API Top 10 + ASVS 4.0.3) · security-pipeline ·
-       adr/0001-0019 · runbook · openapi.yaml (used by DAST)
+       adr/0001-0020 · runbook · openapi.yaml (used by DAST)
 ```
 
 ## Security invariants — never break these
@@ -156,8 +159,11 @@ docs/  threat-model · security-controls (OWASP API Top 10 + ASVS 4.0.3) · secu
 3. **All request schemas stay `.strict()`.** Unknown fields → 400.
 4. **Login stays enumeration-proof:** same 401 message for unknown user / wrong password /
    locked account; unknown users still pay the scrypt cost (dummy hash).
-5. **No `await` between reading and claiming a refresh token** (TOCTOU). Counters use
-   atomic `UPDATE … RETURNING`.
+5. **Atomicity comes from the database, never from the event loop** (TOCTOU, ADR 0020).
+   A check-then-act is one compare-and-set statement (refresh-token claim, TOTP step,
+   counters with `UPDATE … RETURNING`) or runs inside `db.transaction()`, with every query
+   on the `tx` handle. A race test runs against `withLatency()` and must fail with the
+   protection removed.
 6. **Role and token_version are read from the DB on every authenticated request**, never
    trusted from the JWT alone.
 7. **Errors never leak internals**: throw `HttpError` helpers from `errors.ts`; everything

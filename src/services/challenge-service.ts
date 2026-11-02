@@ -56,22 +56,23 @@ export class ChallengeService {
     return c;
   }
 
-  private solves(userId: string): Map<string, number> {
-    const rows = this.db.prepare('SELECT challenge_id, solved_at FROM challenge_solves WHERE user_id = ?').all(userId) as {
+  private async solves(userId: string): Promise<Map<string, number>> {
+    const rows = await this.db.many('SELECT challenge_id, solved_at FROM challenge_solves WHERE user_id = ?', userId) as {
       challenge_id: string;
       solved_at: number;
     }[];
     return new Map(rows.map((r) => [r.challenge_id, r.solved_at]));
   }
 
-  private assertUnlocked(userId: string, c: Challenge, ip: string | null): void {
-    if (this.learning.isModuleUnlocked(userId, c.moduleId)) return;
-    this.audit.record({ action: 'challenge.submit', outcome: 'denied', actorId: userId, target: c.id, ip, details: { reason: 'locked' } });
+  private async assertUnlocked(userId: string, c: Challenge, ip: string | null): Promise<void> {
+    if (await this.learning.isModuleUnlocked(userId, c.moduleId)) return;
+    await this.audit.record({ action: 'challenge.submit', outcome: 'denied', actorId: userId, target: c.id, ip, details: { reason: 'locked' } });
     throw forbidden('Complete the prerequisite modules first');
   }
 
-  list(userId: string) {
-    const solved = this.solves(userId);
+  async list(userId: string) {
+    const solved = await this.solves(userId);
+    const unlocked = await this.learning.moduleGate(userId);
     const items = [...this.curriculum.challenges.values()].map((c) => {
       const at = solved.get(c.id);
       return {
@@ -79,7 +80,7 @@ export class ChallengeService {
         title: c.title,
         moduleId: c.moduleId,
         points: c.points,
-        unlocked: this.learning.isModuleUnlocked(userId, c.moduleId),
+        unlocked: unlocked(c.moduleId),
         solved: at !== undefined,
         solvedAt: at === undefined ? null : new Date(at).toISOString(),
       };
@@ -87,10 +88,10 @@ export class ChallengeService {
     return { items };
   }
 
-  get(userId: string, challengeId: string, ip: string | null) {
+  async get(userId: string, challengeId: string, ip: string | null) {
     const c = this.challenge(challengeId);
-    this.assertUnlocked(userId, c, ip);
-    const at = this.solves(userId).get(c.id);
+    await this.assertUnlocked(userId, c, ip);
+    const at = (await this.solves(userId)).get(c.id);
     return {
       id: c.id,
       title: c.title,
@@ -119,25 +120,23 @@ export class ChallengeService {
     };
   }
 
-  submit(userId: string, challengeId: string, flag: string, ip: string | null) {
+  async submit(userId: string, challengeId: string, flag: string, ip: string | null) {
     const c = this.challenge(challengeId);
-    this.assertUnlocked(userId, c, ip);
+    await this.assertUnlocked(userId, c, ip);
 
     if (safeEqual(flag, this.flagFor(userId, c.id))) {
       // Idempotent: a second correct submission keeps the first timestamp and scores nothing more.
-      const inserted = this.db
-        .prepare('INSERT INTO challenge_solves (user_id, challenge_id, points, solved_at) VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING')
-        .run(userId, c.id, c.points, Date.now());
-      const firstSolve = Number(inserted.changes) === 1;
-      if (firstSolve) this.audit.record({ action: 'challenge.submit', outcome: 'success', actorId: userId, target: c.id, ip, details: { points: c.points } });
+      const inserted = await this.db.run('INSERT INTO challenge_solves (user_id, challenge_id, points, solved_at) VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING', userId, c.id, c.points, Date.now());
+      const firstSolve = inserted.changes === 1;
+      if (firstSolve) await this.audit.record({ action: 'challenge.submit', outcome: 'success', actorId: userId, target: c.id, ip, details: { points: c.points } });
       return { correct: true as const, points: c.points, alreadySolved: !firstSolve };
     }
 
-    const owner = this.flagOwner(c.id, flag, userId);
+    const owner = await this.flagOwner(c.id, flag, userId);
     if (owner) {
-      this.audit.record({ action: 'challenge.flag_shared', outcome: 'denied', actorId: userId, target: c.id, ip, details: { owner } });
+      await this.audit.record({ action: 'challenge.flag_shared', outcome: 'denied', actorId: userId, target: c.id, ip, details: { owner } });
     } else {
-      this.audit.record({ action: 'challenge.submit', outcome: 'failure', actorId: userId, target: c.id, ip });
+      await this.audit.record({ action: 'challenge.submit', outcome: 'failure', actorId: userId, target: c.id, ip });
     }
     // Same answer either way: the submitter learns nothing about other accounts.
     return { correct: false as const };
@@ -177,10 +176,10 @@ export class ChallengeService {
    * positive. The rule language is closed and bounded (ADR 0010); unknown
    * fields or modifiers are a 400 with the reason.
    */
-  detect(userId: string, challengeId: string, rawRule: unknown, ip: string | null) {
+  async detect(userId: string, challengeId: string, rawRule: unknown, ip: string | null) {
     const c = this.challenge(challengeId);
     if (c.detection === undefined && c.wazuh === undefined) throw notFound('This challenge takes a flag, not a detection rule');
-    this.assertUnlocked(userId, c, ip);
+    await this.assertUnlocked(userId, c, ip);
     let result: Score;
     if (c.wazuh !== undefined) {
       // Wazuh challenges take the XML text of local rules (ADR 0014), parsed by a closed reader.
@@ -198,24 +197,20 @@ export class ChallengeService {
     }
 
     if (!result.perfect) {
-      this.audit.record({ action: 'challenge.submit', outcome: 'failure', actorId: userId, target: c.id, ip, details: { detected: result.detected, falsePositives: result.falsePositives } });
+      await this.audit.record({ action: 'challenge.submit', outcome: 'failure', actorId: userId, target: c.id, ip, details: { detected: result.detected, falsePositives: result.falsePositives } });
       return { ...result, solved: false, points: 0, alreadySolved: false };
     }
-    const inserted = this.db
-      .prepare('INSERT INTO challenge_solves (user_id, challenge_id, points, solved_at) VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING')
-      .run(userId, c.id, c.points, Date.now());
-    const firstSolve = Number(inserted.changes) === 1;
-    if (firstSolve) this.audit.record({ action: 'challenge.submit', outcome: 'success', actorId: userId, target: c.id, ip, details: { points: c.points } });
+    const inserted = await this.db.run('INSERT INTO challenge_solves (user_id, challenge_id, points, solved_at) VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING', userId, c.id, c.points, Date.now());
+    const firstSolve = inserted.changes === 1;
+    if (firstSolve) await this.audit.record({ action: 'challenge.submit', outcome: 'success', actorId: userId, target: c.id, ip, details: { points: c.points } });
     return { ...result, solved: true, points: c.points, alreadySolved: !firstSolve };
   }
 
   /** Whose flag is this? Only learners who solved the challenge can have leaked it. */
-  private flagOwner(challengeId: string, flag: string, submitter: string): string | null {
+  private async flagOwner(challengeId: string, flag: string, submitter: string): Promise<string | null> {
     if (!FLAG_FORMAT.test(flag)) return null;
     // Cross-user by design: reads only ids of solvers, never returned to the client.
-    const solvers = this.db
-      .prepare('SELECT user_id FROM challenge_solves WHERE challenge_id = ? AND user_id != ?')
-      .all(challengeId, submitter) as { user_id: string }[];
+    const solvers = await this.db.many('SELECT user_id FROM challenge_solves WHERE challenge_id = ? AND user_id != ?', challengeId, submitter) as { user_id: string }[];
     return solvers.find((s) => safeEqual(flag, this.flagFor(s.user_id, challengeId)))?.user_id ?? null;
   }
 
@@ -224,21 +219,17 @@ export class ChallengeService {
    * that name and a score are published (no id, no e-mail). Ties go to whoever
    * got there first.
    */
-  scoreboard(userId: string): { entries: ScoreboardEntry[]; me: { score: number; rank: number | null; displayName: string | null } } {
+  async scoreboard(userId: string): Promise<{ entries: ScoreboardEntry[]; me: { score: number; rank: number | null; displayName: string | null } }> {
     // Aggregates over every learner on purpose: this is the one cross-user read,
     // and it projects nothing but the public pseudonym and the score.
-    const rows = this.db
-      .prepare(
-        `SELECT u.id AS user_id, u.display_name AS display_name,
+    const rows = await this.db.many(`SELECT u.id AS user_id, u.display_name AS display_name,
                 COALESCE(lp.n, 0) * ? + COALESCE(cs.pts, 0) AS score,
                 MAX(COALESCE(lp.last, 0), COALESCE(cs.last, 0)) AS last_at
          FROM users u
          LEFT JOIN (SELECT user_id, COUNT(*) AS n, MAX(completed_at) AS last FROM lesson_progress GROUP BY user_id) lp ON lp.user_id = u.id
          LEFT JOIN (SELECT user_id, SUM(points) AS pts, MAX(solved_at) AS last FROM challenge_solves GROUP BY user_id) cs ON cs.user_id = u.id
          WHERE u.display_name IS NOT NULL OR u.id = ?
-         ORDER BY score DESC, last_at ASC`,
-      )
-      .all(LESSON_POINTS, userId) as { user_id: string; display_name: string | null; score: number; last_at: number }[];
+         ORDER BY score DESC, last_at ASC`, LESSON_POINTS, userId) as { user_id: string; display_name: string | null; score: number; last_at: number }[];
 
     const ranked = rows.filter((r) => r.display_name !== null && r.score > 0);
     const entries = ranked.slice(0, SCOREBOARD_SIZE).map((r, i) => ({ rank: i + 1, displayName: r.display_name ?? '', score: r.score }));

@@ -84,7 +84,7 @@
               "id": "garde-fou",
               "prompt": "Comment Bastion empêche-t-il un développeur de réintroduire une requête concaténée ?",
               "choices": [
-                "Une règle ESLint qui refuse les gabarits et concaténations dans prepare() et exec()",
+                "Une règle ESLint qui refuse les gabarits et concaténations dans les requêtes (one, many, run)",
                 "Une règle Semgrep exécutée en CI",
                 "Des tests qui envoient de vraies charges d'injection",
                 "Un pare-feu applicatif devant l'API"

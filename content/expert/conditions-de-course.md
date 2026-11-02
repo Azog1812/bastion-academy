@@ -70,8 +70,8 @@ D'autres outils existent : contrainte d'unicité, transaction en isolation
 
 ## Ce que fait Bastion
 
-L'invariant 5 l'impose : « aucun `await` entre la lecture et la revendication
-d'un jeton de rafraîchissement ». Bastion revendique le jeton avec un `UPDATE`
+L'invariant 5 l'impose : « l'atomicité vient de la base, jamais de la boucle
+d'événements ». Bastion revendique le jeton avec un `UPDATE`
 conditionnel (`… WHERE id = ? AND revoked_at IS NULL`) : une seule requête
 modifie la ligne, la perdante est traitée comme un rejeu et toute la famille de
 jetons est révoquée (`src/services/auth-service.ts`). Même principe pour la
@@ -79,6 +79,15 @@ MFA : un pas de temps TOTP est revendiqué par compare-and-set avant que le code
 compte (invariant 14). Le test `authentication.test.ts` envoie deux
 rafraîchissements **en parallèle** avec le même jeton et vérifie qu'un seul
 réussit.
+
+Quand la vérification et l'écriture ne tiennent pas en une seule requête, elles
+passent dans **une transaction** (`db.transaction()`, ADR 0020) : la tête de la
+chaîne d'audit et l'entrée suivante, ou « est-ce ton dernier second facteur ? » puis
+la suppression. Pour prouver qu'une course est vraiment fermée, il faut un test qui
+**échoue sans la protection**. Or une base SQLite dans le processus répond si vite
+que deux requêtes ne s'entremêlent presque jamais : le test passerait même avec le
+bug. Bastion teste donc ses courses contre `withLatency()` (`test/helpers.ts`), une
+base qui laisse la main avant chaque requête, comme le ferait un serveur distant.
 
 ## À retenir
 

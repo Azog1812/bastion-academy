@@ -29,9 +29,9 @@ async function passwordless(t: TestContext, a: SoftAuthenticator, o: Parameters<
   return t.http.post('/v1/auth/passkey').send({ passkey: a.discover(c, o) });
 }
 
-const failedFor = (t: TestContext) =>
-  t.services.audit
-    .list(1000)
+const failedFor = async (t: TestContext) =>
+  (await t.services.audit
+    .list(1000))
     .filter((r) => r.action === 'auth.login' && r.outcome === 'failure')
     .map((r) => ({ actor: r.actor_id, ...(JSON.parse(r.details) as { method?: string; reason?: string }) }));
 
@@ -47,7 +47,7 @@ describe('passwordless login with a passkey', () => {
     expect(res.status).toBe(200);
     const me = await t.http.get('/v1/me').set({ Authorization: `Bearer ${res.body.accessToken as string}` }).expect(200);
     expect(me.body.id).toBe(s.id);
-    const last = t.services.audit.list(5).find((r) => r.action === 'auth.login');
+    const last = (await t.services.audit.list(5)).find((r) => r.action === 'auth.login');
     expect(last).toMatchObject({ outcome: 'success', actor_id: s.id });
     expect(JSON.parse(last?.details ?? '{}')).toEqual({ method: 'passkey' });
     // The password login is unchanged for the same account: two steps.
@@ -60,7 +60,7 @@ describe('passwordless login with a passkey', () => {
     const a = await enrol(t, s);
     const res = await passwordless(t, a, { flags: FLAG_UP });
     expect(res.status).toBe(401);
-    expect(failedFor(t)).toContainEqual({ actor: s.id, method: 'passkey', reason: 'user_verification' });
+    expect(await failedFor(t)).toContainEqual({ actor: s.id, method: 'passkey', reason: 'user_verification' });
   });
 
   it("refuses another account's handle, a forged handle and an unknown key, all alike", async () => {
@@ -81,11 +81,11 @@ describe('passwordless login with a passkey', () => {
       expect(r.body.message).toBe('Passkey not recognised');
     }
     // No real credential of the victim's account was involved: the audit names nobody.
-    expect(failedFor(t)).toEqual(expect.arrayContaining([
+    expect(await failedFor(t)).toEqual(expect.arrayContaining([
       { actor: null, method: 'passkey', reason: 'unknown_credential' },
       { actor: null, method: 'passkey', reason: 'user_handle' },
     ]));
-    expect(failedFor(t).every((f) => f.actor === null)).toBe(true);
+    expect((await failedFor(t)).every((f) => f.actor === null)).toBe(true);
   });
 
   it('uses each challenge once, and never one issued for an MFA step', async () => {
@@ -106,9 +106,9 @@ describe('passwordless login with a passkey', () => {
     await t.http.post('/v1/auth/mfa').send({ mfaToken: step.body.mfaToken as string, passkey: { id: assertion.id, type: 'public-key', response } }).expect(401);
     // Expired: five minutes, then gone.
     const late = await challenge(t);
-    t.db.prepare('UPDATE webauthn_login_challenges SET expires_at = ?').run(Date.now() - 1);
+    await t.db.run('UPDATE webauthn_login_challenges SET expires_at = ?', Date.now() - 1);
     await t.http.post('/v1/auth/passkey').send({ passkey: a.discover(late) }).expect(401);
-    expect(failedFor(t).filter((f) => f.reason === 'challenge')).toHaveLength(3);
+    expect((await failedFor(t)).filter((f) => f.reason === 'challenge')).toHaveLength(3);
   });
 
   it('refuses what a phishing proxy relays', async () => {
@@ -118,7 +118,7 @@ describe('passwordless login with a passkey', () => {
     expect((await passwordless(t, a, { origin: 'https://bastion-academy.example' })).status).toBe(401);
     expect((await passwordless(t, a, { rpId: 'evil.example' })).status).toBe(401);
     expect((await passwordless(t, a, { tamperSignature: true })).status).toBe(401);
-    expect(failedFor(t).map((f) => f.reason)).toEqual(['assertion', 'assertion', 'assertion']);
+    expect((await failedFor(t)).map((f) => f.reason)).toEqual(['assertion', 'assertion', 'assertion']);
   });
 
   it('gets the owner in while a password guesser is locked out, and lifts nothing for the guesser', async () => {
@@ -126,7 +126,7 @@ describe('passwordless login with a passkey', () => {
     const s = await newUser(t);
     const a = await enrol(t, s);
     for (let n = 0; n < 5; n++) await t.http.post('/v1/auth/login').send({ email: s.email, password: 'wrong password number x' }).expect(401);
-    expect(auditActions(t)).toContain('auth.lockout:denied');
+    expect(await auditActions(t)).toContain('auth.lockout:denied');
     // Locked: even the right password is refused.
     await t.http.post('/v1/auth/login').send({ email: s.email, password: STRONG_PASSWORD }).expect(401);
     // The passkey is not guessable: the lockout is not its business.
@@ -140,7 +140,7 @@ describe('passwordless login with a passkey', () => {
     const s = await newUser(t);
     const a = await enrol(t, s);
     for (let n = 0; n < 8; n++) expect((await passwordless(t, a, { tamperSignature: true })).status).toBe(401);
-    const row = t.db.prepare('SELECT failed_logins, locked_until FROM users WHERE id = ?').get(s.id) as { failed_logins: number; locked_until: number };
+    const row = await t.db.one('SELECT failed_logins, locked_until FROM users WHERE id = ?', s.id) as { failed_logins: number; locked_until: number };
     expect(row).toEqual({ failed_logins: 0, locked_until: 0 });
     // The password login still works in two steps.
     await t.http.post('/v1/auth/login').send({ email: s.email, password: STRONG_PASSWORD }).expect(200);
@@ -152,8 +152,8 @@ describe('passwordless login with a passkey', () => {
     const key = await enrol(t, s, new SoftAuthenticator('ed25519', undefined, undefined, 7));
     expect((await passwordless(t, key)).status).toBe(200);
     expect((await passwordless(t, key, { keepCounter: true })).status).toBe(401);
-    expect(auditActions(t)).toContain('passkey.clone_detected:denied');
-    expect(failedFor(t)).toContainEqual({ actor: s.id, method: 'passkey', reason: 'clone' });
+    expect(await auditActions(t)).toContain('passkey.clone_detected:denied');
+    expect(await failedFor(t)).toContainEqual({ actor: s.id, method: 'passkey', reason: 'clone' });
   });
 
   it('opens a browser session in an HttpOnly cookie, same origin only', async () => {
@@ -171,16 +171,15 @@ describe('passwordless login with a passkey', () => {
 
   it('bounds how many challenges can be pending, whoever asks', async () => {
     const t = setup();
-    const insert = t.db.prepare('INSERT INTO webauthn_login_challenges (challenge_hash, expires_at) VALUES (?, ?)');
     const until = Date.now() + 60_000;
-    t.db.exec('BEGIN');
-    for (let n = 0; n < 10_000; n++) insert.run(`h${String(n)}`, until);
-    t.db.exec('COMMIT');
+    await t.db.transaction(async (tx) => {
+      for (let n = 0; n < 10_000; n++) await tx.run('INSERT INTO webauthn_login_challenges (challenge_hash, expires_at) VALUES (?, ?)', `h${String(n)}`, until);
+    });
     await t.http.post('/v1/auth/passkey/options').expect(503);
     // Expired ones are swept first: the cap counts live challenges only.
-    t.db.prepare('UPDATE webauthn_login_challenges SET expires_at = ?').run(Date.now() - 1);
+    await t.db.run('UPDATE webauthn_login_challenges SET expires_at = ?', Date.now() - 1);
     await t.http.post('/v1/auth/passkey/options').expect(200);
-    expect((t.db.prepare('SELECT COUNT(*) AS n FROM webauthn_login_challenges').get() as { n: number }).n).toBe(1);
+    expect((await t.db.one('SELECT COUNT(*) AS n FROM webauthn_login_challenges') as { n: number }).n).toBe(1);
   });
 
   it('keeps bodies strict', async () => {

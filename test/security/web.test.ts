@@ -54,7 +54,7 @@ describe('browser sessions: refresh token in an HttpOnly cookie (ADR 0007)', () 
     expect(String(replay.headers['set-cookie'])).toMatch(/^__Host-bastion_rt=; Max-Age=0/);
     // Reuse detection revoked the whole family, including the legitimate rotated cookie.
     await refresh(t, rotated).expect(401);
-    expect(auditActions(t)).toContain('auth.refresh_reuse_detected:denied');
+    expect(await auditActions(t)).toContain('auth.refresh_reuse_detected:denied');
   });
 
   it('refuses refresh without a well-formed cookie', async () => {

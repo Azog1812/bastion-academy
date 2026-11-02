@@ -16,7 +16,7 @@ describe('injection resistance', () => {
     // Login with an injection payload as e-mail is rejected by validation, never reaches SQL.
     await t.http.post('/v1/auth/login').send({ email: payload, password: 'x' }).expect(400);
     // Schema still intact.
-    expect(t.db.prepare('SELECT COUNT(*) AS n FROM users').get()).toEqual({ n: 1 });
+    expect(await t.db.one('SELECT COUNT(*) AS n FROM users')).toEqual({ n: 1 });
   });
 
   it('stores HTML/JS verbatim and serves it as JSON only (no reflected XSS surface)', async () => {
@@ -140,7 +140,7 @@ describe('response hardening', () => {
     const t = setup();
     await t.http.get('/healthz').expect(200, { status: 'ok' });
     await t.http.get('/readyz').expect(200, { status: 'ready' });
-    t.db.close();
+    await t.db.close();
     await t.http.get('/readyz').expect(503);
   });
 });

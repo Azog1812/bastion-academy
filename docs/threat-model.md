@@ -152,9 +152,13 @@ browser ─► lab-gateway :8088 ──(per-instance internal network)──► 
 **Race conditions (TOCTOU).** Two concurrent refreshes with the same token, or eight
 concurrent wrong passwords, are classic ways to bypass single-use tokens and
 lockouts. The refresh token is *claimed* with a conditional `UPDATE … WHERE
-revoked_at IS NULL` before any `await`, and failed logins use an atomic
+revoked_at IS NULL` (one compare-and-set statement), and failed logins use an atomic
 `UPDATE … RETURNING` instead of read-modify-write. Both are covered by tests
-that fire the requests in parallel.
+that fire the requests in parallel. Every other check-then-act runs in one transaction
+(ADR 0020): the audit chain head and the next entry, "is this the last second factor?"
+and the deletion, the passkey and login-challenge caps. Atomicity never relies on the
+event loop: these race tests run against a database that yields between queries, as a
+network database does, and fail with the transaction removed.
 
 **Ciphertext relocation.** An attacker with write access to the database (but
 not the keys) copies Alice's encrypted note into a row owned by Mallory. Without

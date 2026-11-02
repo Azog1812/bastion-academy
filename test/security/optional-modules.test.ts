@@ -54,7 +54,7 @@ describe('optional modules: each learner shapes their training', () => {
     await t.http.get('/v1/lessons/siem-lesson').set(alice.auth).expect(403);
     await t.http.post('/v1/lessons/siem-lesson/complete').set(alice.auth).send({}).expect(403);
     await t.http.get('/v1/challenges/siem-chal').set(alice.auth).expect(403);
-    expect(t.db.prepare("SELECT details FROM audit_log WHERE action = 'lesson.complete' AND outcome = 'denied'").all()).toEqual([
+    expect(await t.db.many("SELECT details FROM audit_log WHERE action = 'lesson.complete' AND outcome = 'denied'")).toEqual([
       { details: '{"reason":"not_added"}' },
       { details: '{"reason":"not_added"}' },
     ]);
@@ -76,7 +76,7 @@ describe('optional modules: each learner shapes their training', () => {
 
     await choose(t, alice, 'siem', { added: true }).expect(200);
     expect((await modules(t, alice)).progress).toEqual({ completed: 2, total: 2 });
-    expect(auditActions(t).filter((a) => a.startsWith('module.select'))).toHaveLength(3);
+    expect((await auditActions(t)).filter((a) => a.startsWith('module.select'))).toHaveLength(3);
   });
 
   it('is idempotent and audits only real changes', async () => {
@@ -86,7 +86,7 @@ describe('optional modules: each learner shapes their training', () => {
     await choose(t, alice, 'siem', { added: true }).expect(200);
     await choose(t, alice, 'siem', { added: false }).expect(200);
     await choose(t, alice, 'siem', { added: false }).expect(200);
-    expect(auditActions(t).filter((a) => a.startsWith('module.select'))).toEqual(['module.select:success', 'module.select:success']);
+    expect((await auditActions(t)).filter((a) => a.startsWith('module.select'))).toEqual(['module.select:success', 'module.select:success']);
   });
 
   it("isolates choices: one learner's modules never open for another", async () => {
@@ -115,7 +115,7 @@ describe('optional modules: each learner shapes their training', () => {
     const t = setup({ curriculum });
     const alice = await newUser(t);
     await choose(t, alice, 'siem', { added: true }).expect(200);
-    t.db.prepare('DELETE FROM users WHERE id = ?').run(alice.id);
-    expect(t.db.prepare('SELECT COUNT(*) AS n FROM module_choices WHERE user_id = ?').get(alice.id)).toEqual({ n: 0 });
+    await t.db.run('DELETE FROM users WHERE id = ?', alice.id);
+    expect(await t.db.one('SELECT COUNT(*) AS n FROM module_choices WHERE user_id = ?', alice.id)).toEqual({ n: 0 });
   });
 });

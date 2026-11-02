@@ -54,12 +54,12 @@ const CASES: [AuditEvent, string][] = [
   ]),
 ];
 
-export function bastionAuditSuite(): { lines: string[]; ids: string[] } {
+export async function bastionAuditSuite(): Promise<{ lines: string[]; ids: string[] }> {
   const db = openDatabase(':memory:');
   const lines: string[] = [];
   const audit = new AuditLog(db, randomBytes(32), (event, written) => lines.push(toSiemLine(event, written).trimEnd()));
-  for (const [event] of CASES) audit.record(event);
-  db.close();
+  for (const [event] of CASES) await audit.record(event);
+  await db.close();
   if (lines.some((l) => l.includes('\n'))) throw new Error('an exported line contains a raw newline');
   return { lines, ids: CASES.map(([, id]) => id) };
 }

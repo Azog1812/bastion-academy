@@ -38,7 +38,7 @@ for (const kind of WAZUH_DATASET_KINDS) {
 
 // The production rules for Bastion's own audit log (ADR 0015): an expected rule per line.
 {
-  const { lines, ids } = bastionAuditSuite();
+  const { lines, ids } = await bastionAuditSuite();
   const dir = join(out, 'bastion-audit');
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, 'lines.log'), `${lines.join('\n')}\n`);

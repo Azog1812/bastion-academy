@@ -61,7 +61,7 @@ describe('Wazuh rule challenges (ADR 0014)', () => {
     expect((await detect(t, s, 'wz-ssh', WIDE).expect(200)).body).toMatchObject({ solved: false, points: 0, missed: 1, falsePositives: 0, examples: { missed: ['10.0.5.77'] } });
     expect((await detect(t, s, 'wz-ssh', GOOD).expect(200)).body).toMatchObject({ solved: true, points: 300, alreadySolved: false });
     expect((await detect(t, s, 'wz-ssh', GOOD).expect(200)).body).toMatchObject({ solved: true, alreadySolved: true });
-    expect(auditActions(t).filter((a) => a.startsWith('challenge.submit'))).toEqual(['challenge.submit:failure', 'challenge.submit:success']);
+    expect((await auditActions(t)).filter((a) => a.startsWith('challenge.submit'))).toEqual(['challenge.submit:failure', 'challenge.submit:success']);
   });
 
   it('stays closed until the optional module is added and unlocked', async () => {
