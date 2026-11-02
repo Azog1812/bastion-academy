@@ -1,5 +1,6 @@
 import { Router, type Request, type Response } from 'express';
-import { rateLimit } from 'express-rate-limit';
+import { rateLimit, type Store } from 'express-rate-limit';
+import type { LimiterName } from './rate-limit-store.js';
 import type { AuditLog } from '../audit.js';
 import type { TokenSigner } from '../crypto/tokens.js';
 import { isMfaChallenge, type AuthService, type LoginResult, type RequestContext } from '../services/auth-service.js';
@@ -55,6 +56,8 @@ export interface RouteDeps {
   audit: AuditLog;
   signer: TokenSigner;
   rateLimits: { auth: number; refresh: number; quiz: number; lab: number };
+  /** Shared counters (Redis, ADR 0023) or undefined (in memory). These limiters fail closed. */
+  limiterStore?: (name: LimiterName) => Store | undefined;
   refreshTtlSeconds: number;
 }
 
@@ -76,8 +79,9 @@ function sendBrowserLogin(res: Response, result: LoginResult, ttl: number): void
   res.json(browserView(result));
 }
 
-const limiter = (limit: number, name: string) =>
+const limiter = (limit: number, name: LimiterName, store: Store | undefined) =>
   rateLimit({
+    ...(store ? { store } : {}),
     windowMs: 15 * 60 * 1000,
     limit,
     standardHeaders: 'draft-8',
@@ -88,8 +92,9 @@ const limiter = (limit: number, name: string) =>
 
 export function buildRouter(d: RouteDeps): Router {
   const r = Router();
-  const authLimiter = limiter(d.rateLimits.auth, 'auth');
-  const refreshLimiter = limiter(d.rateLimits.refresh, 'refresh');
+  const store = (name: LimiterName): Store | undefined => d.limiterStore?.(name);
+  const authLimiter = limiter(d.rateLimits.auth, 'auth', store('auth'));
+  const refreshLimiter = limiter(d.rateLimits.refresh, 'refresh', store('refresh'));
   const requireAuth = authenticate(d.signer, d.auth);
 
   /* ---------- authentication ---------- */
@@ -422,7 +427,9 @@ export function buildRouter(d: RouteDeps): Router {
 
   // Keyed by user, not IP: guessing quiz answers is a per-account abuse, and
   // learners behind one NAT (a classroom) must not throttle each other.
+  const quizStore = store('quiz');
   const quizLimiter = rateLimit({
+    ...(quizStore ? { store: quizStore } : {}),
     windowMs: 15 * 60 * 1000,
     limit: d.rateLimits.quiz,
     standardHeaders: 'draft-8',
@@ -473,7 +480,9 @@ export function buildRouter(d: RouteDeps): Router {
   /* ---------- challenges and scoreboard ---------- */
 
   // Same reasoning as quizzes: flag guessing is a per-account abuse.
+  const flagStore = store('flag');
   const flagLimiter = rateLimit({
+    ...(flagStore ? { store: flagStore } : {}),
     windowMs: 15 * 60 * 1000,
     limit: d.rateLimits.quiz,
     standardHeaders: 'draft-8',
@@ -502,7 +511,9 @@ export function buildRouter(d: RouteDeps): Router {
   );
 
   // Each start creates a network and a container: a per-account budget, like flags.
+  const labStore = store('lab');
   const labLimiter = rateLimit({
+    ...(labStore ? { store: labStore } : {}),
     windowMs: 15 * 60 * 1000,
     limit: d.rateLimits.lab,
     standardHeaders: 'draft-8',
@@ -576,7 +587,9 @@ export function buildRouter(d: RouteDeps): Router {
   );
 
   // Writing a rule is iterative: a larger budget than flags, still per account.
+  const detectStore = store('detect');
   const detectLimiter = rateLimit({
+    ...(detectStore ? { store: detectStore } : {}),
     windowMs: 15 * 60 * 1000,
     limit: d.rateLimits.quiz * 2,
     standardHeaders: 'draft-8',

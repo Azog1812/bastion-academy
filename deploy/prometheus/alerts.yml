@@ -78,6 +78,16 @@ groups:
           summary: Audit entries are not reaching the SIEM file
           runbook: docs/runbook.md#alert-bastionauditexportfailing
 
+      - alert: BastionRateLimitStoreDown
+        # Redis/Valkey unreachable (ADR 0023): logins, flags and quizzes answer 503 (their
+        # limiters fail closed), the global flood guard lets requests through unlimited.
+        expr: sum(increase(bastion_rate_limit_store_errors_total[5m])) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: Rate-limit store unreachable, logins refused and flood guard off
+          runbook: docs/runbook.md#alert-bastionratelimitstoredown
+
   - name: bastion-availability
     rules:
       # Dead man's switch (ADR 0018): always firing. If it stops reaching its receiver,

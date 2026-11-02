@@ -53,6 +53,8 @@ async function main(): Promise<number> {
         `POSTGRES_PASSWORD=${randomBytes(24).toString('hex')}`,
         // The API's own login (bastion_app, under row-level security), apart from the owner's.
         `POSTGRES_APP_PASSWORD=${randomBytes(24).toString('hex')}`,
+        // Redis ACL user `bastion` (ADR 0023); hex, URL-safe.
+        `REDIS_PASSWORD=${randomBytes(24).toString('hex')}`,
         `ENCRYPTION_KEYS=k1:${b64(32)}`,
         'ACTIVE_KEY_ID=k1',
         '',

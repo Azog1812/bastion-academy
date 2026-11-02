@@ -1,4 +1,5 @@
 import { monitorEventLoopDelay } from 'node:perf_hooks';
+import { LIMITERS } from './http/rate-limit-store.js';
 import { AUDIT_ACTIONS, AUDIT_OUTCOMES } from './audit.js';
 import type { Database } from './db.js';
 
@@ -221,6 +222,7 @@ export interface AppMetrics {
   auditEvents: Counter;
   integrityFailures: Counter;
   auditExportFailures: Counter;
+  rateLimitStoreErrors: Counter;
 }
 
 /** Process-wide, so one sampler per process however many apps are created (tests create hundreds). */
@@ -262,7 +264,13 @@ export function createMetrics(db: Database): AppMetrics {
       'bastion_audit_export_failures_total',
       'Audit entries that could not be copied to the SIEM file (ADR 0015); the database still has them.',
     ),
+    rateLimitStoreErrors: registry.counter(
+      'bastion_rate_limit_store_errors_total',
+      'Rate-limit counters that could not be read in Redis (ADR 0023), by limiter: refused (503) or, for the global limiter, let through.',
+      ['limiter'],
+    ),
   };
+  for (const limiter of LIMITERS) metrics.rateLimitStoreErrors.init({ limiter });
 
   for (const action of AUDIT_ACTIONS) for (const outcome of AUDIT_OUTCOMES) metrics.auditEvents.init({ action, outcome });
 

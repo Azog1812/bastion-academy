@@ -20,8 +20,11 @@ scrape_configs:
     authorization:
       type: Bearer
       credentials_file: /run/secrets/metrics_token
-    static_configs:
-      - targets: ["bastion:9464"]
+    # Every replica (ADR 0023): the service name resolves to one address per container.
+    dns_sd_configs:
+      - names: ["bastion"]
+        type: A
+        port: 9464
 
   # Its own health (notifications_failed_total), reached on the internal network only.
   - job_name: alertmanager

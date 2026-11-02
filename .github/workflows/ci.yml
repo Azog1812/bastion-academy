@@ -65,7 +65,8 @@ jobs:
   postgres:
     # The whole suite again, every test context in its own schema of a real PostgreSQL
     # (ADR 0021): same SQL, same race tests, the second engine proven like the first, plus
-    # the row-level security tests (ADR 0022), which only run here.
+    # the row-level security tests (ADR 0022) and the shared rate-limit store against a real
+    # Valkey (ADR 0023), which only run here.
     name: Test suite against PostgreSQL
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -74,6 +75,8 @@ jobs:
     env:
       # Same image and digest as the postgres service in docker-compose.postgres.yml: keep them in sync.
       POSTGRES_IMAGE: postgres:18.6-alpine@sha256:10a5c69a83035ab5239f5620d708520e8b28f5aa1f2b20143e6024532edadfb5
+      # Same as the valkey service in docker-compose.replicas.yml (ADR 0023).
+      VALKEY_IMAGE: valkey/valkey:9.1.3-alpine@sha256:bf09d58e96d6b4524a15396b65b242bbe18beebbcc15a04d8ee75ddac62fae0b
     steps:
       - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
@@ -106,6 +109,15 @@ jobs:
             docker exec -i pg psql -v ON_ERROR_STOP=1 -v pw="$app_password" -U postgres -d bastion_test
           echo "TEST_DATABASE_URL=postgres://postgres:$password@127.0.0.1:5432/bastion_test" >> "$GITHUB_ENV"
           echo "TEST_DATABASE_APP_URL=postgres://bastion_app:$app_password@127.0.0.1:5432/bastion_test" >> "$GITHUB_ENV"
+
+      # The shared rate-limit store, started by the same script and ACL as in compose.
+      - name: Start Valkey
+        run: |
+          password="$(openssl rand -hex 24)"
+          echo "::add-mask::$password"
+          docker run -d --name valkey --user 999:1000 -e VALKEY_PASSWORD="$password"             -v "$PWD/deploy/valkey/start.sh:/setup/start.sh:ro" --tmpfs /run/valkey:uid=999,gid=1000,mode=0700             -p 127.0.0.1:6379:6379 --entrypoint sh "$VALKEY_IMAGE" /setup/start.sh
+          for _ in $(seq 1 30); do docker exec valkey valkey-cli ping 2>&1 | grep -qE 'PONG|NOAUTH' && break; sleep 1; done
+          echo "TEST_REDIS_URL=redis://bastion:$password@127.0.0.1:6379" >> "$GITHUB_ENV"
 
       - run: npx vitest run
 

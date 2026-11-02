@@ -175,7 +175,10 @@ export class LabService {
   }
 
   private async destroy(userId: string, row: InstanceRow, action: 'lab.stop' | 'lab.expire', ip: string | null): Promise<void> {
-    await this.db.run('DELETE FROM lab_instances WHERE id = ? AND user_id = ?', row.id, userId);
+    // Compare-and-set: with several replicas, each reaper finds the same expired row. Only
+    // the one whose DELETE removed it stops the lab and writes the audit entry (invariant 5).
+    const { changes } = await this.db.run('DELETE FROM lab_instances WHERE id = ? AND user_id = ?', row.id, userId);
+    if (changes === 0) return;
     let outcome: 'success' | 'failure' = 'success';
     // If the runner is unreachable, its own TTL reaper removes the containers later.
     await this.runner?.stop(row.id).catch(() => {

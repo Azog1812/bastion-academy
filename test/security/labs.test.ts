@@ -44,9 +44,9 @@ class FakeRunner implements LabRunnerClient {
   }
 }
 
-const ctx = (opts: { rateLimits?: { lab: number }; noRunner?: boolean } = {}) => {
+const ctx = (opts: { rateLimits?: { lab: number }; noRunner?: boolean; latency?: boolean } = {}) => {
   const runner = new FakeRunner();
-  const t = setup({ curriculum, ...(opts.noRunner ? {} : { labRunner: runner }), ...(opts.rateLimits ? { rateLimits: opts.rateLimits } : {}) });
+  const t = setup({ curriculum, ...(opts.noRunner ? {} : { labRunner: runner }), ...(opts.rateLimits ? { rateLimits: opts.rateLimits } : {}), ...(opts.latency ? { latency: true } : {}) });
   return { t, runner };
 };
 
@@ -168,6 +168,18 @@ describe('labs: per-learner instances', () => {
     await t.db.run('UPDATE lab_instances SET expires_at = 0');
     await start(t, s, 'sqli').expect(201); // the expired idor lab is cleaned up first
     expect(runner.stops).toHaveLength(2);
+  });
+
+  it('destroys an expired lab once when two replicas reap at the same time', async () => {
+    // Every replica runs the reaper (ADR 0023): both find the same expired row.
+    const { t } = ctx({ latency: true });
+    const s = await newUser(t);
+    await start(t, s, 'sqli').expect(201);
+    await t.db.run('UPDATE lab_instances SET expires_at = 0');
+    const [a, b] = await Promise.all([t.services.labs.reap(), t.services.labs.reap()]);
+    expect(a + b).toBeGreaterThanOrEqual(1);
+    // Only the reaper whose DELETE removed the row stops the lab and audits it.
+    expect((await auditActions(t)).filter((x) => x === 'lab.expire:success')).toHaveLength(1);
   });
 
   it('lab starts are rate-limited per account', async () => {

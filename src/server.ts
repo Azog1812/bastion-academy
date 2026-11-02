@@ -2,6 +2,7 @@ import { createServer } from 'node:http';
 import { createApp } from './app.js';
 import { loadConfig } from './config.js';
 import { connectDatabase } from './db.js';
+import { RedisClient } from './redis.js';
 import { loadCurriculum } from './curriculum/catalog.js';
 import { createLogger } from './logger.js';
 import { metricsListener } from './http/metrics.js';
@@ -33,7 +34,21 @@ if (vault) {
     process.exit(1);
   }
 }
-const { app, services, metrics, siem } = createApp({ config, db, logger, curriculum, kms });
+// Shared rate limits (ADR 0023). Checked at boot like the database: a wrong password or an
+// unreachable server is a misconfiguration, not something to discover on the first login.
+let redis: RedisClient | undefined;
+if (config.REDIS_URL !== undefined) {
+  redis = new RedisClient(config.REDIS_URL);
+  try {
+    await redis.command(['PING']);
+  } catch (err) {
+    logger.fatal({ reason: err instanceof Error ? err.message : 'unknown' }, 'rate-limit store unavailable, refusing to start');
+    process.exit(1);
+  }
+} else if (config.DATABASE_URL !== undefined) {
+  logger.warn('PostgreSQL without REDIS_URL: rate limits are counted per replica (N replicas allow N times the limit)');
+}
+const { app, services, metrics, siem } = createApp({ config, db, logger, curriculum, kms, ...(redis ? { redis: { client: redis } } : {}) });
 
 // Expired labs are destroyed even if nobody comes back to stop them (the runner reaps on its own too).
 const labReaper = setInterval(() => {
@@ -50,7 +65,7 @@ labReaper.unref();
 
 const server = app.listen(config.PORT, config.HOST, () => {
   logger.info(
-    { port: config.PORT, database: db.dialect, kms: config.KMS_PROVIDER, keyId: config.ACTIVE_KEY_ID, lessons: curriculum.lessons.size, labs: config.LAB_RUNNER_URL ? 'on' : 'off' },
+    { port: config.PORT, database: db.dialect, rateLimits: redis ? 'redis' : 'memory', kms: config.KMS_PROVIDER, keyId: config.ACTIVE_KEY_ID, lessons: curriculum.lessons.size, labs: config.LAB_RUNNER_URL ? 'on' : 'off' },
     'bastion listening',
   );
 });
@@ -83,6 +98,7 @@ function shutdown(signal: string): void {
   metricsServer?.close();
   server.close(() => {
     siem?.close();
+    redis?.close();
     void db.close().finally(() => {
       logger.info('bye');
       process.exit(0);

@@ -1,5 +1,7 @@
 import express, { type Express } from 'express';
-import { rateLimit } from 'express-rate-limit';
+import { rateLimit, type Store } from 'express-rate-limit';
+import { RedisRateLimitStore, type LimiterName } from './http/rate-limit-store.js';
+import type { RedisClient } from './redis.js';
 import helmet from 'helmet';
 import { pinoHttp } from 'pino-http';
 import type { Logger } from 'pino';
@@ -40,6 +42,8 @@ export interface AppOptions {
   environmentRunner?: EnvironmentRunnerClient;
   /** Where the KEKs live (ADR 0019). Default: what the configuration says. */
   kms?: Kms;
+  /** Shared rate-limit counters (ADR 0023). Without it, each process counts in memory. */
+  redis?: { client: RedisClient; namespace?: string };
 }
 
 export interface App {
@@ -61,7 +65,7 @@ export interface App {
   };
 }
 
-export function createApp({ config, db, logger, curriculum, rateLimits, web, labRunner, environmentRunner, kms: kmsOption }: AppOptions): App {
+export function createApp({ config, db, logger, curriculum, rateLimits, web, labRunner, environmentRunner, kms: kmsOption, redis }: AppOptions): App {
   const limits = rateLimits ?? {
     global: config.RATE_LIMIT_GLOBAL,
     auth: config.RATE_LIMIT_AUTH,
@@ -70,6 +74,25 @@ export function createApp({ config, db, logger, curriculum, rateLimits, web, lab
   };
 
   const metrics = createMetrics(db);
+
+  // One store per limiter (express-rate-limit refuses a shared one). A Redis outage is
+  // counted on every request and logged at most every 10 s per limiter (no log flood).
+  const lastLogged = new Map<LimiterName, number>();
+  const limiterStore = (name: LimiterName, failOpen: boolean): Store | undefined =>
+    redis === undefined
+      ? undefined
+      : new RedisRateLimitStore(redis.client, {
+          name,
+          failOpen,
+          ...(redis.namespace !== undefined ? { namespace: redis.namespace } : {}),
+          onError: (limiter, err) => {
+            metrics.rateLimitStoreErrors.inc({ limiter });
+            const now = Date.now();
+            if (now - (lastLogged.get(limiter) ?? 0) < 10_000) return;
+            lastLogged.set(limiter, now);
+            logger.warn({ limiter, failOpen, reason: err instanceof Error ? err.message : 'unknown' }, 'rate-limit store unavailable');
+          },
+        });
   const siem = config.AUDIT_EXPORT_FILE
     ? auditFileExport(config.AUDIT_EXPORT_FILE, logger, () => {
         metrics.auditExportFailures.inc();
@@ -147,8 +170,12 @@ export function createApp({ config, db, logger, curriculum, rateLimits, web, lab
   /* Web front-end: static, same origin, its own CSP. Before the limiter so loading the UI never throttles the API. */
   app.use(webRouter(web));
 
+  // The flood guard fails open when Redis is down: refusing everything would turn a Redis
+  // outage into a full outage. The limiters that stop guessing fail closed (routes.ts).
+  const globalStore = limiterStore('global', true);
   app.use(
     rateLimit({
+      ...(globalStore ? { store: globalStore } : {}),
       windowMs: 15 * 60 * 1000,
       limit: limits.global,
       standardHeaders: 'draft-8',
@@ -170,6 +197,7 @@ export function createApp({ config, db, logger, curriculum, rateLimits, web, lab
       audit,
       signer,
       rateLimits: { auth: limits.auth, refresh: limits.refresh, quiz: limits.quiz, lab: rateLimits?.lab ?? config.RATE_LIMIT_LAB },
+      limiterStore: (name) => limiterStore(name, false),
       refreshTtlSeconds: config.REFRESH_TOKEN_TTL_SECONDS,
     }));
 

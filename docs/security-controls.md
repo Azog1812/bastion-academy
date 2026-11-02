@@ -108,7 +108,7 @@ Standards: **OWASP API Security Top 10 (2023)** and **OWASP ASVS 4.0.3** (Level 
 | ID | Requirement (summary) | How |
 |---|---|---|
 | 11.1.6 | No TOCTOU or other race conditions on sensitive operations | Every check-then-act is one compare-and-set statement or one transaction, never "no `await` in between" (invariant 5, ADR 0020): refresh-token claim, TOTP step, lockout count and lock (one transaction, ADR 0021), audit-chain append, last-second-factor removal, passkey and login-challenge caps. Race tests run against a database that yields between queries and fail with the protection removed (`db.test.ts`, `passkeys.test.ts`, `authentication.test.ts`); the whole suite runs again against PostgreSQL, where transactions are SERIALIZABLE and retried, and audit appends queue on an advisory lock |
-| 11.1.4 | Anti-automation on business functions | Per-IP and per-account rate limits, progressive lockout, attempt-capped MFA challenges, capped pending passkey challenges |
+| 11.1.4 | Anti-automation on business functions | Per-IP and per-account rate limits, progressive lockout, attempt-capped MFA challenges, capped pending passkey challenges. With several replicas the counters are shared in Valkey (one budget per client), and the guessing limiters fail closed when it is down (ADR 0023) |
 
 ### V9 Communications
 | ID | Requirement (summary) | How |

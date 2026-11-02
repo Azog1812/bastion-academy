@@ -420,7 +420,7 @@ same SQL ([ADR 0021](docs/adr/0021-postgresql-backend.md)). Known, accepted risk
 (registration enumeration, lockout-as-DoS, HS256…) are listed in the
 [threat model](docs/threat-model.md#5-accepted-risks) rather than hidden.
 
-**Roadmap:** Redis rate-limit store for several replicas · signed commits.
+**Roadmap:** signed commits and releases · fuzzing the HTTP layer.
 
 ## Security
 

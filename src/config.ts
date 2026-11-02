@@ -84,6 +84,14 @@ const schema = z
       .string()
       .refine((v) => /^postgres(ql)?:\/\//.test(v) && URL.canParse(v), 'must be a postgres:// URL')
       .optional(),
+    /**
+     * Shared rate-limit counters (ADR 0023): needed as soon as more than one replica runs,
+     * or each counts on its own. redis://user:password@host (an ACL user), or rediss://.
+     */
+    REDIS_URL: z
+      .string()
+      .refine((v) => /^rediss?:\/\//.test(v) && URL.canParse(v), 'must be a redis:// or rediss:// URL')
+      .optional(),
     /** Connections per replica: replicas × this must stay under the server's max_connections. */
     DATABASE_POOL_SIZE: z.coerce.number().int().min(1).max(100).default(10),
 
@@ -207,7 +215,7 @@ const schema = z
         ctx.addIssue({ code: 'custom', path: ['VAULT_ADDR'], message: 'scheme://host[:port] only' });
       }
     }
-    for (const key of ['DATABASE_URL', 'DATABASE_OWNER_URL'] as const) {
+    for (const key of ['DATABASE_URL', 'DATABASE_OWNER_URL', 'REDIS_URL'] as const) {
       const value = cfg[key];
       if (value === undefined || cfg.NODE_ENV !== 'production') continue;
       // Password, password hashes, sealed seeds and wrapped DEKs cross this link. Without
@@ -216,7 +224,12 @@ const schema = z
       // or a container name on a private network (as for Vault).
       const url = new URL(value);
       const local = url.hostname === 'localhost' || url.hostname === '127.0.0.1' || url.hostname === '[::1]' || !url.hostname.includes('.');
-      if (!local && url.searchParams.get('sslmode') !== 'verify-full') {
+      if (key === 'REDIS_URL') {
+        // The Redis password crosses this link; rediss:// verifies the certificate.
+        if (!local && url.protocol !== 'rediss:') {
+          ctx.addIssue({ code: 'custom', path: [key], message: 'must be rediss://, except on loopback or to a container name on a private network' });
+        }
+      } else if (!local && url.searchParams.get('sslmode') !== 'verify-full') {
         ctx.addIssue({ code: 'custom', path: [key], message: 'needs sslmode=verify-full, except on loopback or to a container name on a private network' });
       }
     }
@@ -257,7 +270,7 @@ const schema = z
 
 export type Config = Readonly<z.output<typeof schema>>;
 
-const FILE_SECRETS = ['DATABASE_URL', 'DATABASE_OWNER_URL', 'JWT_SECRET', 'AUDIT_HMAC_KEY', 'FLAG_HMAC_KEY', 'ENCRYPTION_KEYS', 'LAB_RUNNER_TOKEN', 'METRICS_TOKEN', 'VAULT_TOKEN', 'VAULT_ROLE_ID', 'VAULT_SECRET_ID'] as const;
+const FILE_SECRETS = ['DATABASE_URL', 'DATABASE_OWNER_URL', 'REDIS_URL', 'JWT_SECRET', 'AUDIT_HMAC_KEY', 'FLAG_HMAC_KEY', 'ENCRYPTION_KEYS', 'LAB_RUNNER_TOKEN', 'METRICS_TOKEN', 'VAULT_TOKEN', 'VAULT_ROLE_ID', 'VAULT_SECRET_ID'] as const;
 
 /**
  * Secrets can be provided as files (`JWT_SECRET_FILE=/run/secrets/jwt`), the
