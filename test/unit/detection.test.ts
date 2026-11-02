@@ -121,7 +121,11 @@ describe('detection rule language', () => {
   });
 
   it('matches case-insensitively, compares numbers, and applies exclusions', () => {
+    // Fixed seed: each attack answers 500 with p = 1/3, so a random seed has no 500 at all
+    // in (2/3)^12 ≈ 0.8 % of runs and the `status|gte` check below would fail at random.
+    const d = buildDataset('web-sqli', Buffer.alloc(32, 7));
     const one = (raw: unknown) => score(ruleSchema(d.fields).parse(raw), d).alerts;
+    expect(d.events.some((e) => e.status === 500)).toBe(true);
     expect(one({ match: { 'query|contains': 'UNION SELECT' } })).toBe(one({ match: { 'query|contains': 'union select' } }));
     expect(one({ match: { 'status|gte': 500 } })).toBeGreaterThan(0);
     expect(one({ match: { 'status|lte': 99 } })).toBe(0);
