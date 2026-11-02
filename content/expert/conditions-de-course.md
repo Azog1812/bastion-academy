@@ -89,6 +89,14 @@ que deux requêtes ne s'entremêlent presque jamais : le test passerait même av
 bug. Bastion teste donc ses courses contre `withLatency()` (`test/helpers.ts`), une
 base qui laisse la main avant chaque requête, comme le ferait un serveur distant.
 
+Bastion s'est fait prendre lui-même. Le compteur d'échecs de connexion était bien
+incrémenté de façon atomique, mais le verrou du compte était posé par une **deuxième**
+requête. Huit mauvais mots de passe envoyés ensemble passaient tous entre les deux :
+huit essais jugés au lieu de cinq. Toute la suite de tests tourne aussi sur un vrai
+PostgreSQL (ADR 0021), et c'est là que le test l'a montré. Le comptage et le verrou
+tiennent désormais dans une seule transaction. Morale : une opération atomique ne
+protège que ce qu'elle contient.
+
 ## À retenir
 
 - Une condition de course exploite le temps entre la vérification et l'action (TOCTOU).

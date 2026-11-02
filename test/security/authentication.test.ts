@@ -73,7 +73,8 @@ describe('authentication', () => {
     });
 
     it('counts concurrent failures atomically (no race to bypass the lockout)', async () => {
-      const t = setup();
+      // Remote-like database: the guesses interleave between their queries (invariant 5).
+      const t = setup({ latency: true });
       await newUser(t, 'race@example.test');
       await Promise.all(
         Array.from({ length: 8 }, (_, i) => t.http.post('/v1/auth/login').send({ email: 'race@example.test', password: `parallel guess ${i}` })),

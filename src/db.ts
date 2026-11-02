@@ -2,15 +2,16 @@ import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
+import { openPostgres, pgErrorCode, PG_UNIQUE_VIOLATION } from './postgres.js';
 
 /**
- * Persistence uses Node's built-in SQLite driver: zero native
- * dependencies, so nothing gets compiled or downloaded at install time
- * (a classic supply-chain attack vector via install scripts).
+ * Persistence: Node's built-in SQLite driver by default (zero native dependencies,
+ * nothing compiled or downloaded at install time), or PostgreSQL for several replicas
+ * (`postgres.ts`, ADR 0021). Services see one interface, `Db`, and write one SQL dialect:
+ * the subset both engines run the same way.
  *
- * Every query in the codebase goes through `prepare()` with bound
- * parameters. String concatenation into SQL is banned by lint rules and
- * by a Semgrep rule in CI.
+ * Every query in the codebase uses bound parameters. String concatenation into SQL is
+ * banned by lint rules and by a Semgrep rule in CI.
  */
 
 const MIGRATIONS: readonly string[] = [
@@ -192,7 +193,17 @@ export type SqlValue = string | number | bigint | null | Uint8Array;
  * Atomicity never relies on "no await in between" any more: a check-then-act is one
  * statement (compare-and-set, `UPDATE … RETURNING`) or runs inside `transaction()`.
  */
+export interface TransactionOptions {
+  /**
+   * Serialise every transaction taking this lock, instead of letting them race and retry
+   * (PostgreSQL). For the audit chain, which has a single head every append reads.
+   */
+  lock?: 'audit_log';
+}
+
 export interface Db {
+  /** For the few places that cannot be written once for both engines (tests, mostly). */
+  readonly dialect: 'sqlite' | 'postgres';
   /** First row, or undefined. */
   one(sql: string, ...params: SqlValue[]): Promise<unknown>;
   many(sql: string, ...params: SqlValue[]): Promise<unknown[]>;
@@ -201,8 +212,10 @@ export interface Db {
   /**
    * Runs `fn` in a transaction, rolled back if it throws. Every query of the transaction
    * must go through `tx`: the outer handle throws inside it rather than deadlocking.
+   * `fn` may run more than once (PostgreSQL retries a transaction that lost a
+   * serialization race), so it touches the database only: no KMS call, no audit record.
    */
-  transaction<T>(fn: (tx: Db) => Promise<T>): Promise<T>;
+  transaction<T>(fn: (tx: Db) => Promise<T>, options?: TransactionOptions): Promise<T>;
   close(): Promise<void>;
 }
 
@@ -210,7 +223,7 @@ export type Database = Db;
 
 /** A UNIQUE constraint refused the write (duplicate e-mail, pseudonym, credential). */
 export function isUniqueViolation(err: unknown): boolean {
-  return err instanceof Error && /UNIQUE constraint failed/.test(err.message);
+  return err instanceof Error && (pgErrorCode(err) === PG_UNIQUE_VIOLATION || /UNIQUE constraint failed/.test(err.message));
 }
 
 /**
@@ -221,6 +234,7 @@ export function isUniqueViolation(err: unknown): boolean {
  * can interleave within one.
  */
 class SqliteDb implements Db {
+  readonly dialect = 'sqlite';
   private open: Promise<void> | null = null;
   private readonly inside = new AsyncLocalStorage<SqliteDb>();
 
@@ -251,6 +265,7 @@ class SqliteDb implements Db {
     return this.whenFree(() => ({ changes: Number(this.raw.prepare(sql).run(...(params as SQLInputValue[])).changes) }));
   }
 
+  /** Options are moot here: one connection already serialises every transaction. */
   async transaction<T>(fn: (tx: Db) => Promise<T>): Promise<T> {
     let done = (): void => undefined;
     const tx = new SqliteTx(this.raw);
@@ -289,6 +304,7 @@ const settle = <T>(op: () => T): Promise<T> =>
 
 /** The handle a transaction body receives. Unusable once the transaction ended. */
 class SqliteTx implements Db {
+  readonly dialect = 'sqlite';
   ended = false;
 
   constructor(private readonly raw: DatabaseSync) {}
@@ -350,4 +366,24 @@ function migrate(db: DatabaseSync): void {
       throw err;
     }
   }
+}
+
+/**
+ * The database the configuration names: PostgreSQL when DATABASE_URL is set, else the
+ * SQLite file at DATABASE_PATH. Waits for the schema, so a wrong URL or password stops
+ * the process before it serves anything.
+ */
+export async function connectDatabase(
+  config: { DATABASE_URL?: string | undefined; DATABASE_PATH: string; DATABASE_POOL_SIZE: number },
+  onIdleError?: (err: Error) => void,
+): Promise<Database> {
+  if (config.DATABASE_URL === undefined) return openDatabase(config.DATABASE_PATH);
+  const db = openPostgres(config.DATABASE_URL, { poolSize: config.DATABASE_POOL_SIZE, ...(onIdleError ? { onIdleError } : {}) });
+  try {
+    await db.one('SELECT 1');
+  } catch (err) {
+    await db.close().catch(() => undefined);
+    throw err;
+  }
+  return db;
 }

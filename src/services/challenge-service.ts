@@ -224,7 +224,7 @@ export class ChallengeService {
     // and it projects nothing but the public pseudonym and the score.
     const rows = await this.db.many(`SELECT u.id AS user_id, u.display_name AS display_name,
                 COALESCE(lp.n, 0) * ? + COALESCE(cs.pts, 0) AS score,
-                MAX(COALESCE(lp.last, 0), COALESCE(cs.last, 0)) AS last_at
+                CASE WHEN COALESCE(lp.last, 0) > COALESCE(cs.last, 0) THEN COALESCE(lp.last, 0) ELSE COALESCE(cs.last, 0) END AS last_at
          FROM users u
          LEFT JOIN (SELECT user_id, COUNT(*) AS n, MAX(completed_at) AS last FROM lesson_progress GROUP BY user_id) lp ON lp.user_id = u.id
          LEFT JOIN (SELECT user_id, SUM(points) AS pts, MAX(solved_at) AS last FROM challenge_solves GROUP BY user_id) cs ON cs.user_id = u.id

@@ -133,7 +133,13 @@ export class AuthService {
       return this.mfaChallenge(user.id);
     }
 
-    await this.db.run('UPDATE users SET failed_logins = 0, locked_until = 0 WHERE id = ?', user.id);
+    // Compare-and-set on the lock: the right password, checked while concurrent wrong
+    // guesses locked the account, is refused like any attempt on a locked account.
+    const reset = await this.db.run('UPDATE users SET failed_logins = 0, locked_until = 0 WHERE id = ? AND locked_until <= ?', user.id, Date.now());
+    if (reset.changes !== 1) {
+      await this.audit.record({ action: 'auth.login', outcome: 'denied', actorId: user.id, ip: ctx.ip, details: { reason: 'locked' } });
+      throw unauthorized(INVALID_CREDENTIALS);
+    }
     await this.audit.record({ action: 'auth.login', outcome: 'success', actorId: user.id, ip: ctx.ip });
     return this.issue(user, randomUUID());
   }
@@ -264,15 +270,28 @@ export class AuthService {
   }
 
   private async registerFailure(user: UserRow, ctx: RequestContext, action: 'auth.login' | 'auth.mfa' = 'auth.login'): Promise<void> {
-    // Atomic increment: concurrent wrong guesses cannot under-count (no read-modify-write race).
-    const { failed_logins: failures } = await this.db.one('UPDATE users SET failed_logins = failed_logins + 1 WHERE id = ? RETURNING failed_logins', user.id) as { failed_logins: number };
-
-    if (failures >= this.cfg.MAX_FAILED_LOGINS) {
+    const now = Date.now();
+    const max = this.cfg.MAX_FAILED_LOGINS;
+    // "Locked already?", the count and the lock in one transaction. With the lock set by a
+    // second statement, guesses landing between the count reaching the threshold and the
+    // lock were counted on top of it, and each of them was a free guess (invariant 5).
+    const counted = await this.db.transaction(async (tx) => {
+      const row = (await tx.one('SELECT failed_logins, locked_until FROM users WHERE id = ?', user.id)) as { failed_logins: number; locked_until: number } | undefined;
+      if (!row || row.locked_until > now) return null;
+      const failures = row.failed_logins + 1;
       // Progressive lockout: doubles with every extra series of failures, capped at 24 h.
-      const series = Math.floor(failures / this.cfg.MAX_FAILED_LOGINS);
-      const seconds = Math.min(this.cfg.LOCKOUT_SECONDS * 2 ** (series - 1), 86_400);
-      await this.db.run('UPDATE users SET locked_until = ? WHERE id = ?', Date.now() + seconds * 1000, user.id);
-      await this.audit.record({ action: 'auth.lockout', outcome: 'denied', actorId: user.id, ip: ctx.ip, details: { failures, seconds } });
+      const seconds = failures >= max ? Math.min(this.cfg.LOCKOUT_SECONDS * 2 ** (Math.floor(failures / max) - 1), 86_400) : 0;
+      await tx.run('UPDATE users SET failed_logins = ?, locked_until = ? WHERE id = ?', failures, seconds > 0 ? now + seconds * 1000 : row.locked_until, user.id);
+      return { failures, seconds };
+    });
+
+    if (counted === null) {
+      // Locked by a concurrent guess while this one was being checked: refused, not counted.
+      await this.audit.record({ action, outcome: 'denied', actorId: user.id, ip: ctx.ip, details: { reason: 'locked' } });
+      return;
+    }
+    if (counted.seconds > 0) {
+      await this.audit.record({ action: 'auth.lockout', outcome: 'denied', actorId: user.id, ip: ctx.ip, details: { failures: counted.failures, seconds: counted.seconds } });
     }
     const reason = action === 'auth.login' ? 'bad_password' : 'bad_code';
     await this.audit.record({ action, outcome: 'failure', actorId: user.id, ip: ctx.ip, details: { reason } });

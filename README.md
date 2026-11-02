@@ -291,7 +291,7 @@ flowchart LR
     SVC --> AL["Audit log<br/>HMAC chain · append-only"]
   end
 
-  ENV --> DB[(SQLite<br/>ciphertext + hashes only)]
+  ENV --> DB[(SQLite or PostgreSQL<br/>ciphertext + hashes only)]
   AL --> DB
   KR[[Key ring · JWT key · audit key<br/>mounted secret files]] --> ENV
 ```
@@ -312,7 +312,7 @@ flowchart LR
 | Escaping a lab (to the host, the platform, other labs, the Internet) | Hardened container, **per-instance internal network**, gateway as the only peer, Docker socket held by the runner only, closed lab catalog | [`lab-runner.test.ts`](test/unit/lab-runner.test.ts), [`labs.test.ts`](test/security/labs.test.ts) |
 | SSRF through the lab gateway | Upstream **built** from a 32-hex instance id, never read from the request | [`lab-runner.test.ts`](test/unit/lab-runner.test.ts) |
 | Stolen refresh token | Single-use **rotation with reuse detection**: replay kills the whole session family (RFC 9700) | [`authentication.test.ts`](test/security/authentication.test.ts) |
-| Race conditions (TOCTOU) on refresh, lockout, audit chain, last second factor | Token claimed by one compare-and-set; `UPDATE … RETURNING` counters; every other check-then-act in one transaction, never "no `await` in between" ([ADR 0020](docs/adr/0020-async-database-layer.md)) | parallel-request tests; race tests against a latency-injecting database ([`db.test.ts`](test/unit/db.test.ts)) |
+| Race conditions (TOCTOU) on refresh, lockout, audit chain, last second factor | Token claimed by one compare-and-set; `UPDATE … RETURNING` counters; every other check-then-act in one transaction, never "no `await` in between" ([ADR 0020](docs/adr/0020-async-database-layer.md)); on PostgreSQL, SERIALIZABLE transactions retried and an advisory lock on the audit chain ([ADR 0021](docs/adr/0021-postgresql-backend.md)) | parallel-request tests; race tests against a latency-injecting database ([`db.test.ts`](test/unit/db.test.ts)); the whole suite again against a real PostgreSQL in CI |
 | "Stateless" JWT that can't be revoked | `token_version` + role checked on every request → instant logout-everywhere and demotion | [`authorization.test.ts`](test/security/authorization.test.ts) |
 | Mass assignment, prototype pollution, HPP | Strict schemas reject unknown keys; simple query parser | [`input-and-transport.test.ts`](test/security/input-and-transport.test.ts) |
 | SQL injection | Bound parameters only, enforced by **ESLint and Semgrep rules** | tests + CI |
@@ -414,13 +414,14 @@ docs/                  threat model · OWASP/ASVS mapping · pipeline · ADRs ·
 ## Design decisions & limits
 
 Every significant choice has an [ADR](docs/adr/) including the alternatives rejected —
-e.g. why scrypt instead of Argon2 (no native addon), why SQLite (zero native
-dependencies, single replica) and how to move to PostgreSQL. Known, accepted risks
+e.g. why scrypt instead of Argon2 (no native addon), why SQLite stays the default (zero
+native dependencies, nothing to run) and how PostgreSQL serves several replicas with the
+same SQL ([ADR 0021](docs/adr/0021-postgresql-backend.md)). Known, accepted risks
 (registration enumeration, lockout-as-DoS, HS256…) are listed in the
 [threat model](docs/threat-model.md#5-accepted-risks) rather than hidden.
 
-**Roadmap:** PostgreSQL +
-Redis for horizontal scaling · signed commits.
+**Roadmap:** row-level security on PostgreSQL as a second IDOR barrier · Redis
+rate-limit store for several replicas · signed commits.
 
 ## Security
 

@@ -68,6 +68,16 @@ const schema = z
     LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
     TRUST_PROXY: z.coerce.number().int().min(0).max(5).default(0),
     DATABASE_PATH: z.string().default('./data/bastion.db'),
+    /**
+     * PostgreSQL instead of the SQLite file (ADR 0021), for several replicas. Holds the
+     * database password: prefer DATABASE_URL_FILE.
+     */
+    DATABASE_URL: z
+      .string()
+      .refine((v) => /^postgres(ql)?:\/\//.test(v) && URL.canParse(v), 'must be a postgres:// URL')
+      .optional(),
+    /** Connections per replica: replicas × this must stay under the server's max_connections. */
+    DATABASE_POOL_SIZE: z.coerce.number().int().min(1).max(100).default(10),
 
     JWT_SECRET: base64Key(32),
     JWT_ISSUER: z.string().min(1).default('bastion'),
@@ -189,6 +199,17 @@ const schema = z
         ctx.addIssue({ code: 'custom', path: ['VAULT_ADDR'], message: 'scheme://host[:port] only' });
       }
     }
+    if (cfg.DATABASE_URL !== undefined && cfg.NODE_ENV === 'production') {
+      // Password, password hashes, sealed seeds and wrapped DEKs cross this link. Without
+      // verify-full a network attacker can sit in the middle (sslmode=require does not
+      // check whose certificate it is). Plain only where no network is crossed: loopback,
+      // or a container name on a private network (as for Vault).
+      const url = new URL(cfg.DATABASE_URL);
+      const local = url.hostname === 'localhost' || url.hostname === '127.0.0.1' || url.hostname === '[::1]' || !url.hostname.includes('.');
+      if (!local && url.searchParams.get('sslmode') !== 'verify-full') {
+        ctx.addIssue({ code: 'custom', path: ['DATABASE_URL'], message: 'needs sslmode=verify-full, except on loopback or to a container name on a private network' });
+      }
+    }
     for (const origin of cfg.WEBAUTHN_ORIGINS) {
       let url: URL | undefined;
       try {
@@ -226,7 +247,7 @@ const schema = z
 
 export type Config = Readonly<z.output<typeof schema>>;
 
-const FILE_SECRETS = ['JWT_SECRET', 'AUDIT_HMAC_KEY', 'FLAG_HMAC_KEY', 'ENCRYPTION_KEYS', 'LAB_RUNNER_TOKEN', 'METRICS_TOKEN', 'VAULT_TOKEN', 'VAULT_ROLE_ID', 'VAULT_SECRET_ID'] as const;
+const FILE_SECRETS = ['DATABASE_URL', 'JWT_SECRET', 'AUDIT_HMAC_KEY', 'FLAG_HMAC_KEY', 'ENCRYPTION_KEYS', 'LAB_RUNNER_TOKEN', 'METRICS_TOKEN', 'VAULT_TOKEN', 'VAULT_ROLE_ID', 'VAULT_SECRET_ID'] as const;
 
 /**
  * Secrets can be provided as files (`JWT_SECRET_FILE=/run/secrets/jwt`), the

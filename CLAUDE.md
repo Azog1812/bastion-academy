@@ -37,7 +37,7 @@ explain the *why* (threat, standard, trade-off), not only the *what*.
 npm ci --ignore-scripts      # never run install scripts
 npm run lint                 # ESLint strictTypeChecked + security plugin + custom SQL rules
 npm run typecheck            # tsc strict, noUncheckedIndexedAccess, exactOptionalPropertyTypes
-npm test                     # vitest (423 tests)
+npm test                     # vitest (434 tests; TEST_DATABASE_URL=postgres://… runs them on PostgreSQL)
 npm run test:coverage        # thresholds: lines/statements/functions 90 %, branches 80 %
 npm run check                # lint + typecheck + coverage
 npm run build && node dist/cli.js gen-secrets > .env   # local secrets (gitignored)
@@ -49,6 +49,7 @@ docker compose up --build    # platform + lab runner + lab gateway, same hardeni
 docker compose --profile observability up -d   # + Prometheus 127.0.0.1:9090, Alertmanager (no port), Grafana 127.0.0.1:3001 (ADR 0011, 0018)
 deploy/alertmanager/routes.test.sh   # amtool routing of every alert + live inhibition test (also in CI)
 docker compose -f docker-compose.yml -f docker-compose.vault.yml up -d   # KEKs in Vault Transit (ADR 0019)
+docker compose -f docker-compose.yml -f docker-compose.postgres.yml up -d   # PostgreSQL instead of SQLite (ADR 0021)
 test/vault-real/run.sh       # real Vault: ring → Vault migration, rotation, policy denials, sealed → 503
 docker compose --profile wazuh up -d   # once: real Wazuh (~4 GiB), then started/stopped from the UI (ADR 0013)
 test/wazuh-real/run.sh       # Wazuh challenges: Bastion's evaluator vs the real wazuh-logtest (Docker, offline)
@@ -66,7 +67,10 @@ src/
   db.ts                  Db interface (ADR 0020): one/many/run/transaction, async; SQLite adapter on
                          node:sqlite (built-in, zero native deps), transactions serialised on its one
                          connection, STRICT tables, migrations via PRAGMA user_version, append-only
-                         triggers on audit_log
+                         triggers on audit_log; connectDatabase(): PostgreSQL when DATABASE_URL is set
+  postgres.ts            PostgreSQL adapter (ADR 0021, `pg` pure JS): ? → $n, rows shaped as SQLite's,
+                         SERIALIZABLE + retry on 40001, advisory lock for audit appends and migrations,
+                         schema translated (BIGINT, BYTEA, ICU nocase, TRUNCATE trigger)
   audit-export.ts        SIEM copy of the audit log: one JSON line per entry (AUDIT_EXPORT_FILE, 0600),
                          failures counted, never thrown (ADR 0015)
   audit.ts               HMAC-SHA256 chained audit log; verify() returns firstInvalidSeq;
@@ -137,7 +141,8 @@ content/                 curriculum as code: index.json (levels, path order), <p
                          (modules, lessons, quizzes), <path>/<lesson>.md (French lesson bodies),
                          challenges.json (challenge → module, points, kind, brief)
 test/unit, test/security, test/helpers.ts (setup(), newUser(), auditActions(), withLatency():
-                         a database that yields before each query, for race tests)
+                         a database that yields before each query, for race tests; testDb(): SQLite
+                         or, with TEST_DATABASE_URL, a fresh PostgreSQL schema)
 deploy/k8s (kustomize), deploy/policies (Kyverno signed-image policy),
 deploy/prometheus (scrape config, alerts.yml, alerts.test.yml for promtool),
 deploy/alertmanager (routing by severity, inhibition, routes.test.sh), deploy/grafana (provisioned
@@ -145,14 +150,16 @@ deploy/alertmanager (routing by severity, inhibition, routes.test.sh), deploy/gr
 deploy/wazuh (offline certs.sh, users.sh without demo accounts, indexer/manager/dashboard config,
              bastion_rules.xml: rules for Bastion's own audit log, ids 100200-100299)
 docs/  threat-model · security-controls (OWASP API Top 10 + ASVS 4.0.3) · security-pipeline ·
-       adr/0001-0020 · runbook · openapi.yaml (used by DAST)
+       adr/0001-0021 · runbook · openapi.yaml (used by DAST)
 ```
 
 ## Security invariants — never break these
 
 1. **Every SQL query uses bound parameters.** No template literal / concatenation in
-   `prepare()`/`exec()`. Enforced by ESLint `no-restricted-syntax` and Semgrep
-   `bastion-sql-interpolation`. The only exception is `PRAGMA user_version` in `db.ts`.
+   `one()`/`many()`/`run()` (or `prepare()`/`exec()`/`query()` in the adapters). Enforced by
+   ESLint `no-restricted-syntax` and Semgrep `bastion-sql-interpolation`. The only exceptions
+   are `PRAGMA user_version` in `db.ts` and the regex-validated test schema name in `postgres.ts`.
+   Services write one SQL for both engines (`?` placeholders, no engine-specific function).
 2. **Every note query includes `owner_id` in the SQL itself.** Never fetch-then-check.
    Enforced by Semgrep `bastion-note-query-without-owner`. Foreign and missing notes must
    return the *same* 404. Exception: `rotateKeys()` (operator-only, annotated).
@@ -162,8 +169,9 @@ docs/  threat-model · security-controls (OWASP API Top 10 + ASVS 4.0.3) · secu
 5. **Atomicity comes from the database, never from the event loop** (TOCTOU, ADR 0020).
    A check-then-act is one compare-and-set statement (refresh-token claim, TOTP step,
    counters with `UPDATE … RETURNING`) or runs inside `db.transaction()`, with every query
-   on the `tx` handle. A race test runs against `withLatency()` and must fail with the
-   protection removed.
+   on the `tx` handle. A transaction body may run more than once (PostgreSQL retries
+   serialization failures): database calls only, no KMS call, no audit record. A race
+   test runs against `withLatency()` and must fail with the protection removed.
 6. **Role and token_version are read from the DB on every authenticated request**, never
    trusted from the JWT alone.
 7. **Errors never leak internals**: throw `HttpError` helpers from `errors.ts`; everything
@@ -251,7 +259,7 @@ docs/  threat-model · security-controls (OWASP API Top 10 + ASVS 4.0.3) · secu
 
 | Workflow | Content |
 |---|---|
-| `ci.yml` | lint, typecheck, coverage tests on Node 22/24, build; `promtool` check + alert unit tests (not a required check) |
+| `ci.yml` | lint, typecheck, coverage tests on Node 22/24, build; the whole suite against PostgreSQL 18; `promtool` check + alert unit tests (these two not required checks yet) |
 | `security.yml` | gitleaks (full history), Semgrep (registry packs + `.semgrep/`, findings emitted as annotations), npm audit + signatures, OSV-Scanner (reusable workflow), dependency review (PR), hadolint, Checkov |
 | `codeql.yml` | security-extended + security-and-quality |
 | `container.yml` | build → non-root / no-shell checks → restricted smoke test → Trivy (SARIF + gate) → SBOM; on main: push GHCR, cosign keyless sign, SBOM attestation, SLSA provenance, self-verify |
@@ -271,7 +279,8 @@ Validate workflows locally with `actionlint` before pushing.
 - Trivy SARIF uses `ignore-unfixed`: unpatched base-image CVEs are an accepted risk (threat model §5).
 - Dependabot ignores semver-major for `@types/node` (must match engines: Node 22) and
   `typescript` (typescript-eslint supports < 6.1 only).
-- SQLite → single replica; in-memory rate limiting; HS256 (single issuer/verifier).
+- SQLite → single replica; PostgreSQL allows several, but rate limiting stays in memory,
+  per replica, until the Redis store; HS256 (single issuer/verifier).
 - Registration reveals whether an e-mail exists (409); lockout can be abused for targeted DoS.
 - `package.json` `overrides` pins `minimatch` 11 (GHSA-g3hv-75wg-m249, dev-only, via ESLint and
   typescript-eslint which still ask for 10): remove it once they depend on a fixed version.
@@ -300,8 +309,9 @@ If a CI job is renamed, update the ruleset's required checks in the same change 
    ~~passwordless passkey login + account recovery~~ (done 1 Nov 2026, ADR 0017).
 3. ~~**External KMS for KEKs**~~ (done 1 Nov 2026, ADR 0019: Vault Transit, docker-compose.vault.yml).
    Next: auto-unseal and TLS for a hosted Vault, a cloud KMS implementation of `Kms`.
-4. **PostgreSQL + Redis** (rate-limit store, multiple replicas) behind the same service layer;
-   use row-level security as a second IDOR barrier.
+4. **PostgreSQL + Redis**: ~~async layer~~ (ADR 0020), ~~PostgreSQL adapter~~ (ADR 0021, done
+   2 Nov 2026). Next: row-level security as a second IDOR barrier, then the Redis rate-limit
+   store (in-house RESP client on node:net) and several replicas in compose.
 5. ~~**Observability**: Prometheus metrics, alerting rules matching `docs/runbook.md`~~
    (done 31 Oct 2026, ADR 0011). Real Wazuh from the UI done (ADR 0013), Wazuh rule challenges
    done (ADR 0014), Bastion's audit log in Wazuh done (ADR 0015), ~~Alertmanager routing,

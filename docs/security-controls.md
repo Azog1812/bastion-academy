@@ -107,8 +107,14 @@ Standards: **OWASP API Security Top 10 (2023)** and **OWASP ASVS 4.0.3** (Level 
 ### V11 Business logic
 | ID | Requirement (summary) | How |
 |---|---|---|
-| 11.1.6 | No TOCTOU or other race conditions on sensitive operations | Every check-then-act is one compare-and-set statement or one transaction, never "no `await` in between" (invariant 5, ADR 0020): refresh-token claim, TOTP step, lockout counters, audit-chain append, last-second-factor removal, passkey and login-challenge caps. Race tests run against a database that yields between queries and fail with the protection removed (`db.test.ts`, `passkeys.test.ts`) |
+| 11.1.6 | No TOCTOU or other race conditions on sensitive operations | Every check-then-act is one compare-and-set statement or one transaction, never "no `await` in between" (invariant 5, ADR 0020): refresh-token claim, TOTP step, lockout count and lock (one transaction, ADR 0021), audit-chain append, last-second-factor removal, passkey and login-challenge caps. Race tests run against a database that yields between queries and fail with the protection removed (`db.test.ts`, `passkeys.test.ts`, `authentication.test.ts`); the whole suite runs again against PostgreSQL, where transactions are SERIALIZABLE and retried, and audit appends queue on an advisory lock |
 | 11.1.4 | Anti-automation on business functions | Per-IP and per-account rate limits, progressive lockout, attempt-capped MFA challenges, capped pending passkey challenges |
+
+### V9 Communications
+| ID | Requirement (summary) | How |
+|---|---|---|
+| 9.2.2 | TLS for outbound connections, database included | PostgreSQL (ADR 0021): in production, `sslmode=verify-full` required unless the server is on loopback or a container name on a private network; Vault: `https` except to a container name (ADR 0019) |
+| 9.2.1 | Connections use trusted, verified certificates | `verify-full` checks the CA *and* the host name; `require`, which encrypts without checking whose certificate it is, is refused |
 
 ### V8 Data protection · V14 Configuration
 | ID | Requirement (summary) | How |

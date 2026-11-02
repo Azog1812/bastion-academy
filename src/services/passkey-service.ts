@@ -108,7 +108,7 @@ export class PasskeyService {
   /** Consumes a challenge: found or not, valid or not, it can never be presented again. */
   private async takeChallenge(userId: string, challenge: Buffer, purpose: 'register' | 'login', mfaTokenHash: string | null): Promise<boolean> {
     // The MFA-step binding is compared by SQLite (IS: equal, or both NULL), never in JS with ===.
-    const row = await this.db.one('DELETE FROM webauthn_challenges WHERE challenge_hash = ? AND user_id = ? RETURNING purpose, (mfa_token_hash IS ?) AS same_step, expires_at', sha256(challenge), userId, mfaTokenHash) as { purpose: string; same_step: number; expires_at: number } | undefined;
+    const row = await this.db.one('DELETE FROM webauthn_challenges WHERE challenge_hash = ? AND user_id = ? RETURNING purpose, CASE WHEN mfa_token_hash IS NOT DISTINCT FROM ? THEN 1 ELSE 0 END AS same_step, expires_at', sha256(challenge), userId, mfaTokenHash) as { purpose: string; same_step: number; expires_at: number } | undefined;
     return row !== undefined && row.purpose === purpose && row.same_step === 1 && row.expires_at > this.now();
   }
 

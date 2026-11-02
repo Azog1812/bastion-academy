@@ -127,7 +127,8 @@ export class AuditLog {
         this.digest(prev, entry),
       )) as { seq: number };
       return row.seq;
-    });
+      // With several replicas (PostgreSQL), appends queue on one lock rather than racing.
+    }, { lock: 'audit_log' });
     this.onRecord?.(event, { seq, ts: entry.ts });
   }
 

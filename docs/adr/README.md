@@ -25,3 +25,4 @@ Format: context → decision → consequences.
 | [0018](0018-alert-routing-and-dashboards.md) | Alertmanager routing and inhibition, Grafana dashboard, silences behind a login, all tested as code |
 | [0019](0019-vault-transit-kms.md) | KEKs in Vault Transit: derived key per note, AppRole with 1-hour tokens, least-privilege policy, migration from the local ring |
 | [0020](0020-async-database-layer.md) | Asynchronous database layer: atomicity from the database (compare-and-set or one transaction), never from the event loop; race tests against a latency-injecting database |
+| [0021](0021-postgresql-backend.md) | PostgreSQL as a second engine (`pg`, pure JS): one SQL for both, SERIALIZABLE with retries, an advisory lock for the audit chain, verify-full TLS, the whole suite run against both |
