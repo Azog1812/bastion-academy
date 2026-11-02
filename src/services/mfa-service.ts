@@ -131,8 +131,8 @@ export class MfaService {
 
     const used = await this.db.run('UPDATE mfa_recovery_codes SET used_at = ? WHERE user_id = ? AND code_hash = ? AND used_at IS NULL', this.now(), userId, hashRecoveryCode(trimmed));
     if (used.changes !== 1) return null;
-    const { left } = await this.db.one('SELECT COUNT(*) AS left FROM mfa_recovery_codes WHERE user_id = ? AND used_at IS NULL', userId) as { left: number };
-    await this.audit.record({ action: 'mfa.recovery_code_used', outcome: 'success', actorId: userId, ip, details: { left } });
+    const { remaining } = await this.db.one('SELECT COUNT(*) AS remaining FROM mfa_recovery_codes WHERE user_id = ? AND used_at IS NULL', userId) as { remaining: number };
+    await this.audit.record({ action: 'mfa.recovery_code_used', outcome: 'success', actorId: userId, ip, details: { left: remaining } });
     return 'recovery';
   }
 

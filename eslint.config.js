@@ -19,11 +19,11 @@ export default tseslint.config(
       'no-restricted-syntax': [
         'error',
         {
-          selector: "CallExpression[callee.property.name=/^(prepare|exec|one|many|run)$/][arguments.0.type='TemplateLiteral'][arguments.0.expressions.length>0]",
+          selector: "CallExpression[callee.property.name=/^(prepare|exec|one|many|run|query)$/][arguments.0.type='TemplateLiteral'][arguments.0.expressions.length>0]",
           message: 'SQL injection risk: use bound parameters (?) instead of interpolation.',
         },
         {
-          selector: "CallExpression[callee.property.name=/^(prepare|exec|one|many|run)$/][arguments.0.type='BinaryExpression'][arguments.0.operator='+']",
+          selector: "CallExpression[callee.property.name=/^(prepare|exec|one|many|run|query)$/][arguments.0.type='BinaryExpression'][arguments.0.operator='+']",
           message: 'SQL injection risk: use bound parameters (?) instead of concatenation.',
         },
         {

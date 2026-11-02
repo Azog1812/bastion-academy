@@ -142,6 +142,28 @@ docker compose -f docker-compose.yml -f docker-compose.vault.yml exec bastion /n
 - **Lost `vault-keys` volume**: the unseal key is gone and Vault cannot be opened. Back it
   up like the database, separately from it.
 
+## PostgreSQL (ADR 0021)
+
+```bash
+node dist/cli.js gen-secrets | grep POSTGRES_PASSWORD >> .env   # once, for an older .env
+docker compose -f docker-compose.yml -f docker-compose.postgres.yml up -d
+```
+
+- **First start**: the platform creates the schema; replicas starting together wait for the
+  first one (advisory lock). Data in the SQLite file is not moved: this starts empty.
+- **Outside compose**: `DATABASE_URL_FILE` pointing at a file holding
+  `postgres://user:password@host:5432/db?sslmode=verify-full` (plus `sslrootcert=` for a
+  private CA). Production refuses a server across a network without `verify-full`.
+- **Boot stops with `database unavailable, refusing to start`**: wrong URL, password or
+  certificate, or the server is down. Nothing was served; fix and restart.
+- **Requests fail with `could not serialize access`** in the logs: a transaction lost
+  five races in a row. Rare by design (retries with backoff); frequent means a hot row,
+  look at which service.
+- **Connections**: each replica opens up to `DATABASE_POOL_SIZE` (10). Replicas × pool must
+  stay under the server's `max_connections`.
+- **Backups**: `pg_dump` holds ciphertext and hashes only, like the SQLite file; the audit
+  chain still needs `AUDIT_HMAC_KEY` to verify after a restore (`verify-audit`).
+
 ## Rotating the JWT key
 Replace `JWT_SECRET` and redeploy. Every access token becomes invalid (users refresh
 transparently; refresh tokens are not JWTs and stay valid).

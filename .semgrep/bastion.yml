@@ -15,7 +15,7 @@ rules:
           - pattern: $DB.$QUERY($A + $B, ...)
       - metavariable-regex:
           metavariable: $QUERY
-          regex: ^(prepare|exec|one|many|run)$
+          regex: ^(prepare|exec|one|many|run|query)$
 
   - id: bastion-note-query-without-owner
     languages: [typescript]

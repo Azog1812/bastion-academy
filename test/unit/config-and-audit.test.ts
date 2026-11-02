@@ -2,8 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { AuditLog } from '../../src/audit.js';
 import { loadConfig } from '../../src/config.js';
-import { openDatabase } from '../../src/db.js';
-import { testEnv } from '../helpers.js';
+import { dropAuditTrigger, testDb, testEnv } from '../helpers.js';
 
 describe('configuration fails closed', () => {
   it('loads a valid configuration and freezes it', () => {
@@ -32,6 +31,9 @@ describe('configuration fails closed', () => {
     ['WebAuthn origin over plain HTTP off localhost', { WEBAUTHN_RP_ID: 'bastion.example', WEBAUTHN_ORIGINS: 'http://bastion.example' }, 'https except on localhost'],
     ['WebAuthn origin outside the RP ID', { WEBAUTHN_RP_ID: 'bastion.example', WEBAUTHN_ORIGINS: 'https://bastion.example.evil.example' }, 'inside the RP ID'],
     ['WebAuthn origin with a path', { WEBAUTHN_ORIGINS: 'http://localhost:3000/login' }, 'exact origin'],
+    // PostgreSQL (ADR 0021): the URL carries the password, and the link every secret row.
+    ['database URL that is not PostgreSQL', { DATABASE_URL: 'mysql://bastion:pw@db/bastion' }, 'postgres:// URL'],
+    ['database across a network without verified TLS', { NODE_ENV: 'production', SCRYPT_LOG_N: '17', DATABASE_URL: 'postgres://bastion:pw@db.internal.example/bastion?sslmode=require' }, 'sslmode=verify-full'],
   ])('refuses to start with a %s', (_name, override, message) => {
     expect(() => loadConfig(testEnv(override))).toThrow(message);
   });
@@ -68,6 +70,21 @@ describe('configuration fails closed', () => {
     ).toThrow('cannot read secret file');
   });
 
+  it('accepts PostgreSQL over verified TLS, or in plain on loopback or to a container name', () => {
+    const prod = { NODE_ENV: 'production', SCRYPT_LOG_N: '17' };
+    expect(loadConfig(testEnv({ ...prod, DATABASE_URL: 'postgres://bastion:pw@db.example/bastion?sslmode=verify-full' })).DATABASE_URL).toContain('verify-full');
+    expect(() => loadConfig(testEnv({ ...prod, DATABASE_URL: 'postgresql://bastion:pw@postgres:5432/bastion' }))).not.toThrow();
+    expect(() => loadConfig(testEnv({ ...prod, DATABASE_URL: 'postgres://bastion:pw@127.0.0.1:5432/bastion' }))).not.toThrow();
+    expect(() => loadConfig(testEnv({ ...prod, DATABASE_URL: 'postgres://bastion:pw@10.0.0.5/bastion' }))).toThrow('verify-full');
+  });
+
+  it('reads the database URL, password included, from a file', () => {
+    const url = 'postgres://bastion:s3cret@postgres/bastion';
+    const cfg = loadConfig({ ...testEnv(), DATABASE_URL_FILE: '/run/secrets/db' }, () => `${url}
+`);
+    expect(cfg.DATABASE_URL).toBe(url);
+  });
+
   it('never echoes secret values in the error', () => {
     const bad = randomBytes(8).toString('base64');
     try {
@@ -76,12 +93,18 @@ describe('configuration fails closed', () => {
     } catch (err) {
       expect(String(err)).not.toContain(bad);
     }
+    try {
+      loadConfig(testEnv({ DATABASE_URL: 'mysql://bastion:hunter2-db-password@db/x' }));
+      expect.unreachable();
+    } catch (err) {
+      expect(String(err)).not.toContain('hunter2');
+    }
   });
 });
 
 describe('tamper-evident audit log', () => {
   const make = async () => {
-    const db = openDatabase(':memory:');
+    const db = testDb();
     const key = randomBytes(32);
     const log = new AuditLog(db, key);
     for (let i = 0; i < 5; i++) await log.record({ action: 'note.read', outcome: 'success', actorId: `u${i}` });
@@ -96,18 +119,20 @@ describe('tamper-evident audit log', () => {
     const { db } = await make();
     await expect(db.run("UPDATE audit_log SET outcome = 'failure' WHERE seq = 2")).rejects.toThrow('append-only');
     await expect(db.run('DELETE FROM audit_log WHERE seq = 2')).rejects.toThrow('append-only');
+    // PostgreSQL also has TRUNCATE, which skips row triggers: refused by its own trigger.
+    if (db.dialect === 'postgres') await expect(db.run('TRUNCATE audit_log')).rejects.toThrow('append-only');
   });
 
   it('pinpoints a modified entry even if the attacker drops the triggers', async () => {
     const { db, log } = await make();
-    await db.run('DROP TRIGGER audit_no_update');
+    await dropAuditTrigger(db, 'update');
     await db.run("UPDATE audit_log SET actor_id = 'someone-else' WHERE seq = 3");
     expect(await log.verify()).toEqual({ valid: false, checked: 2, firstInvalidSeq: 3 });
   });
 
   it('detects a deleted entry (broken link)', async () => {
     const { db, log } = await make();
-    await db.run('DROP TRIGGER audit_no_delete');
+    await dropAuditTrigger(db, 'delete');
     await db.run('DELETE FROM audit_log WHERE seq = 2');
     expect((await log.verify()).firstInvalidSeq).toBe(3);
   });

@@ -1,7 +1,7 @@
 import { randomBytes, randomInt } from 'node:crypto';
 import { AuditLog } from './audit.js';
 import { loadConfig } from './config.js';
-import { openDatabase } from './db.js';
+import { connectDatabase, type Database } from './db.js';
 import { MfaService } from './services/mfa-service.js';
 import { kmsFromConfig } from './crypto/kms-config.js';
 import { NoteService } from './services/note-service.js';
@@ -48,6 +48,8 @@ async function main(): Promise<number> {
         `WAZUH_DASHBOARD_PASSWORD=${wazuhPassword()}`,
         `WAZUH_API_PASSWORD=${wazuhPassword()}`,
         `GRAFANA_ADMIN_PASSWORD=${b64(24)}`,
+        // Hex: goes into a postgres:// URL (docker-compose.postgres.yml) without escaping.
+        `POSTGRES_PASSWORD=${randomBytes(24).toString('hex')}`,
         `ENCRYPTION_KEYS=k1:${b64(32)}`,
         'ACTIVE_KEY_ID=k1',
         '',
@@ -57,7 +59,16 @@ async function main(): Promise<number> {
   }
 
   const config = loadConfig();
-  const db = openDatabase(config.DATABASE_PATH);
+  const db = await connectDatabase(config);
+  try {
+    return await operate(command, arg, config, db);
+  } finally {
+    // A PostgreSQL pool would otherwise keep the process alive until its idle timeout.
+    await db.close();
+  }
+}
+
+async function operate(command: string | undefined, arg: string | undefined, config: ReturnType<typeof loadConfig>, db: Database): Promise<number> {
   const audit = new AuditLog(db, config.AUDIT_HMAC_KEY);
 
   switch (command) {

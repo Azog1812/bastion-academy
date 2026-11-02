@@ -186,7 +186,7 @@ export class LearningService {
     // Idempotent: completing twice keeps the first timestamp (no score farming later).
     const now = Date.now();
     const row = await this.db.one(`INSERT INTO lesson_progress (user_id, lesson_id, completed_at) VALUES (?, ?, ?)
-         ON CONFLICT (user_id, lesson_id) DO UPDATE SET completed_at = completed_at
+         ON CONFLICT (user_id, lesson_id) DO UPDATE SET completed_at = lesson_progress.completed_at
          RETURNING completed_at`, userId, lesson.id, now) as { completed_at: number };
     const alreadyCompleted = done.has(lesson.id);
     if (!alreadyCompleted) {

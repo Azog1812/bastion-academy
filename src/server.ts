@@ -1,7 +1,7 @@
 import { createServer } from 'node:http';
 import { createApp } from './app.js';
 import { loadConfig } from './config.js';
-import { openDatabase } from './db.js';
+import { connectDatabase } from './db.js';
 import { loadCurriculum } from './curriculum/catalog.js';
 import { createLogger } from './logger.js';
 import { metricsListener } from './http/metrics.js';
@@ -9,7 +9,13 @@ import { kmsFromConfig } from './crypto/kms-config.js';
 
 const config = loadConfig();
 const logger = createLogger(config.LOG_LEVEL);
-const db = openDatabase(config.DATABASE_PATH);
+// Fail closed: an unreachable database or a wrong password stops the boot (the orchestrator restarts us).
+const db = await connectDatabase(config, (err) => {
+  logger.warn({ reason: err.message }, 'idle database connection lost');
+}).catch((err: unknown) => {
+  logger.fatal({ reason: err instanceof Error ? err.message : 'unknown' }, 'database unavailable, refusing to start');
+  process.exit(1);
+});
 // Invalid content stops the boot, like invalid config: fail closed.
 const curriculum = loadCurriculum();
 const { kms, vault } = kmsFromConfig(config);
@@ -41,7 +47,7 @@ labReaper.unref();
 
 const server = app.listen(config.PORT, config.HOST, () => {
   logger.info(
-    { port: config.PORT, kms: config.KMS_PROVIDER, keyId: config.ACTIVE_KEY_ID, lessons: curriculum.lessons.size, labs: config.LAB_RUNNER_URL ? 'on' : 'off' },
+    { port: config.PORT, database: db.dialect, kms: config.KMS_PROVIDER, keyId: config.ACTIVE_KEY_ID, lessons: curriculum.lessons.size, labs: config.LAB_RUNNER_URL ? 'on' : 'off' },
     'bastion listening',
   );
 });

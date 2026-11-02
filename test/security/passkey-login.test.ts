@@ -172,9 +172,13 @@ describe('passwordless login with a passkey', () => {
   it('bounds how many challenges can be pending, whoever asks', async () => {
     const t = setup();
     const until = Date.now() + 60_000;
-    await t.db.transaction(async (tx) => {
-      for (let n = 0; n < 10_000; n++) await tx.run('INSERT INTO webauthn_login_challenges (challenge_hash, expires_at) VALUES (?, ?)', `h${String(n)}`, until);
-    });
+    // 10,000 pending challenges in one statement (one round trip, on PostgreSQL too).
+    await t.db.run(
+      `WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < ?)
+       INSERT INTO webauthn_login_challenges (challenge_hash, expires_at) SELECT 'h' || i, ? FROM n`,
+      10_000,
+      until,
+    );
     await t.http.post('/v1/auth/passkey/options').expect(503);
     // Expired ones are swept first: the cap counts live challenges only.
     await t.db.run('UPDATE webauthn_login_challenges SET expires_at = ?', Date.now() - 1);

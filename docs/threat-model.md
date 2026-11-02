@@ -38,7 +38,7 @@ flowchart LR
     I[Ingress<br/>TLS termination]
     subgraph NS["namespace bastion — PSS restricted, default-deny network"]
       API[Bastion API<br/>non-root, read-only FS,<br/>no shell, no egress]
-      DB[(SQLite volume<br/>ciphertext only)]
+      DB[(SQLite volume, or PostgreSQL<br/>on an internal network<br/>ciphertext only)]
       S[[Mounted secrets<br/>KEKs, JWT key, audit key, flag key]]
     end
   end
@@ -64,7 +64,7 @@ Trust boundaries crossed by data:
 
 1. **Internet → ingress**: everything is untrusted; TLS required (HSTS preload).
 2. **Ingress → API**: only `X-Forwarded-For` from exactly one hop is trusted (`TRUST_PROXY=1`).
-3. **API → database**: the DB is treated as *potentially readable by an attacker* (backup leak, volume snapshot): it only ever holds ciphertext and hashes.
+3. **API → database**: the DB is treated as *potentially readable by an attacker* (backup leak, volume snapshot): it only ever holds ciphertext and hashes. With PostgreSQL (ADR 0021) the link is a network one: `sslmode=verify-full` is required in production, except on loopback or to a container name on a private network.
 4. **Operator → system**: privileged actions (grant admin, rotate keys) need host access; they are not reachable over HTTP at all.
 5. **CI → cluster**: an image only runs if its Sigstore signature matches this repository's workflow identity.
 6. **Platform → lab runner** (v5): internal network, shared token, closed lab catalog; the runner is the only holder of the Docker socket.
@@ -95,7 +95,7 @@ browser ─► lab-gateway :8088 ──(per-instance internal network)──► 
 | **S**poofing | Access token | `alg: none`, algorithm confusion, forged/modified token, cross-service replay | Algorithm allow-list, `iss`/`aud`/`typ` checks, mandatory `exp`, claims re-validated | `tokens.test.ts` |
 | **S**poofing | Refresh token | Stolen token replayed | Single-use rotation + reuse detection → whole family revoked + access tokens invalidated (RFC 9700 §4.14) | `authentication.test.ts` › reuse |
 | **T**ampering | Stored note | Attacker with DB write access edits or swaps ciphertexts | AES-GCM authentication, AAD binds ciphertext to note id *and* owner id | `envelope.test.ts`, `authorization.test.ts` › data at rest |
-| **T**ampering | Audit trail | Erase evidence after an intrusion | DB triggers block UPDATE/DELETE; HMAC chain detects edits even if triggers are dropped; `verify` pinpoints the first broken entry | `config-and-audit.test.ts` |
+| **T**ampering | Audit trail | Erase evidence after an intrusion | DB triggers block UPDATE/DELETE (and TRUNCATE on PostgreSQL); HMAC chain detects edits even if triggers are dropped; `verify` pinpoints the first broken entry | `config-and-audit.test.ts` |
 | **T**ampering | Container image | Backdoored image pushed to the registry | Keyless cosign signature, SLSA provenance, admission policy rejects unsigned images | `container.yml`, `deploy/policies/` |
 | **T**ampering | Request body | Mass assignment (`"role":"admin"`), prototype pollution | Strict schemas reject unknown keys | `authorization.test.ts`, `input-and-transport.test.ts` |
 | **R**epudiation | Any sensitive action | "It wasn't me" | Tamper-evident audit log: who, what, target, IP, outcome | `auditActions()` assertions across tests |
@@ -116,6 +116,7 @@ browser ─► lab-gateway :8088 ──(per-instance internal network)──► 
 | **I**nformation disclosure | Database dump | Backup or snapshot leaks | Envelope encryption: KEKs never stored with data; refresh tokens stored as hashes | `authorization.test.ts` › raw dump |
 | **I**nformation disclosure | Database *and* platform files (host backup, container escape, leaked `.env`) | Offline decryption of every note with the KEKs from the environment | With Vault (ADR 0019): KEKs stay in Vault, unwrapping needs a live AppRole login (revocable, logged by Vault's audit device); the policy forbids export, backup, key config and deletion; boot refuses an exportable or deletable key | `kms-vault.test.ts`, `test/vault-real/run.sh` |
 | **T**ampering / **D**enial of service | Vault Transit | A DEK moved to another note; a row pointing at another key version; a redirect stealing the token; Vault sealed or down | Derived key per note context; key id must match the ciphertext's version; no redirects, 5-s timeout; outage → 503, never the tampering alert; one batch call per page | `kms-vault.test.ts` |
+| **I**nformation disclosure / **T**ampering | PostgreSQL link (ADR 0021) | Sniffing or rewriting the traffic between replicas and the database (hashes, sealed seeds, wrapped DEKs, the password itself); a stolen `DATABASE_URL` | `sslmode=verify-full` required in production off loopback and private container names; SCRAM authentication; URL from a secret file; in compose, no published port and an `internal` network; statement and idle-transaction timeouts | `config-and-audit.test.ts`, `docker-compose.postgres.yml` |
 | **I**nformation disclosure | Errors & logs | Stack traces, SQL, secrets in logs | Central error handler with generic messages; logger-level redaction of secrets | `input-and-transport.test.ts` |
 | **I**nformation disclosure | Secrets in env | `/proc/<pid>/environ`, crash dumps | Secrets mounted as read-only files (`*_FILE`), mode 0400 | `config-and-audit.test.ts` |
 | **D**enial of service | API | Request floods | Global + per-route rate limits | `authentication.test.ts` › rate limit |
@@ -152,13 +153,16 @@ browser ─► lab-gateway :8088 ──(per-instance internal network)──► 
 **Race conditions (TOCTOU).** Two concurrent refreshes with the same token, or eight
 concurrent wrong passwords, are classic ways to bypass single-use tokens and
 lockouts. The refresh token is *claimed* with a conditional `UPDATE … WHERE
-revoked_at IS NULL` (one compare-and-set statement), and failed logins use an atomic
-`UPDATE … RETURNING` instead of read-modify-write. Both are covered by tests
-that fire the requests in parallel. Every other check-then-act runs in one transaction
-(ADR 0020): the audit chain head and the next entry, "is this the last second factor?"
-and the deletion, the passkey and login-challenge caps. Atomicity never relies on the
-event loop: these race tests run against a database that yields between queries, as a
-network database does, and fail with the transaction removed.
+revoked_at IS NULL` (one compare-and-set statement). Failed logins are counted and the
+lock is set in one transaction, and the reset after the right password is a
+compare-and-set on the lock: the PostgreSQL test run showed that with two statements,
+guesses landing between "the count reaches the threshold" and "the lock is set" each got
+a verdict (ADR 0021). Every other check-then-act runs in one transaction (ADR 0020): the
+audit chain head and the next entry, "is this the last second factor?" and the deletion,
+the passkey and login-challenge caps. Atomicity never relies on the event loop: these
+race tests run against a database that yields between queries, as a network database
+does, and fail with the protection removed; the whole suite also runs against a real
+PostgreSQL, where transactions are SERIALIZABLE and the losers of a race run again.
 
 **Ciphertext relocation.** An attacker with write access to the database (but
 not the keys) copies Alice's encrypted note into a row owned by Mallory. Without
@@ -189,7 +193,8 @@ capability set is zero).
 | Registration reveals whether an e-mail is taken (409) | No e-mail channel to send "if this address is free, check your inbox". Mitigated by the auth rate limit. | An e-mail verification flow is added |
 | Account lockout can be triggered by an attacker (targeted DoS) | Trade-off against online brute force; lockout is temporary (15 min, progressive, capped at 24 h). Wrong TOTP codes count too, so someone holding the password can lock the account. Learners with a passkey are not affected: passwordless login ignores the password lockout (ADR 0017). | Adding CAPTCHA-on-risk |
 | Someone holding a full session can add their own passkey and keep a way in after a password change | Adding a passkey asks the password again; `passkey.register` is audited and reaches Wazuh; the account page lists every passkey with its last use. Revoking passkeys on password change would punish the learner who changes a leaked password (ADR 0017). | Hosting: e-mail notification of new passkeys |
-| Rate limiting is in-memory, per replica | Single replica by design (SQLite). | Moving to PostgreSQL + several replicas → Redis store |
+| Rate limiting is in-memory, per replica | With SQLite there is one replica. With PostgreSQL (ADR 0021) several replicas can run, and each counts on its own: N replicas allow N times the configured attempts per address. The account lockout is unaffected (it lives in the database). | The Redis rate-limit store (next step of the PostgreSQL + Redis item) |
+| Audit appends are serialised across all replicas (PostgreSQL advisory lock) | The HMAC chain has one head: appends must queue, or they abort each other (82 of 300 lost under load without the lock, ADR 0021). | Audit volume becomes a bottleneck → per-replica chains anchored in a shared one |
 | Quiz answers are readable in the public repository | Content is open source by design and the platform runs locally; the quiz checks learning, it is not an exam. Lessons only weigh 10 points on the scoreboard; challenges use per-learner HMAC flags that cannot be read from the repo (ADR 0008). | Certificates are introduced |
 | Failed quiz responses say which questions are wrong | Pedagogical feedback beats secrecy here; enumeration is slowed by the per-account rate limit. | Same as above |
 | JWT signed with a symmetric key (HS256) | One service both issues and verifies tokens; no third party needs to verify them. | Another service must verify tokens → EdDSA + JWKS |

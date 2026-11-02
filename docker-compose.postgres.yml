@@ -1,0 +1,58 @@
+# PostgreSQL instead of the SQLite file (ADR 0021), on top of the main file:
+#   docker compose -f docker-compose.yml -f docker-compose.postgres.yml up -d
+#
+#   bastion ──db (internal)──► postgres:5432   (SCRAM password from .env, no published port)
+#
+# The schema is created by the platform at its first start. Data in SQLite is not moved:
+# this starts from an empty database. POSTGRES_PASSWORD comes from `gen-secrets` (hex, so
+# it needs no escaping inside the URL).
+services:
+  postgres:
+    # Same image and digest as the PostgreSQL job of .github/workflows/ci.yml: keep them in sync.
+    image: postgres:18.6-alpine@sha256:10a5c69a83035ab5239f5620d708520e8b28f5aa1f2b20143e6024532edadfb5
+    # The image's own postgres user from the start: no root entrypoint, no capability needed.
+    user: "70:70"
+    environment:
+      POSTGRES_USER: bastion
+      POSTGRES_DB: bastion
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is missing from .env, run gen-secrets}"
+      # SCRAM for every connection, including the ones initdb would otherwise trust locally.
+      POSTGRES_INITDB_ARGS: "--auth=scram-sha-256"
+    volumes:
+      - postgres-data:/var/lib/postgresql
+    networks: [db]
+    read_only: true
+    tmpfs:
+      - /var/run/postgresql:size=1m,uid=70,gid=70
+      - /tmp:size=64m,uid=70,gid=70
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    shm_size: 128m
+    pids_limit: 256
+    mem_limit: 512m
+    cpus: 1.0
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "bastion", "-d", "bastion"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  bastion:
+    environment:
+      # A container name on the private `db` network: the one case where config accepts
+      # PostgreSQL without verify-full TLS in production (see config.ts).
+      DATABASE_URL: "postgres://bastion:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is missing from .env, run gen-secrets}@postgres:5432/bastion"
+    networks: [default, lab-control, metrics, db]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+networks:
+  # Platform ↔ PostgreSQL. No route out, nothing else joins it.
+  db:
+    internal: true
+
+volumes:
+  postgres-data:

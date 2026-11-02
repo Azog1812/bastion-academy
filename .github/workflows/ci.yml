@@ -62,6 +62,45 @@ jobs:
           path: coverage/
           retention-days: 14
 
+  postgres:
+    # The whole suite again, every test context in its own schema of a real PostgreSQL
+    # (ADR 0021): same SQL, same race tests, the second engine proven like the first.
+    name: Test suite against PostgreSQL
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    env:
+      # Same image and digest as the postgres service in docker-compose.postgres.yml: keep them in sync.
+      POSTGRES_IMAGE: postgres:18.6-alpine@sha256:10a5c69a83035ab5239f5620d708520e8b28f5aa1f2b20143e6024532edadfb5
+    steps:
+      - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci --ignore-scripts
+
+      # Loopback only, a throwaway password, data in tmpfs: nothing outlives the job.
+      - name: Start PostgreSQL
+        run: |
+          password="$(openssl rand -hex 24)"
+          echo "::add-mask::$password"
+          docker run -d --name pg -e POSTGRES_PASSWORD="$password" -e POSTGRES_DB=bastion_test             -p 127.0.0.1:5432:5432 --tmpfs /var/lib/postgresql "$POSTGRES_IMAGE" -c max_connections=300 -c fsync=off
+          for _ in $(seq 1 30); do docker exec pg pg_isready -U postgres -d bastion_test -q && break; sleep 1; done
+          docker exec pg pg_isready -U postgres -d bastion_test
+          echo "TEST_DATABASE_URL=postgres://postgres:$password@127.0.0.1:5432/bastion_test" >> "$GITHUB_ENV"
+
+      - run: npx vitest run
+
   alert-rules:
     name: Alert rules (promtool)
     runs-on: ubuntu-latest
