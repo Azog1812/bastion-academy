@@ -22,6 +22,8 @@ import { EnvironmentService, type EnvironmentRunnerClient } from './services/env
 import { createMetrics, type AppMetrics } from './metrics.js';
 import { auditFileExport, type AuditExport } from './audit-export.js';
 import { httpMetrics } from './http/metrics.js';
+import { kmsFromConfig } from './crypto/kms-config.js';
+import type { Kms } from './crypto/kms.js';
 
 export interface AppOptions {
   config: Config;
@@ -36,6 +38,8 @@ export interface AppOptions {
   labRunner?: LabRunnerClient;
   /** Same, for shared environments such as Wazuh (ADR 0013). */
   environmentRunner?: EnvironmentRunnerClient;
+  /** Where the KEKs live (ADR 0019). Default: what the configuration says. */
+  kms?: Kms;
 }
 
 export interface App {
@@ -56,7 +60,7 @@ export interface App {
   };
 }
 
-export function createApp({ config, db, logger, curriculum, rateLimits, web, labRunner, environmentRunner }: AppOptions): App {
+export function createApp({ config, db, logger, curriculum, rateLimits, web, labRunner, environmentRunner, kms: kmsOption }: AppOptions): App {
   const limits = rateLimits ?? {
     global: config.RATE_LIMIT_GLOBAL,
     auth: config.RATE_LIMIT_AUTH,
@@ -80,11 +84,11 @@ export function createApp({ config, db, logger, curriculum, rateLimits, web, lab
     audience: config.JWT_AUDIENCE,
     ttlSeconds: config.ACCESS_TOKEN_TTL_SECONDS,
   });
-  const ring = { keys: config.ENCRYPTION_KEYS, activeKeyId: config.ACTIVE_KEY_ID };
-  const mfa = new MfaService(db, ring, audit, config.MFA_ISSUER);
+  const kms = kmsOption ?? kmsFromConfig(config).kms;
+  const mfa = new MfaService(db, kms, audit, config.MFA_ISSUER);
   const passkeys = new PasskeyService(db, audit, { id: config.WEBAUTHN_RP_ID, origins: config.WEBAUTHN_ORIGINS, name: config.MFA_ISSUER });
   const auth = new AuthService(db, config, signer, audit, mfa, passkeys);
-  const notes = new NoteService(db, ring, audit);
+  const notes = new NoteService(db, kms, audit);
   const learning = new LearningService(db, curriculum, audit);
   const challenges = new ChallengeService(db, curriculum, learning, audit, config.FLAG_HMAC_KEY);
   const http = config.LAB_RUNNER_URL && config.LAB_RUNNER_TOKEN ? httpLabRunner(config.LAB_RUNNER_URL, config.LAB_RUNNER_TOKEN) : undefined;
