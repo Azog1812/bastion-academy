@@ -69,7 +69,7 @@ jobs:
           PY
           echo "::notice::semgrep exit code $code"
           exit $code
-      - uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+      - uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         if: always()
         with:
           sarif_file: semgrep.sarif
@@ -159,7 +159,7 @@ jobs:
             --directory deploy/k8s --file Dockerfile --file labs/Dockerfile --file labs/command-injection/Dockerfile --file labs/xss-stored/Dockerfile \
             --config-file .checkov.yaml \
             --output cli --output sarif --output-file-path console,checkov.sarif
-      - uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+      - uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         if: always()
         with:
           sarif_file: checkov.sarif
