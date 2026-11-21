@@ -37,7 +37,7 @@ explain the *why* (threat, standard, trade-off), not only the *what*.
 npm ci --ignore-scripts      # never run install scripts
 npm run lint                 # ESLint strictTypeChecked + security plugin + custom SQL rules
 npm run typecheck            # tsc strict, noUncheckedIndexedAccess, exactOptionalPropertyTypes
-npm test                     # vitest (459 tests; TEST_REDIS_URL adds the Valkey store tests; TEST_DATABASE_URL (owner) + TEST_DATABASE_APP_URL (bastion_app) run them on PostgreSQL)
+npm test                     # vitest (479 tests; TEST_REDIS_URL adds the Valkey store tests; TEST_DATABASE_URL (owner) + TEST_DATABASE_APP_URL (bastion_app) run them on PostgreSQL)
 npm run test:coverage        # thresholds: lines/statements/functions 90 %, branches 80 %
 npm run check                # lint + typecheck + coverage
 npm run build && node dist/cli.js gen-secrets > .env   # local secrets (gitignored)
@@ -157,7 +157,7 @@ deploy/alertmanager (routing by severity, inhibition, routes.test.sh), deploy/gr
 deploy/wazuh (offline certs.sh, users.sh without demo accounts, indexer/manager/dashboard config,
              bastion_rules.xml: rules for Bastion's own audit log, ids 100200-100299)
 docs/  threat-model · security-controls (OWASP API Top 10 + ASVS 4.0.3) · security-pipeline ·
-       adr/0001-0023 · runbook · openapi.yaml (used by DAST)
+       adr/0001-0023 · runbook · openapi.yaml (used by DAST) · i18n/ (README per language)
 ```
 
 ## Security invariants — never break these
@@ -268,7 +268,11 @@ docs/  threat-model · security-controls (OWASP API Top 10 + ASVS 4.0.3) · secu
   as `checkov.io/skipN` annotations on the resource.
 - Commits: Conventional Commits (`feat:`, `fix:`, `ci:`, `docs:`, `test:`, `build:`),
   English, body explains why.
-- Docs are in English (README has a short French summary). Talk to Florent in French.
+- Docs are in English. The root README.md is only a language picker + credits; the explanations
+  live in docs/i18n/README.<lang>.md (en is the reference; fr, es, de, pt-BR, zh-CN translate it).
+  A README change goes into every language in the same PR: `test/unit/readme-i18n.test.ts` checks
+  links, anchors and that each translation keeps the English links, table rows and code blocks.
+  Talk to Florent in French.
 - When the attack surface changes, update `docs/threat-model.md` and
   `docs/security-controls.md` in the same change.
 
