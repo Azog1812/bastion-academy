@@ -10,7 +10,7 @@
 FROM node:24-alpine@sha256:8a32c8cf649a49915a66e81e7a609223c708d0adabf288ee3f4077d765542f85
 
 # Pinned: a browser update must be a reviewed change, like a base image bump.
-RUN apk add --no-cache chromium=155.0.8059.84-r0 font-dejavu=2.37-r6
+RUN apk add --no-cache chromium=158.0.8127.36-r0 font-dejavu=2.37-r6
 
 LABEL org.opencontainers.image.title="bastion-lab-xss-stored" \
       org.opencontainers.image.description="Intentionally vulnerable Bastion Academy lab. Run only through the lab runner." \
