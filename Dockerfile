@@ -38,7 +38,7 @@ RUN npm run build \
  && cp -r dist node_modules package.json /out/
 
 ########################### runtime ###########################
-FROM gcr.io/distroless/nodejs24-debian13:nonroot@sha256:a6c34457f6da4295807e051411c7783739c65b997a324fed14e4fa292615ae91 AS runtime
+FROM gcr.io/distroless/nodejs24-debian13:nonroot@sha256:6abfcb367ebc291572c774c1592a986be2ab26a2486f73093401327495a5962a AS runtime
 
 LABEL org.opencontainers.image.title="bastion" \
       org.opencontainers.image.description="Hardened encrypted-notes API with a full DevSecOps supply chain" \
